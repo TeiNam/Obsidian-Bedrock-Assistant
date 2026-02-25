@@ -1,0 +1,19 @@
+# 빌드 출력
+main.js
+
+# 의존성
+node_modules/
+
+# 옵시디언 플러그인 데이터
+data.json
+
+# 인덱스/히스토리 파일
+.assistant-kiro-index.json
+.assistant-kiro-chat.json
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 소스맵
+*.map
