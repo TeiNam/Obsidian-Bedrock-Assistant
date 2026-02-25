@@ -5,6 +5,7 @@ export interface Skill {
   id: string;
   name: string;
   description: string;
+  descriptionEn: string;
   content: string;
 }
 
@@ -14,16 +15,16 @@ export interface Skill {
 const OBSIDIAN_MARKDOWN_SKILL = `# Obsidian Flavored Markdown
 
 ## Internal Links (Wikilinks)
-- \`[[Note Name]]\` — 노트 링크
-- \`[[Note Name|Display Text]]\` — 표시 텍스트 지정
-- \`[[Note Name#Heading]]\` — 헤딩 링크
-- \`[[Note Name#^block-id]]\` — 블록 링크
-- \`[[#Heading in same note]]\` — 같은 노트 내 헤딩
+- \`[[Note Name]]\` — link to note
+- \`[[Note Name|Display Text]]\` — custom display text
+- \`[[Note Name#Heading]]\` — heading link
+- \`[[Note Name#^block-id]]\` — block link
+- \`[[#Heading in same note]]\` — same-note heading
 
 ## Embeds
-- \`![[Note Name]]\` — 노트 임베드
-- \`![[image.png]]\` / \`![[image.png|300]]\` — 이미지 (너비 지정)
-- \`![[document.pdf#page=3]]\` — PDF 임베드
+- \`![[Note Name]]\` — embed note
+- \`![[image.png]]\` / \`![[image.png|300]]\` — image (with width)
+- \`![[document.pdf#page=3]]\` — PDF embed
 
 ## Callouts
 \`\`\`markdown
@@ -211,18 +212,21 @@ export const SKILLS: Skill[] = [
     id: "obsidian-markdown",
     name: "Obsidian Markdown",
     description: "Obsidian Flavored Markdown 문법 (위키링크, 콜아웃, 임베드, 프로퍼티 등)",
+    descriptionEn: "Obsidian Flavored Markdown syntax (wikilinks, callouts, embeds, properties, etc.)",
     content: OBSIDIAN_MARKDOWN_SKILL,
   },
   {
     id: "obsidian-bases",
     name: "Obsidian Bases",
     description: "Obsidian Bases (.base 파일) 뷰, 필터, 수식 작성",
+    descriptionEn: "Obsidian Bases (.base files) views, filters, and formula authoring",
     content: OBSIDIAN_BASES_SKILL,
   },
   {
     id: "json-canvas",
     name: "JSON Canvas",
     description: "JSON Canvas (.canvas 파일) 노드, 엣지, 그룹 작성",
+    descriptionEn: "JSON Canvas (.canvas files) nodes, edges, and group authoring",
     content: JSON_CANVAS_SKILL,
   },
 ];

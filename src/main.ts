@@ -35,7 +35,7 @@ export default class BedrockAssistantPlugin extends Plugin {
     this.indexer = new VaultIndexer(this.app, this.bedrockClient);
 
     // 도구 실행기 초기화
-    this.toolExecutor = new ToolExecutor(this.app, this.indexer);
+    this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
 
     // MCP 매니저 초기화
     this.mcpManager = new McpManager();

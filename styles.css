@@ -147,6 +147,7 @@
   background: rgba(0, 0, 0, 0.3);
   align-self: flex-end;
   border-end-end-radius: 4px;
+  white-space: pre-wrap;
 }
 
 .ba-message-user ::selection {
@@ -333,6 +334,40 @@ body.theme-light .ba-message-content pre {
 .ba-input-container {
   position: relative;
   padding: 12px 0 0 0;
+}
+
+/* 액션 툴바 (입력창 바로 위) */
+.ba-action-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 6px 0;
+}
+
+.ba-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ba-action-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ba-action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ba-action-btn-label {
+  white-space: nowrap;
 }
 
 .ba-input-wrapper {
@@ -728,4 +763,347 @@ body.theme-light .ba-message-content pre {
   color: var(--text-muted);
   font-family: var(--font-monospace);
   word-break: break-word;
+}
+
+/* ============================================
+   MCP 설정 모달
+   ============================================ */
+.ba-mcp-modal {
+  padding: 0;
+}
+
+.ba-mcp-modal h2 {
+  margin: 0 0 12px 0;
+}
+
+.ba-mcp-status {
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ba-mcp-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 8px 0;
+}
+
+.ba-mcp-editor {
+  width: 100%;
+  min-height: 300px;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  tab-size: 2;
+}
+
+.ba-mcp-editor:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.ba-mcp-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ba-mcp-btn-row button {
+  padding: 6px 16px;
+}
+
+/* ============================================
+   비밀 입력 필드 눈 버튼
+   ============================================ */
+.ba-secret-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.ba-secret-wrapper input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ba-eye-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-faint);
+  transition: color 0.15s ease;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.ba-eye-btn:hover {
+  color: var(--text-normal);
+}
+
+.ba-eye-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ============================================
+   모델 선택 바
+   ============================================ */
+.ba-model-selector {
+  padding: 4px 0 0 0;
+}
+
+.ba-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: color 0.15s ease, background 0.15s ease;
+  max-width: 100%;
+}
+
+.ba-model-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ba-model-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ba-model-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ba-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ba-model-chevron {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ba-model-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 모델 선택 모달 - 현재 선택 표시 */
+.ba-model-check {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+
+.ba-model-manual-input {
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 13px;
+}
+
+/* ============================================
+   모델 인라인 드롭다운 (위로 열림)
+   ============================================ */
+.ba-model-selector {
+  position: relative;
+}
+
+.ba-model-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  min-width: 240px;
+  max-width: 360px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+  padding: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  animation: ba-dropdown-in 0.12s ease;
+}
+
+@keyframes ba-dropdown-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ba-model-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-normal);
+  transition: background 0.1s ease;
+}
+
+.ba-model-dropdown-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ba-model-dropdown-item.is-active {
+  color: var(--interactive-accent);
+}
+
+.ba-model-dropdown-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ba-model-dropdown-check {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--interactive-accent);
+}
+
+/* ============================================
+   컨텍스트 사용량 링
+   ============================================ */
+.ba-context-ring-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+  margin-right: 4px;
+}
+
+.ba-context-ring-svg {
+  transform: rotate(-90deg);
+  flex-shrink: 0;
+}
+
+.ba-context-ring-progress {
+  transition: stroke-dashoffset 0.3s ease, stroke 0.3s ease;
+}
+
+.ba-context-ring-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+}
+
+/* ============================================
+   인덱싱 라벨 아이콘
+   ============================================ */
+.ba-index-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ba-index-label-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ba-index-label-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ============================================
+   드래그 앤 드롭 파일 첨부
+   ============================================ */
+.ba-input-wrapper.ba-drag-over {
+  border-color: var(--ba-brand);
+  background: rgba(var(--ba-brand-rgb), 0.05);
+}
+
+/* ============================================
+   웹 서치 토글 버튼
+   ============================================ */
+.ba-web-search-btn.is-active {
+  color: var(--ba-brand);
+  background: rgba(var(--ba-brand-rgb), 0.12);
+}
+
+/* ============================================
+   툴바 오른쪽 그룹 (링 + 전송)
+   ============================================ */
+.ba-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ============================================
+   설정 탭 플러그인 설명 + 후원 배너
+   ============================================ */
+.ba-about-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 2em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 12px;
+}
+
+.ba-about-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+.ba-about-sponsor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0;
+}
+
+.ba-about-sponsor span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ba-about-sponsor a {
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.ba-sponsor-img {
+  border-radius: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.ba-sponsor-img:hover {
+  opacity: 0.85;
 }

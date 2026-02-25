@@ -4,14 +4,28 @@ import {
   ConverseStreamCommand,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import {
+  BedrockClient as BedrockControlClient,
+  ListInferenceProfilesCommand,
+} from "@aws-sdk/client-bedrock";
 import type {
   BedrockAssistantSettings,
   ToolDefinition,
   ConverseMessage,
   ConverseResult,
   ContentBlock,
+  ModelInfo,
 } from "./types";
 import { buildSkillsPrompt } from "./skills";
+
+// 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)
+const MODEL_KEYWORDS = ["claude-opus", "claude-sonnet", "claude-haiku"];
+// 모델 정렬 우선순위 (opus > sonnet > haiku)
+const MODEL_PRIORITY: Record<string, number> = {
+  "claude-opus": 0,
+  "claude-sonnet": 1,
+  "claude-haiku": 2,
+};
 
 // Bedrock API 클라이언트
 export class BedrockClient {
@@ -40,13 +54,129 @@ export class BedrockClient {
           accessKeyId: this.settings.awsAccessKeyId,
           secretAccessKey: this.settings.awsSecretAccessKey,
         };
+      } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+        // Bedrock API Key 인증: Bearer 토큰 방식
+        // SDK에 더미 자격증명을 넣고, 미들웨어로 Authorization 헤더를 덮어씀
+        config.credentials = {
+          accessKeyId: "apikey",
+          secretAccessKey: "apikey",
+        };
       }
       // "env" 모드: credentials 미지정 → SDK 기본 체인 사용
-      // (환경변수 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY,
-      //  ~/.aws/credentials 프로파일, IAM 역할 등)
 
-      return new BedrockRuntimeClient(config as any);
+      const client = new BedrockRuntimeClient(config as any);
+
+      // API Key 모드일 때 미들웨어로 Bearer 토큰 주입
+      if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+        const apiKey = this.settings.bedrockApiKey;
+        client.middlewareStack.add(
+          (next: any) => async (args: any) => {
+            // SigV4 서명 대신 Bearer 토큰 사용
+            args.request.headers["Authorization"] = `Bearer ${apiKey}`;
+            // SigV4가 추가한 불필요한 헤더 제거
+            delete args.request.headers["x-amz-date"];
+            delete args.request.headers["x-amz-security-token"];
+            delete args.request.headers["x-amz-content-sha256"];
+            return next(args);
+          },
+          {
+            step: "finalizeRequest",
+            name: "bedrockApiKeyAuth",
+            override: true,
+          }
+        );
+      }
+
+      return client;
     }
+
+  // 사용 가능한 모델 목록 반환 (Bedrock 추론 프로파일에서 최신 Claude 모델 조회)
+  async listModels(): Promise<ModelInfo[]> {
+    try {
+      const controlClient = this.createControlClient();
+      const resp = await controlClient.send(
+        new ListInferenceProfilesCommand({ typeEquals: "SYSTEM_DEFINED" })
+      );
+
+      if (!resp.inferenceProfileSummaries) return [];
+
+      // global.anthropic.claude-{opus,sonnet,haiku} 프로파일만 필터
+      const models: ModelInfo[] = [];
+      for (const p of resp.inferenceProfileSummaries) {
+        if (!p.inferenceProfileId || !p.inferenceProfileName) continue;
+        // "global." 접두사가 있는 글로벌 프로파일만
+        if (!p.inferenceProfileId.startsWith("global.")) continue;
+
+        const matched = MODEL_KEYWORDS.some((kw) =>
+          p.inferenceProfileId!.includes(kw)
+        );
+        if (!matched) continue;
+
+        models.push({
+          modelId: p.inferenceProfileId,
+          modelName: p.inferenceProfileName,
+          provider: "Anthropic",
+          isProfile: true,
+        });
+      }
+
+      // 같은 계열(opus/sonnet/haiku)에서 최신 버전만 남기기
+      // 모델 ID 기준 내림차순 정렬 후 계열별 첫 번째만 선택
+      const bestByFamily = new Map<string, ModelInfo>();
+      for (const m of models) {
+        const family = MODEL_KEYWORDS.find((kw) => m.modelId.includes(kw)) || "";
+        const existing = bestByFamily.get(family);
+        if (!existing || m.modelId > existing.modelId) {
+          bestByFamily.set(family, m);
+        }
+      }
+
+      // 우선순위 순으로 정렬 (opus > sonnet > haiku)
+      return Array.from(bestByFamily.entries())
+        .sort(([a], [b]) => (MODEL_PRIORITY[a] ?? 99) - (MODEL_PRIORITY[b] ?? 99))
+        .map(([, m]) => m);
+    } catch (e) {
+      console.warn("모델 목록 조회 실패:", e);
+      return [];
+    }
+  }
+
+  // Bedrock 컨트롤 플레인 클라이언트 생성 (모델 목록 조회용)
+  private createControlClient(): BedrockControlClient {
+    const config: Record<string, unknown> = {
+      region: this.settings.awsRegion,
+    };
+
+    if (this.settings.awsCredentialSource === "manual" && this.settings.awsAccessKeyId) {
+      config.credentials = {
+        accessKeyId: this.settings.awsAccessKeyId,
+        secretAccessKey: this.settings.awsSecretAccessKey,
+      };
+    } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+      config.credentials = {
+        accessKeyId: "apikey",
+        secretAccessKey: "apikey",
+      };
+    }
+
+    const client = new BedrockControlClient(config as any);
+
+    if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+      const apiKey = this.settings.bedrockApiKey;
+      client.middlewareStack.add(
+        (next: any) => async (args: any) => {
+          args.request.headers["Authorization"] = `Bearer ${apiKey}`;
+          delete args.request.headers["x-amz-date"];
+          delete args.request.headers["x-amz-security-token"];
+          delete args.request.headers["x-amz-content-sha256"];
+          return next(args);
+        },
+        { step: "finalizeRequest", name: "bedrockApiKeyAuth", override: true }
+      );
+    }
+
+    return client;
+  }
 
 
   // Converse API 입력 구성
