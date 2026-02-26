@@ -1548,19 +1548,12 @@ export class ChatView extends ItemView {
       const estimatedTokens = Math.ceil(totalChars / 2.5);
       const ratio = Math.min(estimatedTokens / contextWindow, 1);
 
-      // 시각적 비율: 로그 스케일 적용 (적은 사용량에서도 링이 채워지도록)
-      // 0 토큰 → 0, 1K → ~0.15, 10K → ~0.30, 100K → ~0.60, 1M → 1.0
-      const logMax = Math.log10(contextWindow);
-      const visualRatio = estimatedTokens > 0
-        ? Math.min(Math.log10(Math.max(estimatedTokens, 1)) / logMax, 1)
-        : 0;
-
-      // SVG 링 업데이트
+      // SVG 링 업데이트 (선형 비율 사용 — 라벨 수치와 일치)
       const ringSize = 22;
       const strokeWidth = 2.5;
       const radius = (ringSize - strokeWidth) / 2;
       const circumference = 2 * Math.PI * radius;
-      const offset = circumference * (1 - visualRatio);
+      const offset = circumference * (1 - ratio);
       this.contextRingEl.setAttribute("stroke-dashoffset", String(offset));
 
       // 색상 변경 (실제 비율 기준)
