@@ -153,6 +153,9 @@ export class ChatView extends ItemView {
   private cachedModels: ModelInfo[] = [];
   private modelDropdownEl: HTMLElement | null = null;
 
+  // MCP 상태 표시
+  private mcpStatusEl: HTMLElement;
+
   // 컨텍스트 사용량 링
   private contextRingEl: SVGCircleElement | null = null;
   private contextLabelEl: HTMLElement | null = null;
@@ -389,8 +392,11 @@ export class ChatView extends ItemView {
       }
     }
 
-    // 모델 선택 바 (입력 영역 아래)
-    this.modelSelectorEl = inputContainer.createDiv({ cls: "ba-model-selector" });
+    // 하단 바 (모델 선택 + MCP 상태)
+    const bottomBar = inputContainer.createDiv({ cls: "ba-bottom-bar" });
+    this.modelSelectorEl = bottomBar.createDiv({ cls: "ba-model-selector" });
+    this.mcpStatusEl = bottomBar.createDiv({ cls: "ba-mcp-indicator" });
+    this.updateMcpIndicator();
 
     // 드래그 앤 드롭 파일 첨부
     inputWrapper.addEventListener("dragover", (e) => {
@@ -929,9 +935,30 @@ export class ChatView extends ItemView {
   // 모델 라벨 업데이트 (현재 선택된 모델 표시)
   private updateModelLabel(): void {
     const modelId = this.plugin.settings.chatModel;
-    // 모델 ID에서 간결한 표시명 추출
     const displayName = this.getModelDisplayName(modelId);
     this.modelLabelEl.setText(displayName);
+  }
+
+  // MCP 연결 상태 인디케이터 업데이트
+  updateMcpIndicator(): void {
+    if (!this.mcpStatusEl) return;
+    this.mcpStatusEl.empty();
+
+    const status = this.plugin.mcpManager.getStatus();
+    if (status.length === 0) return; // MCP 서버가 없으면 표시 안 함
+
+    const connectedCount = status.filter((s) => s.connected).length;
+    const totalCount = status.length;
+    const allConnected = connectedCount === totalCount;
+
+    const dot = this.mcpStatusEl.createSpan({ cls: `ba-mcp-dot ${allConnected ? "connected" : "disconnected"}` });
+    const label = `MCP ${connectedCount}/${totalCount}`;
+    this.mcpStatusEl.createSpan({ cls: "ba-mcp-indicator-label", text: label });
+
+    // 툴팁에 상세 정보
+    const tooltip = status.map((s) => `${s.connected ? "🟢" : "🔴"} ${s.name} (${s.toolCount} tools)`).join("\n");
+    this.mcpStatusEl.setAttr("aria-label", tooltip);
+    this.mcpStatusEl.setAttr("title", tooltip);
   }
 
   // 모델 ID에서 표시명 추출
@@ -1093,9 +1120,15 @@ export class ChatView extends ItemView {
       const prev = new Date(now);
       prev.setDate(prev.getDate() - 1);
       const prevDateStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-${String(prev.getDate()).padStart(2, "0")}`;
-      const content = template
+      let content = template
         .replace(/\{\{date\}\}/g, dateStr)
         .replace(/\{\{prevDate\}\}/g, prevDateStr);
+
+      // 전일자(또는 가장 최근) To-Do에서 미완료 항목 가져오기
+      const carryOver = await this.getUnfinishedTasks(folder, now);
+      if (carryOver.length > 0) {
+        content = this.injectCarryOverTasks(content, carryOver);
+      }
 
       const file = await this.app.vault.create(path, content);
       await this.app.workspace.getLeaf(false).openFile(file);
@@ -1106,6 +1139,70 @@ export class ChatView extends ItemView {
     } catch (error) {
       new Notice(this.t.todoError((error as Error).message));
     }
+  }
+
+  // 전일자(또는 가장 최근) To-Do 파일에서 미완료 항목 추출
+  private async getUnfinishedTasks(todoFolder: string, today: Date): Promise<string[]> {
+    const folder = this.app.vault.getAbstractFileByPath(todoFolder);
+    if (!folder) return [];
+
+    const children = (folder as any).children || [];
+    // YYYY-MM-DD.md 형식 파일만 필터링하고 날짜순 정렬 (내림차순)
+    const dated: { file: TFile; date: Date }[] = [];
+    for (const child of children) {
+      if (!(child instanceof TFile) || child.extension !== "md") continue;
+      const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) continue;
+      const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      // 오늘 이전 파일만
+      if (d < today) {
+        dated.push({ file: child, date: d });
+      }
+    }
+
+    if (dated.length === 0) return [];
+
+    // 가장 최근 파일
+    dated.sort((a, b) => b.date.getTime() - a.date.getTime());
+    const latest = dated[0].file;
+
+    const content = await this.app.vault.cachedRead(latest);
+    // 미완료 체크박스 항목 추출 (- [ ] 로 시작하는 줄)
+    const lines = content.split("\n");
+    const unfinished: string[] = [];
+    for (const line of lines) {
+      if (/^\s*- \[ \]\s+.+/.test(line)) {
+        unfinished.push(line);
+      }
+    }
+    return unfinished;
+  }
+
+  // 미완료 항목을 템플릿 콘텐츠에 주입
+  private injectCarryOverTasks(content: string, tasks: string[]): string {
+    const taskBlock = tasks.join("\n");
+
+    // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
+    // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
+    const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
+    const match = content.match(sectionPattern);
+
+    if (match && match.index !== undefined) {
+      // 섹션 헤더 다음 줄에 삽입
+      const insertPos = match.index + match[0].length;
+      const after = content.substring(insertPos);
+      // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
+      const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
+      if (nextContentMatch && nextContentMatch.index !== undefined) {
+        const pos = insertPos + nextContentMatch.index;
+        return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
+      }
+      // 섹션 끝에 추가
+      return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
+    }
+
+    // 섹션을 못 찾으면 문서 끝에 추가
+    return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
   }
 
   // 기준 일수를 초과한 To-Do 파일을 아카이브 폴더로 이동

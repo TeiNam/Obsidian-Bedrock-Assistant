@@ -81,12 +81,15 @@ const I18N = {
     mcpModalTools: (name: string, count: number) => `${name} — ${count} tools`,
     mcpModalDesc: "Edit MCP server configuration in JSON format.",
     mcpModalSave: "Save & Connect",
-    mcpModalCancel: "Cancel",
+    mcpModalCancel: "Close",
     mcpModalJsonError: "❌ Invalid JSON format.",
     mcpModalSaving: "MCP config saved. Connecting...",
     mcpModalConnected: (names: string) => `✅ MCP connected: ${names}`,
     mcpModalFailed: (names: string) => `❌ MCP failed: ${names}`,
     mcpModalNoServers: "No MCP servers configured.",
+    mcpStatusTitle: "Connection Status",
+    mcpStatusDisconnected: (name: string) => `${name} — disconnected`,
+    mcpStatusNone: "No servers connected.",
     folderSelectPlaceholder: "Select a folder...",
   },
   ko: {
@@ -166,12 +169,15 @@ const I18N = {
     mcpModalTools: (name: string, count: number) => `${name} — 도구 ${count}개`,
     mcpModalDesc: "MCP 서버 설정을 JSON 형식으로 편집하세요.",
     mcpModalSave: "저장 및 연결",
-    mcpModalCancel: "취소",
+    mcpModalCancel: "닫기",
     mcpModalJsonError: "❌ JSON 형식이 올바르지 않습니다.",
     mcpModalSaving: "MCP 설정 저장됨. 서버 연결 중...",
     mcpModalConnected: (names: string) => `✅ MCP 서버 연결: ${names}`,
     mcpModalFailed: (names: string) => `❌ MCP 서버 실패: ${names}`,
     mcpModalNoServers: "설정된 MCP 서버가 없습니다.",
+    mcpStatusTitle: "연결 상태",
+    mcpStatusDisconnected: (name: string) => `${name} — 연결 끊김`,
+    mcpStatusNone: "연결된 서버가 없습니다.",
     folderSelectPlaceholder: "폴더를 선택하세요...",
   },
 } as const;
@@ -687,6 +693,7 @@ class McpConfigModal extends Modal {
   private plugin: BedrockAssistantPlugin;
   private onSaved: () => void;
   private textArea: HTMLTextAreaElement;
+  private statusEl: HTMLElement;
 
   constructor(app: App, plugin: BedrockAssistantPlugin, onSaved: () => void) {
     super(app);
@@ -701,16 +708,6 @@ class McpConfigModal extends Modal {
     const t = I18N[this.plugin.settings.language] || I18N.en;
 
     contentEl.createEl("h2", { text: t.mcpModalTitle });
-
-    // 연결 상태 표시
-    const mcpStatus = this.plugin.mcpManager.getStatus();
-    if (mcpStatus.length > 0) {
-      const statusEl = contentEl.createDiv({ cls: "ba-mcp-status" });
-      for (const s of mcpStatus) {
-        const icon = s.connected ? "🟢" : "🔴";
-        statusEl.createDiv({ text: `${icon} ${t.mcpModalTools(s.name, s.toolCount)}` });
-      }
-    }
 
     // 설명
     contentEl.createEl("p", {
@@ -739,6 +736,22 @@ class McpConfigModal extends Modal {
     // 현재 설정 로드
     const config = await this.plugin.readMcpConfig();
     this.textArea.value = config;
+
+    // Tab 키로 들여쓰기 지원
+    this.textArea.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const start = this.textArea.selectionStart;
+        const end = this.textArea.selectionEnd;
+        this.textArea.value =
+          this.textArea.value.substring(0, start) + "  " + this.textArea.value.substring(end);
+        this.textArea.selectionStart = this.textArea.selectionEnd = start + 2;
+      }
+    });
+
+    // 연결 상태 표시 영역
+    this.statusEl = contentEl.createDiv({ cls: "ba-mcp-status" });
+    this.renderStatus();
 
     // 버튼 행
     const btnRow = contentEl.createDiv({ cls: "ba-mcp-btn-row" });
@@ -778,8 +791,37 @@ class McpConfigModal extends Modal {
       new Notice(t.mcpModalNoServers);
     }
 
+    // 연결 상태 갱신 (모달 닫지 않음)
+    this.renderStatus();
     this.onSaved();
-    this.close();
+
+    // 채팅 뷰의 MCP 인디케이터도 갱신
+    const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+    for (const leaf of leaves) {
+      (leaf.view as any).updateMcpIndicator?.();
+    }
+  }
+
+  // 연결 상태 렌더링
+  private renderStatus(): void {
+    this.statusEl.empty();
+    const t = I18N[this.plugin.settings.language] || I18N.en;
+    const mcpStatus = this.plugin.mcpManager.getStatus();
+
+    if (mcpStatus.length === 0) {
+      this.statusEl.createDiv({ text: t.mcpStatusNone, cls: "ba-mcp-status-item" });
+      return;
+    }
+
+    this.statusEl.createDiv({ text: t.mcpStatusTitle, cls: "ba-mcp-status-title" });
+    for (const s of mcpStatus) {
+      const item = this.statusEl.createDiv({ cls: "ba-mcp-status-item" });
+      if (s.connected) {
+        item.setText(`🟢 ${t.mcpModalTools(s.name, s.toolCount)}`);
+      } else {
+        item.setText(`🔴 ${t.mcpStatusDisconnected(s.name)}`);
+      }
+    }
   }
 
   onClose(): void {

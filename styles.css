@@ -1107,3 +1107,69 @@ body.theme-light .ba-message-content pre {
 .ba-sponsor-img:hover {
   opacity: 0.85;
 }
+
+/* ============================================
+   MCP 모달 연결 상태
+   ============================================ */
+.ba-mcp-status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ba-mcp-status-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ba-mcp-status-item {
+  color: var(--text-muted);
+}
+
+/* ============================================
+   하단 바 (모델 선택 + MCP 상태)
+   ============================================ */
+.ba-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0 0 0;
+}
+
+/* ============================================
+   MCP 연결 상태 인디케이터
+   ============================================ */
+.ba-mcp-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: default;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ba-mcp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ba-mcp-dot.connected {
+  background: #22c55e;
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+}
+
+.ba-mcp-dot.disconnected {
+  background: #ef4444;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+}
+
+.ba-mcp-indicator-label {
+  white-space: nowrap;
+}

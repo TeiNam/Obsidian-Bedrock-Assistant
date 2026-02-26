@@ -39,13 +39,24 @@ export default class BedrockAssistantPlugin extends Plugin {
 
     // MCP 매니저 초기화
     this.mcpManager = new McpManager();
-    await this.loadMcpConfig();
 
-    // 저장된 인덱스 로드
-    await this.loadIndex();
-
-    // 사이드바 뷰 등록
+    // 사이드바 뷰 등록 (MCP 로드보다 먼저 등록해야 레이아웃 복원 시 뷰가 준비됨)
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
+
+    // MCP 연결 및 인덱스 로드는 플러그인 로딩을 블로킹하지 않도록 백그라운드 처리
+    this.loadMcpConfig().then(() => {
+      // MCP 연결 완료 후 채팅 뷰의 인디케이터 갱신
+      const refreshMcpIndicator = () => {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+        for (const leaf of leaves) {
+          (leaf.view as any).updateMcpIndicator?.();
+        }
+      };
+      refreshMcpIndicator();
+      // 레이아웃이 아직 준비 안 됐을 수 있으므로 준비 후에도 한 번 더 갱신
+      this.app.workspace.onLayoutReady(() => refreshMcpIndicator());
+    }).catch((e) => console.warn("MCP 설정 로드 실패:", e));
+    this.loadIndex().catch((e) => console.warn("인덱스 로드 실패:", e));
 
     // 리본 아이콘 추가
     this.addRibbonIcon(KIRO_ICON_ID, "Assistant Kiro", () => {
