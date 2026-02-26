@@ -1312,6 +1312,7 @@ export class ChatView extends ItemView {
       // 이전 투두의 메모 섹션에서 오늘 이후(오늘 포함) 날짜 항목을 메모에 승계
       const datedNotes = await this.getDatedNotesFromPrevTodo(folder, now);
       if (datedNotes.length > 0) {
+        console.log("[ToDo] 메모 승계 항목:", datedNotes.length, datedNotes.map(n => n.date));
         const noteLines = datedNotes.map((n) => n.raw);
         content = this.injectNotesIntoMemoSection(content, noteLines);
       }
@@ -1578,6 +1579,7 @@ Classify ALL items.`;
 
       const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      console.log("[ToDo] 메모 승계 - 이전 파일:", latest.basename, "오늘:", todayStr);
 
       const lines = content.split("\n");
       let inMemo = false;
@@ -1595,6 +1597,8 @@ Classify ALL items.`;
             // 오늘 이후(오늘 포함)만 승계
             if (parsed.dateStr >= todayStr) {
               results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
+            } else {
+              console.log("[ToDo] 메모 스킵 (과거):", parsed.dateStr, "<", todayStr);
             }
           }
         }
@@ -1651,25 +1655,32 @@ Classify ALL items.`;
 
       const dateStr = `${dateYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-      // 시간 추출: HH:MM 패턴 (날짜 뒤에 나오는 것)
-      const timeMatch = cleaned.match(/(\d{1,2}:\d{2})/);
-      if (timeMatch) {
-        timeStr = timeMatch[1].replace(/^(\d):/, "0$1:");
+      // 시간 추출: HH:MM 패턴 (날짜 매치 이후 부분에서만)
+      const datePattern = m1 || m2 || m3;
+      let afterDateRaw = "";
+      if (datePattern && datePattern.index !== undefined) {
+        afterDateRaw = cleaned.substring(datePattern.index + datePattern[0].length).trim();
+        // 요일 괄호 제거: (화), (월) 등
+        afterDateRaw = afterDateRaw.replace(/^\([^\)]*\)\s*/, "").trim();
+      }
+
+      const timeMatchInAfter = afterDateRaw.match(/^(\d{1,2}:\d{2})/);
+      if (timeMatchInAfter) {
+        timeStr = timeMatchInAfter[1].replace(/^(\d):/, "0$1:");
       } else {
-        // N시 패턴
-        const timeMatch2 = cleaned.match(/(\d{1,2})시/);
+        const timeMatch2 = afterDateRaw.match(/^(\d{1,2})시/);
         if (timeMatch2) {
           timeStr = `${timeMatch2[1].padStart(2, "0")}:00`;
         }
       }
 
-      // 텍스트 추출: 날짜/시간 이후의 의미 있는 텍스트
-      // 시간 패턴(HH:MM) 이후의 콜론을 구분자로 사용
-      const datePattern = m1 || m2 || m3;
+      // 텍스트 추출: 날짜/시간/부가설명 이후의 의미 있는 텍스트
       if (datePattern && datePattern.index !== undefined) {
-        let afterDate = cleaned.substring(datePattern.index + datePattern[0].length).trim();
+        let afterDate = afterDateRaw;
         // 시간 패턴 제거 (HH:MM)
-        afterDate = afterDate.replace(/^\s*\d{1,2}:\d{2}/, "").trim();
+        afterDate = afterDate.replace(/^\d{1,2}:\d{2}/, "").trim();
+        // N시 패턴 제거
+        afterDate = afterDate.replace(/^\d{1,2}시/, "").trim();
         // "예정" 같은 부가 설명 제거
         afterDate = afterDate.replace(/^예정\s*/, "").trim();
         // 구분자 콜론/대시 제거
