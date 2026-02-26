@@ -1,0 +1,2 @@
+# 브랜딩 파일은 머지 시 현재 브랜치의 값을 유지
+src/branding.ts merge=ours

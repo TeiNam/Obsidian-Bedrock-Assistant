@@ -1,4 +1,4 @@
-import { Plugin, TFile } from "obsidian";
+import { Notice, Plugin, TFile } from "obsidian";
 import { BedrockClient } from "./bedrock-client";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
@@ -6,14 +6,13 @@ import { ChatView, VIEW_TYPE } from "./chat-view";
 import { BedrockSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
+import { BRANDING } from "./branding";
 
-const INDEX_FILE = ".bedrock-assistant-index.json";
-const CHAT_HISTORY_FILE = ".bedrock-assistant-chat.json";
-const CHAT_SESSIONS_FILE = ".bedrock-assistant-sessions.json";
+const INDEX_FILE = BRANDING.files.index;
+const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
+const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
+const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
-
-// 내장 봇 아이콘 사용
-export const BOT_ICON_ID = "bot";
 
 export default class BedrockAssistantPlugin extends Plugin {
   settings: BedrockAssistantSettings;
@@ -21,11 +20,17 @@ export default class BedrockAssistantPlugin extends Plugin {
   indexer: VaultIndexer;
   toolExecutor: ToolExecutor;
   mcpManager: McpManager;
+  // 인덱싱 진행률 표시용 상태바 아이템
+  private statusBarItem: HTMLElement;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // 내장 아이콘 사용 (addIcon 불필요)
+    // 커스텀 아이콘 등록 (SVG가 있는 경우에만)
+    if (BRANDING.icon.svg) {
+      const { addIcon } = await import("obsidian");
+      addIcon(BRANDING.icon.id, BRANDING.icon.svg);
+    }
 
     // Bedrock 클라이언트 초기화
     this.bedrockClient = new BedrockClient(this.settings);
@@ -36,8 +41,9 @@ export default class BedrockAssistantPlugin extends Plugin {
     // 도구 실행기 초기화
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
 
-    // MCP 매니저 초기화
+    // MCP 매니저 초기화 및 타임아웃 설정 적용
     this.mcpManager = new McpManager();
+    this.mcpManager.setTimeout(this.settings.mcpTimeout);
 
     // 사이드바 뷰 등록 (MCP 로드보다 먼저 등록해야 레이아웃 복원 시 뷰가 준비됨)
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -58,12 +64,15 @@ export default class BedrockAssistantPlugin extends Plugin {
     this.loadIndex().catch((e) => console.warn("인덱스 로드 실패:", e));
 
     // 리본 아이콘 추가
-    this.addRibbonIcon(BOT_ICON_ID, "Bedrock Assistant", () => {
+    this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
       this.activateView();
     });
 
     // 설정 탭 추가
     this.addSettingTab(new BedrockSettingTab(this.app, this));
+
+    // 인덱싱 진행률 표시용 상태바 아이템 등록
+    this.statusBarItem = this.addStatusBarItem();
 
     // 커맨드 등록
     this.addCommand({
@@ -76,7 +85,17 @@ export default class BedrockAssistantPlugin extends Plugin {
       id: "index-vault",
       name: "볼트 인덱싱",
       callback: async () => {
-        await this.indexer.indexVault();
+        // 상태바에 인덱싱 진행률 표시
+        this.statusBarItem.setText("인덱싱 중... 0%");
+        await this.indexer.indexVault((current, total) => {
+          const percent = Math.round((current / total) * 100);
+          this.statusBarItem.setText(`인덱싱 중... ${percent}%`);
+        });
+        // 완료 표시 후 3초 뒤 텍스트 제거
+        this.statusBarItem.setText("인덱싱 완료 ✓");
+        setTimeout(() => {
+          this.statusBarItem.setText("");
+        }, 3000);
         await this.saveIndex();
       },
     });
@@ -193,7 +212,7 @@ export default class BedrockAssistantPlugin extends Plugin {
     }
   }
 
-  // 세션 목록 로드
+  // 세션 목록 로드 (파싱 실패 시 백업에서 복구 시도)
   async loadSessions(): Promise<ChatSession[]> {
     try {
       const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
@@ -202,18 +221,53 @@ export default class BedrockAssistantPlugin extends Plugin {
         return JSON.parse(data) as ChatSession[];
       }
     } catch {
-      // 파일 없거나 파싱 실패
+      // 파싱 실패 시 백업 파일에서 복구 시도
+      console.warn("세션 파일 파싱 실패, 백업에서 복구 시도...");
+      try {
+        const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
+        if (bakFile && bakFile instanceof TFile) {
+          const bakData = await this.app.vault.read(bakFile);
+          const sessions = JSON.parse(bakData) as ChatSession[];
+          // 복구 성공: 원본 파일을 백업 데이터로 복원
+          const origFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+          if (origFile && origFile instanceof TFile) {
+            await this.app.vault.modify(origFile, bakData);
+          }
+          new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
+          return sessions;
+        }
+      } catch {
+        // 백업 복구도 실패
+      }
+      new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
     }
     return [];
   }
 
-  // 세션 목록 저장
+  // 세션 목록 저장 (저장 전 기존 파일을 .bak으로 백업)
   async saveSessions(sessions: ChatSession[]): Promise<void> {
     try {
+      // 기존 세션 파일이 있으면 백업 생성
+      const existingFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+      if (existingFile && existingFile instanceof TFile) {
+        try {
+          const existingData = await this.app.vault.read(existingFile);
+          const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
+          if (bakFile && bakFile instanceof TFile) {
+            await this.app.vault.modify(bakFile, existingData);
+          } else {
+            await this.app.vault.create(CHAT_SESSIONS_BACKUP_FILE, existingData);
+          }
+        } catch {
+          // 백업 생성 실패는 저장을 중단하지 않음
+          console.warn("세션 백업 파일 생성 실패");
+        }
+      }
+
+      // 세션 데이터 저장
       const data = JSON.stringify(sessions);
-      const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
-      if (file && file instanceof TFile) {
-        await this.app.vault.modify(file, data);
+      if (existingFile && existingFile instanceof TFile) {
+        await this.app.vault.modify(existingFile, data);
       } else {
         await this.app.vault.create(CHAT_SESSIONS_FILE, data);
       }
@@ -259,7 +313,7 @@ export default class BedrockAssistantPlugin extends Plugin {
 
   // MCP 설정 파일 경로 (플러그인 폴더 내)
   getMcpConfigPath(): string {
-    return `${this.app.vault.configDir}/plugins/bedrock-assistant/${MCP_CONFIG_FILE}`;
+    return `${this.app.vault.configDir}/plugins/${BRANDING.pluginId}/${MCP_CONFIG_FILE}`;
   }
 
   // MCP 설정 로드 및 서버 연결

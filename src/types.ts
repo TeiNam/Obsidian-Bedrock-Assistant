@@ -30,6 +30,10 @@ export interface BedrockAssistantSettings {
   todoArchiveFolder: string;
   // To-Do 아카이브 기준 일수
   todoArchiveDays: number;
+  // 파괴적 도구 실행 전 확인 모달 표시 여부
+  confirmToolExecution: boolean;
+  // MCP 도구 요청 타임아웃 (초)
+  mcpTimeout: number;
 }
 
 export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
@@ -56,6 +60,8 @@ export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
   todoTemplateName: "Daily To-Do",
   todoArchiveFolder: "ToDo/Archive",
   todoArchiveDays: 7,
+  confirmToolExecution: true,
+  mcpTimeout: 30,
 };
 
 // 채팅 메시지 타입

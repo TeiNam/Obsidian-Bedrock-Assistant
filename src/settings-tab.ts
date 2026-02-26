@@ -1,11 +1,12 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type BedrockAssistantPlugin from "./main";
 import { SKILLS } from "./skills";
+import { BRANDING } from "./branding";
 
 // 설정 탭 다국어 레이블
 const I18N = {
   en: {
-    title: "Bedrock Assistant Settings",
+    title: BRANDING.settingsTitle.en,
     pluginDesc: "An AI assistant sidebar for Obsidian powered by AWS Bedrock. Chat with Claude models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
@@ -95,9 +96,13 @@ const I18N = {
     mcpStatusDisconnected: (name: string) => `${name} — disconnected`,
     mcpStatusNone: "No servers connected.",
     folderSelectPlaceholder: "Select a folder...",
+    confirmToolExecution: "Confirm Destructive Tools",
+    confirmToolExecutionDesc: "Show a confirmation dialog before executing destructive tools (edit, delete, move, create)",
+    mcpTimeout: "MCP Tool Timeout",
+    mcpTimeoutDesc: "Timeout in seconds for MCP tool requests (10–120)",
   },
   ko: {
-    title: "Bedrock Assistant 설정",
+    title: BRANDING.settingsTitle.ko,
     pluginDesc: "AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바입니다. Claude 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
@@ -187,6 +192,10 @@ const I18N = {
     mcpStatusDisconnected: (name: string) => `${name} — 연결 끊김`,
     mcpStatusNone: "연결된 서버가 없습니다.",
     folderSelectPlaceholder: "폴더를 선택하세요...",
+    confirmToolExecution: "파괴적 도구 실행 확인",
+    confirmToolExecutionDesc: "파괴적 도구(편집, 삭제, 이동, 생성) 실행 전 확인 대화상자를 표시합니다",
+    mcpTimeout: "MCP 도구 타임아웃",
+    mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (10~120초)",
   },
 } as const;
 
@@ -237,7 +246,7 @@ export class BedrockSettingTab extends PluginSettingTab {
             this.plugin.settings.language = value as "en" | "ko";
             await this.plugin.saveSettings();
             // 열려있는 채팅 뷰 UI 즉시 재빌드
-            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
+            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of leaves) {
               (leaf.view as any).rebuildUI?.();
             }
@@ -444,6 +453,18 @@ export class BedrockSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t.confirmToolExecution)
+      .setDesc(t.confirmToolExecutionDesc)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.confirmToolExecution)
+          .onChange(async (value) => {
+            this.plugin.settings.confirmToolExecution = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName(t.autoAttach)
       .setDesc(t.autoAttachDesc)
       .addToggle((toggle) =>
@@ -477,7 +498,7 @@ export class BedrockSettingTab extends PluginSettingTab {
           .onClick(async () => {
             await this.plugin.clearAllSessions();
             // 열려있는 채팅 뷰도 초기화
-            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
+            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of leaves) {
               (leaf.view as any).clearChat?.();
             }
@@ -519,7 +540,7 @@ export class BedrockSettingTab extends PluginSettingTab {
             this.plugin.settings.chatFontSize = value;
             await this.plugin.saveSettings();
             // 열려있는 채팅 뷰에 즉시 반영
-            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
+            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of leaves) {
               (leaf.view as any).applyFontSize?.();
             }
@@ -654,6 +675,23 @@ export class BedrockSettingTab extends PluginSettingTab {
 
     // MCP 서버 설정
     containerEl.createEl("h3", { text: t.mcpServers });
+
+    // MCP 도구 타임아웃 슬라이더
+    new Setting(containerEl)
+      .setName(t.mcpTimeout)
+      .setDesc(t.mcpTimeoutDesc)
+      .addSlider((slider) =>
+        slider
+          .setLimits(10, 120, 5)
+          .setValue(this.plugin.settings.mcpTimeout)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.mcpTimeout = value;
+            await this.plugin.saveSettings();
+            // 실행 중인 MCP 서버에 즉시 반영
+            this.plugin.mcpManager.setTimeout(value);
+          })
+      );
 
 
     const mcpStatus = this.plugin.mcpManager.getStatus();
@@ -822,7 +860,7 @@ class McpConfigModal extends Modal {
     this.onSaved();
 
     // 채팅 뷰의 MCP 인디케이터도 갱신
-    const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
+    const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
     for (const leaf of leaves) {
       (leaf.view as any).updateMcpIndicator?.();
     }
