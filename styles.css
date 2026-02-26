@@ -1313,3 +1313,13 @@ body.theme-light .ba-message-content pre {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* MCP 서버 상태 리스트 (설정 탭, 관리 버튼 아래 들여쓰기) */
+.ba-mcp-status-list {
+  margin-left: 18px;
+  padding: 6px 0 2px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ba-mcp-status-list > div {
+  padding: 2px 0;
+}
