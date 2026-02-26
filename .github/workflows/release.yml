@@ -24,9 +24,22 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Get tag version
+        id: tag
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Validate tag matches manifest
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          if [ "${{ steps.tag.outputs.version }}" != "$MANIFEST_VERSION" ]; then
+            echo "Tag ${{ steps.tag.outputs.version }} does not match manifest version $MANIFEST_VERSION"
+            exit 1
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.tag.outputs.version }}
           files: |
             main.js
             styles.css
