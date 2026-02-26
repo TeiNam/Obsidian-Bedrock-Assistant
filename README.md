@@ -1,51 +1,61 @@
 # Bedrock Assistant
 
-AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
+![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
+![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
+![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-## 주요 기능
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-- **Claude 채팅** — AWS Bedrock Claude 모델과 사이드바에서 대화
-- **볼트 시맨틱 검색** — Titan Embedding으로 노트를 인덱싱하고 의미 기반 검색
-- **태그 자동 생성** — 노트 내용을 분석하여 태그 자동 추천
-- **템플릿** — 커스텀 템플릿 생성/적용 (변수 치환 지원)
-- **To-Do 관리** — 일일 To-Do 생성, 미완료 항목 자동 승계, 아카이브
-- **MCP 서버 연동** — Model Context Protocol 서버 연결 (uvx, docker 지원)
-- **파일 관리** — AI를 통한 노트 생성/수정/이동/삭제
-- **다국어 지원** — 한국어/영어 UI
-- **파일 첨부** — 드래그앤드롭, 클립보드, 파일 검색으로 컨텍스트 첨부
-- **대화 세션 관리** — 지난 대화 저장/복원
+An AI assistant sidebar plugin for Obsidian, powered by AWS Bedrock.
 
-## 설치
+## Features
 
-### BRAT (권장)
+- **Claude Chat** — Chat with AWS Bedrock Claude models directly from the sidebar
+- **Semantic Vault Search** — Index notes with Titan Embedding and search by meaning
+- **Auto Tag Generation** — Analyze note content and suggest relevant tags
+- **Templates** — Create and apply custom templates with variable substitution
+- **To-Do Management** — Daily to-do creation, automatic carry-over of incomplete items, archiving
+- **MCP Server Integration** — Connect Model Context Protocol servers (uvx, Docker supported)
+- **File Management** — Create, edit, move, and delete notes through AI
+- **Multilingual UI** — English and Korean
+- **File Attachments** — Attach context via drag-and-drop, clipboard, or file search
+- **Chat Session History** — Save and restore past conversations
 
-1. [BRAT](https://github.com/TfTHacker/obsidian42-brat) 플러그인 설치
-2. BRAT 설정에서 이 레포지토리 URL 추가
-3. 플러그인 활성화
+## Installation
 
-### 수동 설치
+### BRAT (Recommended)
 
-1. [Releases](../../releases) 페이지에서 최신 버전의 `main.js`, `styles.css`, `manifest.json` 다운로드
-2. 볼트의 `.obsidian/plugins/bedrock-assistant/` 폴더에 복사
-3. 설정 → 커뮤니티 플러그인에서 활성화
+1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin
+2. Add this repository URL in BRAT settings
+3. Enable the plugin
 
-## 설정
+### Manual Installation
 
-### AWS 인증 (3가지 방식)
+1. Download `main.js`, `styles.css`, and `manifest.json` from the latest [Release](../../releases)
+2. Copy them to `.obsidian/plugins/bedrock-assistant/` in your vault
+3. Enable the plugin in Settings → Community Plugins
 
-- **Manual** — Access Key / Secret Key 직접 입력
-- **Env / Profile** — 환경변수 또는 `~/.aws/credentials` 프로파일
-- **API Key** — Bedrock API Key (Bearer 토큰)
+## Configuration
 
-### 필요 권한
+### AWS Authentication (3 methods)
+
+| Method | Description |
+|--------|-------------|
+| **Manual** | Enter Access Key / Secret Key directly |
+| **Env / Profile** | Use environment variables or `~/.aws/credentials` profile |
+| **API Key** | Bedrock API Key (Bearer token) |
+
+### Required IAM Permissions
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
-- `bedrock:ListFoundationModels` (모델 목록 조회)
+- `bedrock:ListFoundationModels`
 
-## MCP 서버 설정
+## MCP Server Setup
 
-설정 탭 → MCP Servers → Edit Config에서 JSON 형식으로 설정합니다.
+Navigate to Settings → MCP Servers → Edit Config and configure in JSON format:
 
 ```json
 {
@@ -58,6 +68,8 @@ AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바 플러그인입니�
 }
 ```
 
-## 라이선스
+Both `uvx` (Python) and `docker` commands are supported. The plugin automatically resolves command paths for GUI environments.
+
+## License
 
 [MIT](LICENSE)
