@@ -205,7 +205,15 @@ export default class BedrockAssistantPlugin extends Plugin {
       if (file && file instanceof TFile) {
         await this.app.vault.modify(file, data);
       } else {
-        await this.app.vault.create(CHAT_HISTORY_FILE, data);
+        try {
+          await this.app.vault.create(CHAT_HISTORY_FILE, data);
+        } catch {
+          // race condition: 다른 호출이 먼저 파일을 생성한 경우
+          const retry = this.app.vault.getAbstractFileByPath(CHAT_HISTORY_FILE);
+          if (retry && retry instanceof TFile) {
+            await this.app.vault.modify(retry, data);
+          }
+        }
       }
     } catch (error) {
       console.error("대화 히스토리 저장 실패:", error);
