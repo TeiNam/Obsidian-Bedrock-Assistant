@@ -60,7 +60,7 @@ export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
   todoTemplateName: "Daily To-Do",
   todoArchiveFolder: "ToDo/Archive",
   todoArchiveDays: 7,
-  confirmToolExecution: true,
+  confirmToolExecution: false,
   mcpTimeout: 30,
 };
 
