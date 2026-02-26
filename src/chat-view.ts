@@ -1359,14 +1359,7 @@ export class ChatView extends ItemView {
 
       // 모델별 컨텍스트 윈도우 크기 (토큰)
       const modelId = this.plugin.settings.chatModel;
-      let contextWindow = 200000; // 기본값 200K
-      if (modelId.includes("haiku")) {
-        contextWindow = 200000;
-      } else if (modelId.includes("sonnet")) {
-        contextWindow = 1000000; // Sonnet 4.6: 1M (beta)
-      } else if (modelId.includes("opus")) {
-        contextWindow = 1000000; // Opus 4.6: 1M (beta)
-      }
+      const contextWindow = 200000; // Claude 모델 기본 200K
 
       // 현재 사용 중인 토큰 추정
       let totalChars = 0;
@@ -1401,17 +1394,23 @@ export class ChatView extends ItemView {
       // 대략적 토큰 추정 (한국어 혼합 기준 약 2.5자/토큰)
       const estimatedTokens = Math.ceil(totalChars / 2.5);
       const ratio = Math.min(estimatedTokens / contextWindow, 1);
-      const percent = Math.round(ratio * 100);
+
+      // 시각적 비율: 로그 스케일 적용 (적은 사용량에서도 링이 채워지도록)
+      // 0 토큰 → 0, 1K → ~0.15, 10K → ~0.30, 100K → ~0.60, 1M → 1.0
+      const logMax = Math.log10(contextWindow);
+      const visualRatio = estimatedTokens > 0
+        ? Math.min(Math.log10(Math.max(estimatedTokens, 1)) / logMax, 1)
+        : 0;
 
       // SVG 링 업데이트
       const ringSize = 22;
       const strokeWidth = 2.5;
       const radius = (ringSize - strokeWidth) / 2;
       const circumference = 2 * Math.PI * radius;
-      const offset = circumference * (1 - ratio);
+      const offset = circumference * (1 - visualRatio);
       this.contextRingEl.setAttribute("stroke-dashoffset", String(offset));
 
-      // 색상 변경 (사용량에 따라)
+      // 색상 변경 (실제 비율 기준)
       if (ratio > 0.9) {
         this.contextRingEl.setAttribute("stroke", "var(--text-error)");
       } else if (ratio > 0.7) {
@@ -1420,11 +1419,13 @@ export class ChatView extends ItemView {
         this.contextRingEl.setAttribute("stroke", "var(--ba-brand)");
       }
 
-      // 라벨 업데이트
-      this.contextLabelEl.setText(`${percent}%`);
+      // 라벨: 실제 토큰 수 (K 단위)
+      const usedK = (estimatedTokens / 1000).toFixed(1);
+      const totalK = (contextWindow / 1000).toFixed(0);
+      this.contextLabelEl.setText(`${usedK}K`);
       this.contextLabelEl.parentElement?.setAttribute(
         "aria-label",
-        this.t.contextLabel((estimatedTokens / 1000).toFixed(0), (contextWindow / 1000).toFixed(0))
+        this.t.contextLabel(usedK, totalK)
       );
     }
 
