@@ -1173,3 +1173,58 @@ body.theme-light .ba-message-content pre {
 .ba-mcp-indicator-label {
   white-space: nowrap;
 }
+
+/* 세션 목록 모달 */
+.ba-session-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.ba-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  gap: 8px;
+}
+
+.ba-session-row:last-child {
+  border-bottom: none;
+}
+
+.ba-session-info {
+  flex: 1;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.ba-session-info:hover {
+  opacity: 0.7;
+}
+
+.ba-session-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ba-session-date {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ba-session-delete {
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.ba-session-delete:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-hover);
+}

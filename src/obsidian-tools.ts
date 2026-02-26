@@ -128,6 +128,18 @@ export const TOOLS: ToolDefinition[] = [
       required: ["template_name", "output_path"],
     },
   },
+  {
+    name: "move_file",
+    description: "파일 또는 폴더를 다른 위치로 이동하거나 이름을 변경합니다. 대상 폴더가 없으면 자동으로 생성합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source_path: { type: "string", description: "이동할 파일/폴더의 현재 경로 (예: inbox/note.md)" },
+        destination_path: { type: "string", description: "이동할 목적지 경로 (예: Projects/note.md)" },
+      },
+      required: ["source_path", "destination_path"],
+    },
+  },
 ];
 
 // 도구 실행기
@@ -170,6 +182,11 @@ export class ToolExecutor {
             input.template_name as string,
             input.output_path as string,
             (input.variables as Record<string, string>) || {}
+          );
+        case "move_file":
+          return await this.moveFile(
+            input.source_path as string,
+            input.destination_path as string
           );
         default:
           return `알 수 없는 도구: ${toolName}`;
@@ -361,5 +378,32 @@ export class ToolExecutor {
       return `노트가 생성되었습니다: ${outputPath}\n⚠️ 미치환 변수가 남아있습니다: ${remaining.join(", ")}`;
     }
     return `노트가 생성되었습니다: ${outputPath}`;
+  }
+
+  private async moveFile(sourcePath: string, destPath: string): Promise<string> {
+    const source = this.app.vault.getAbstractFileByPath(sourcePath);
+    if (!source) {
+      return `파일/폴더를 찾을 수 없습니다: ${sourcePath}`;
+    }
+
+    // 대상 경로에 이미 파일이 존재하는지 확인
+    const existing = this.app.vault.getAbstractFileByPath(destPath);
+    if (existing) {
+      return `대상 경로에 이미 파일이 존재합니다: ${destPath}`;
+    }
+
+    // 대상 폴더가 없으면 자동 생성
+    const destDir = destPath.substring(0, destPath.lastIndexOf("/"));
+    if (destDir) {
+      const dirExists = this.app.vault.getAbstractFileByPath(destDir);
+      if (!dirExists) {
+        await this.app.vault.createFolder(destDir);
+      }
+    }
+
+    await this.app.vault.rename(source, destPath);
+    const type = source instanceof TFolder ? "폴더" : "파일";
+    new Notice(`${type} 이동됨: ${destPath}`);
+    return `${type}을(를) 이동했습니다: ${sourcePath} → ${destPath}`;
   }
 }

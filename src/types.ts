@@ -65,6 +65,15 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+// 채팅 세션 타입 (다중 대화 관리)
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+}
+
 // 볼트 인덱스 항목
 export interface VaultIndexEntry {
   path: string;

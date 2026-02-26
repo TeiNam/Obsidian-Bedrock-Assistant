@@ -1,7 +1,7 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
 import type BedrockAssistantPlugin from "./main";
 import { KIRO_ICON_ID } from "./main";
-import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo } from "./types";
+import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 
 export const VIEW_TYPE = "assistant-kiro-view";
@@ -44,6 +44,10 @@ const VIEW_I18N = {
     totalIndexedShort: (n: number) => `${n} total indexed`,
     failHeader: (n: number) => `⚠️ ${n} files failed to index`,
     createTodo: "Create To-Do",
+    chatHistory: "Chat history",
+    noSessions: "No saved sessions.",
+    deleteSession: "Delete",
+    sessionDate: (d: string) => `${d}`,
     todoCreated: (path: string) => `To-Do created: ${path}`,
     todoExists: (path: string) => `To-Do already exists: ${path}`,
     todoError: (e: string) => `To-Do creation failed: ${e}`,
@@ -100,6 +104,10 @@ ${content}`,
     totalIndexedShort: (n: number) => `총 ${n}개 인덱싱됨`,
     failHeader: (n: number) => `⚠️ ${n}개 파일 인덱싱 실패`,
     createTodo: "To-Do 생성",
+    chatHistory: "지난 대화",
+    noSessions: "저장된 대화가 없습니다.",
+    deleteSession: "삭제",
+    sessionDate: (d: string) => `${d}`,
     todoCreated: (path: string) => `To-Do 생성됨: ${path}`,
     todoExists: (path: string) => `이미 존재합니다: ${path}`,
     todoError: (e: string) => `To-Do 생성 실패: ${e}`,
@@ -239,7 +247,12 @@ export class ChatView extends ItemView {
     // 새 대화 버튼
     const newBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.newChat } });
     setIcon(newBtn, "square-pen");
-    newBtn.addEventListener("click", () => this.clearChat());
+    newBtn.addEventListener("click", () => this.startNewChat());
+
+    // 지난 대화 버튼
+    const historyBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.chatHistory } });
+    setIcon(historyBtn, "history");
+    historyBtn.addEventListener("click", () => this.showSessionList());
   }
 
   private buildInputArea(): void {
@@ -1541,6 +1554,45 @@ export class ChatView extends ItemView {
           this.updateContextRing();
         }
 
+  // 새 대화 시작 (현재 대화를 세션으로 저장 후 초기화)
+  private async startNewChat(): Promise<void> {
+    if (this.messages.length > 0) {
+      await this.plugin.saveCurrentAsSession(this.messages);
+    }
+    this.clearChat();
+  }
+
+  // 지난 대화 목록 표시
+  private async showSessionList(): Promise<void> {
+    const sessions = await this.plugin.loadSessions();
+    new SessionListModal(this.app, this.plugin, sessions, this.t, async (session) => {
+      await this.loadSession(session);
+    }).open();
+  }
+
+  // 세션 복원
+  private async loadSession(session: ChatSession): Promise<void> {
+    // 현재 대화가 있으면 먼저 저장
+    if (this.messages.length > 0) {
+      await this.plugin.saveCurrentAsSession(this.messages);
+    }
+    this.messages = [...session.messages];
+    this.messagesEl.empty();
+    this.attachedBinaryFiles.clear();
+    for (const msg of this.messages) {
+      if (msg.role === "user") {
+        this.renderUserMessage(msg);
+      } else {
+        const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+        const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+        await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
+      }
+    }
+    this.plugin.saveChatHistory(this.messages);
+    this.scrollToBottom();
+    this.updateContextRing();
+  }
+
 
   private setGenerating(generating: boolean): void {
     this.isGenerating = generating;
@@ -1592,6 +1644,76 @@ export class ChatView extends ItemView {
 }
 
 
+
+// 지난 대화 세션 목록 모달
+class SessionListModal extends Modal {
+  private plugin: BedrockAssistantPlugin;
+  private sessions: ChatSession[];
+  private t: ViewLang;
+  private onSelect: (session: ChatSession) => void;
+
+  constructor(
+    app: import("obsidian").App,
+    plugin: BedrockAssistantPlugin,
+    sessions: ChatSession[],
+    t: ViewLang,
+    onSelect: (session: ChatSession) => void
+  ) {
+    super(app);
+    this.plugin = plugin;
+    this.sessions = sessions;
+    this.t = t;
+    this.onSelect = onSelect;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: this.t.chatHistory });
+
+    if (this.sessions.length === 0) {
+      contentEl.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
+      return;
+    }
+
+    const listEl = contentEl.createDiv({ cls: "ba-session-list" });
+    for (const session of this.sessions) {
+      const row = listEl.createDiv({ cls: "ba-session-row" });
+
+      // 세션 정보 (클릭하면 복원)
+      const infoEl = row.createDiv({ cls: "ba-session-info" });
+      infoEl.createDiv({ cls: "ba-session-title", text: session.title });
+      const date = new Date(session.updatedAt);
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+      infoEl.createDiv({
+        cls: "ba-session-date",
+        text: `${this.t.sessionDate(dateStr)} · ${session.messages.length} messages`,
+      });
+      infoEl.addEventListener("click", () => {
+        this.onSelect(session);
+        this.close();
+      });
+
+      // 삭제 버튼
+      const delBtn = row.createDiv({ cls: "ba-session-delete", attr: { "aria-label": this.t.deleteSession } });
+      setIcon(delBtn, "trash-2");
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        this.sessions = this.sessions.filter((s) => s.id !== session.id);
+        await this.plugin.saveSessions(this.sessions);
+        row.remove();
+        if (this.sessions.length === 0) {
+          listEl.remove();
+          contentEl.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
+        }
+      });
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
 // 볼트 파일 검색 모달
 class FileSearchModal extends FuzzySuggestModal<TFile> {

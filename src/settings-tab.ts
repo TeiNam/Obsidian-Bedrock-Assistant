@@ -48,6 +48,10 @@ const I18N = {
     autoAttachDesc: "Automatically include the currently open note as context",
     persistChat: "Save Chat History",
     persistChatDesc: "Preserve conversation after plugin restart",
+    clearHistory: "Clear All History",
+    clearHistoryDesc: "Delete all saved chat sessions",
+    clearHistoryBtn: "Clear History",
+    clearHistoryConfirm: "All chat history has been cleared.",
     templateFolder: "Template Folder",
     templateFolderDesc: "Vault folder path for storing templates",
     chatFontSize: "Chat Font Size",
@@ -136,6 +140,10 @@ const I18N = {
     autoAttachDesc: "메시지 전송 시 현재 열려있는 노트를 자동으로 컨텍스트에 포함합니다",
     persistChat: "대화 히스토리 저장",
     persistChatDesc: "플러그인 재시작 후에도 대화 내용을 유지합니다",
+    clearHistory: "히스토리 비우기",
+    clearHistoryDesc: "저장된 모든 대화 세션을 삭제합니다",
+    clearHistoryBtn: "히스토리 비우기",
+    clearHistoryConfirm: "모든 대화 히스토리가 삭제되었습니다.",
     templateFolder: "템플릿 폴더",
     templateFolderDesc: "템플릿을 저장할 볼트 내 폴더 경로",
     chatFontSize: "채팅 폰트 크기",
@@ -456,6 +464,24 @@ export class BedrockSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.persistChat = value;
             await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName(t.clearHistory)
+      .setDesc(t.clearHistoryDesc)
+      .addButton((btn) =>
+        btn
+          .setButtonText(t.clearHistoryBtn)
+          .setWarning()
+          .onClick(async () => {
+            await this.plugin.clearAllSessions();
+            // 열려있는 채팅 뷰도 초기화
+            const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+            for (const leaf of leaves) {
+              (leaf.view as any).clearChat?.();
+            }
+            new Notice(t.clearHistoryConfirm);
           })
       );
 
