@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 import type { ToolDefinition } from "./types";
+import { BRANDING } from "./branding";
 
 // PATH에서 실행 파일의 절대 경로를 찾는 유틸리티 (GUI 앱에서 which 대체)
 function resolveCommand(command: string, pathEnv: string): string {
@@ -58,10 +59,17 @@ class McpServerConnection {
   private buffer = "";
   private _tools: ToolDefinition[] = [];
   private _connected = false;
+  // MCP 요청 타임아웃 (밀리초)
+  private _timeoutMs = 30000;
 
   constructor(name: string, config: McpServerConfig) {
     this.name = name;
     this.config = config;
+  }
+
+  // 타임아웃 설정 (초 단위 입력 → 밀리초로 변환)
+  setTimeoutSeconds(seconds: number): void {
+    this._timeoutMs = seconds * 1000;
   }
 
   get tools(): ToolDefinition[] {
@@ -138,7 +146,7 @@ class McpServerConnection {
       await this.sendRequest("initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "assistant-kiro", version: "0.1.0" },
+        clientInfo: { name: BRANDING.pluginId, version: "0.1.0" },
       });
 
       this.sendNotification("notifications/initialized", {});
@@ -201,13 +209,13 @@ class McpServerConnection {
       const payload = `Content-Length: ${Buffer.byteLength(msg)}\r\n\r\n${msg}\n`;
       this.process.stdin.write(payload);
 
-      // 타임아웃 30초
+      // 설정된 타임아웃 적용
       setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(`MCP 요청 타임아웃: ${method}`));
         }
-      }, 30000);
+      }, this._timeoutMs);
     });
   }
 
@@ -307,6 +315,15 @@ class McpServerConnection {
 export class McpManager {
   private servers = new Map<string, McpServerConnection>();
   private config: McpConfig = { mcpServers: {} };
+  private _timeoutSeconds = 30;
+
+  // 모든 서버의 타임아웃 설정 (초 단위)
+  setTimeout(seconds: number): void {
+    this._timeoutSeconds = seconds;
+    for (const server of this.servers.values()) {
+      server.setTimeoutSeconds(seconds);
+    }
+  }
 
   // 설정 로드 및 서버 연결
   async loadConfig(configJson: string): Promise<{ connected: string[]; failed: string[] }> {
@@ -327,6 +344,8 @@ export class McpManager {
       const conn = new McpServerConnection(name, serverConfig);
       try {
         await conn.connect();
+        // 현재 설정된 타임아웃 적용
+        conn.setTimeoutSeconds(this._timeoutSeconds);
         this.servers.set(name, conn);
         connected.push(name);
       } catch (error) {

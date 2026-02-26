@@ -1,10 +1,14 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
 import type BedrockAssistantPlugin from "./main";
-import { KIRO_ICON_ID } from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
+import { BRANDING } from "./branding";
+import { trimConversationHistory } from "./token-trimmer";
+import { isToolError } from "./tool-failure-tracker";
+import { prepareRegeneration } from "./regenerate-helper";
+import { filterSessions } from "./session-search";
 
-export const VIEW_TYPE = "assistant-kiro-view";
+export const VIEW_TYPE = BRANDING.viewType;
 
 // 채팅 뷰 다국어 레이블
 const VIEW_I18N = {
@@ -57,7 +61,20 @@ const VIEW_I18N = {
     webSearchHint: "[Web search enabled: Search the web for up-to-date information when needed. Include source URLs.]",
     contextLabel: (used: string, total: string) => `Context: ~${used}K / ${total}K tokens`,
     toolError: (e: string) => `Tool execution error: ${e}`,
+    toolConfirmTitle: "Confirm Tool Execution",
+    toolConfirmMessage: (name: string) => `The AI wants to execute a destructive tool: "${name}"`,
+    toolConfirmParams: "Parameters:",
+    toolConfirmApprove: "Execute",
+    toolConfirmDeny: "Deny",
+    toolDenied: "Tool execution denied by user.",
+    toolConsecutiveFailures: "Tool execution failed 3 times in a row. Stopping the tool loop to prevent further errors.",
     attachedFileLabel: (path: string) => `[Attached file: ${path}]`,
+    exportChat: "Export chat",
+    exportSuccess: (path: string) => `Chat exported: ${path}`,
+    exportEmpty: "No messages to export.",
+    regenerate: "Regenerate",
+    sessionSearch: "Search conversations...",
+    sessionSearchNoResults: "No matching conversations.",
     tagPrompt: (title: string, content: string) => `Analyze the following note and generate 3 appropriate tags.
 Output only the tags separated by commas on a single line. No other explanation needed.
 Tags can be in English or the note's language, matching the content.
@@ -117,7 +134,20 @@ ${content}`,
     webSearchHint: "[웹 서치 활성화됨: 필요한 경우 최신 정보를 웹에서 검색하여 답변에 포함하세요. 출처 URL을 함께 제공하세요.]",
     contextLabel: (used: string, total: string) => `컨텍스트: ~${used}K / ${total}K 토큰`,
     toolError: (e: string) => `도구 실행 오류: ${e}`,
+    toolConfirmTitle: "도구 실행 확인",
+    toolConfirmMessage: (name: string) => `AI가 파괴적 도구를 실행하려 합니다: "${name}"`,
+    toolConfirmParams: "파라미터:",
+    toolConfirmApprove: "실행",
+    toolConfirmDeny: "거부",
+    toolDenied: "사용자가 도구 실행을 거부했습니다.",
+    toolConsecutiveFailures: "도구 실행이 3회 연속 실패하여 루프를 중단합니다. 추가 오류를 방지하기 위해 중단되었습니다.",
     attachedFileLabel: (path: string) => `[첨부 파일: ${path}]`,
+    exportChat: "대화 내보내기",
+    exportSuccess: (path: string) => `대화 내보내기 완료: ${path}`,
+    exportEmpty: "내보낼 메시지가 없습니다.",
+    regenerate: "재생성",
+    sessionSearch: "대화 검색...",
+    sessionSearchNoResults: "일치하는 대화가 없습니다.",
     tagPrompt: (title: string, content: string) => `다음 노트의 내용을 분석하여 적절한 태그 3개를 생성해주세요.
 태그만 쉼표로 구분하여 한 줄로 출력하세요. 다른 설명은 불필요합니다.
 태그는 한국어 또는 영어로, 노트 내용에 맞게 작성하세요.
@@ -182,11 +212,11 @@ export class ChatView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Bedrock Assistant";
+    return BRANDING.displayName;
   }
 
   getIcon(): string {
-    return KIRO_ICON_ID;
+    return BRANDING.icon.id;
   }
 
   // 현재 언어에 맞는 I18N 레이블 반환
@@ -233,11 +263,16 @@ export class ChatView extends ItemView {
     // 타이틀
     const titleSlot = header.createDiv({ cls: "ba-title-slot" });
     const titleIcon = titleSlot.createDiv({ cls: "ba-title-icon" });
-    setIcon(titleIcon, KIRO_ICON_ID);
-    titleSlot.createEl("h4", { text: "Assistant Kiro", cls: "ba-title-text" });
+    setIcon(titleIcon, BRANDING.icon.id);
+    titleSlot.createEl("h4", { text: BRANDING.displayName, cls: "ba-title-text" });
 
     // 액션 버튼들
     const actions = header.createDiv({ cls: "ba-header-actions" });
+
+    // 대화 내보내기 버튼
+    const exportBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.exportChat } });
+    setIcon(exportBtn, "download");
+    exportBtn.addEventListener("click", () => this.exportChat());
 
     // 인덱싱 버튼
     const indexBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.indexVault } });
@@ -519,6 +554,21 @@ export class ChatView extends ItemView {
   }
 
   // ============================================
+  // 대화 히스토리 토큰 트리밍 (REQ-3)
+  // ============================================
+
+  /**
+   * 컨텍스트 윈도우 초과를 방지하기 위해 오래된 메시지를 제거합니다.
+   * 핵심 로직은 token-trimmer.ts에 분리되어 있습니다.
+   */
+  private trimMessages(
+    messages: ConverseMessage[],
+    tools: import("./types").ToolDefinition[]
+  ): void {
+    trimConversationHistory(messages, tools);
+  }
+
+  // ============================================
   // 응답 생성 (도구 사용 루프 포함)
   // ============================================
 
@@ -554,10 +604,16 @@ export class ChatView extends ItemView {
       }
 
       const MAX_TOOL_ROUNDS = 10; // 무한 루프 방지
+      const MAX_CONSECUTIVE_FAILURES = 3; // 연속 실패 허용 횟수
+      let consecutiveFailures = 0; // 연속 실패 카운터
       let fullText = "";
 
       // 옵시디언 내장 도구 + MCP 도구 합치기
       const allTools = [...TOOLS, ...this.plugin.mcpManager.getAllTools()];
+
+      // ── 대화 히스토리 토큰 트리밍 (REQ-3) ──
+      // 컨텍스트 윈도우 초과 방지를 위해 오래된 메시지부터 제거
+      this.trimMessages(converseMessages, allTools);
 
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -566,21 +622,47 @@ export class ChatView extends ItemView {
           // 텍스트 스트리밍 렌더링용
           let roundText = "";
 
+          // requestAnimationFrame 기반 디바운싱 변수
+          let renderPending = false;
+          let streamingPreEl: HTMLPreElement | null = null;
+
           const result = await this.plugin.bedrockClient.converse(
             converseMessages,
             allTools,
             (delta) => {
-              // 텍스트 델타 실시간 렌더링
+              // 텍스트 델타: 누적만 하고 렌더링은 다음 프레임에서 한 번만 수행
               if (this.abortController?.signal.aborted) return;
               if (thinkingEl.parentElement) thinkingEl.remove();
               roundText += delta;
               fullText += delta;
-              contentEl.empty();
-              MarkdownRenderer.render(this.app, fullText, contentEl, "", this);
-              this.scrollToBottom();
+
+              // 렌더링이 이미 예약되어 있으면 누적만 하고 리턴
+              if (renderPending) return;
+              renderPending = true;
+
+              requestAnimationFrame(() => {
+                renderPending = false;
+                if (this.abortController?.signal.aborted) return;
+
+                // 스트리밍 중에는 <pre> 태그로 빠르게 표시 (마크다운 파싱 생략)
+                if (!streamingPreEl) {
+                  contentEl.empty();
+                  streamingPreEl = contentEl.createEl("pre", { cls: "ba-streaming-text" });
+                }
+                streamingPreEl.textContent = fullText;
+                this.scrollToBottom();
+              });
             },
             this.abortController.signal
           );
+
+          // 스트리밍 완료 후 마크다운으로 최종 렌더링
+          if (streamingPreEl && fullText) {
+            contentEl.empty();
+            streamingPreEl = null;
+            MarkdownRenderer.render(this.app, fullText, contentEl, "", this);
+            this.scrollToBottom();
+          }
 
           // 어시스턴트 응답을 히스토리에 추가 (Converse API 형식)
           const assistantContent: unknown[] = [];
@@ -616,12 +698,36 @@ export class ChatView extends ItemView {
             if (this.abortController?.signal.aborted) break;
 
             const toolResult = await this.executeAndRenderTool(toolBlock, contentEl);
+
+            // 연속 실패 카운터 관리: 에러 문자열 접두사로 실패 여부 판별
+            if (isToolError(toolResult)) {
+              consecutiveFailures++;
+            } else {
+              // 성공 시 카운터 리셋
+              consecutiveFailures = 0;
+            }
+
             toolResultContents.push({
               toolResult: {
                 toolUseId: toolBlock.toolUseId,
                 content: [{ text: toolResult }],
               },
             });
+
+            // 연속 실패 횟수 초과 시 루프 조기 중단
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              break;
+            }
+          }
+
+          // 연속 실패 횟수 초과 시 전체 도구 루프 중단 + 사용자 안내
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            contentEl.createDiv({
+              cls: "ba-error",
+              text: this.t.toolConsecutiveFailures,
+            });
+            this.scrollToBottom();
+            break;
           }
 
           // 도구 결과를 user 메시지로 추가 (Converse API 규약)
@@ -636,6 +742,19 @@ export class ChatView extends ItemView {
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
         const footer = msgEl.createDiv({ cls: "ba-response-footer" });
         footer.createSpan({ cls: "ba-duration", text: `${duration}s` });
+
+        // 재생성 버튼 추가 (REQ-8)
+        const regenBtn = footer.createEl("button", {
+          cls: "ba-regenerate-btn",
+          attr: { "aria-label": this.t.regenerate },
+        });
+        setIcon(regenBtn, "refresh-cw");
+        regenBtn.createSpan({ text: this.t.regenerate });
+        regenBtn.addEventListener("click", () => {
+          if (!this.isGenerating) {
+            this.regenerateLastResponse();
+          }
+        });
 
         // 최종 텍스트를 ChatMessage 히스토리에 저장
         if (fullText) {
@@ -686,6 +805,40 @@ export class ChatView extends ItemView {
       setIcon(statusEl, "loader");
 
       this.scrollToBottom();
+
+      // 파괴적 도구 목록 확인 및 사용자 확인 모달 표시
+      const DESTRUCTIVE_TOOLS = ["edit_note", "delete_file", "move_file", "create_note"];
+      if (
+        this.plugin.settings.confirmToolExecution &&
+        DESTRUCTIVE_TOOLS.includes(toolBlock.name)
+      ) {
+        const approved = await new Promise<boolean>((resolve) => {
+          let resolved = false;
+          new ToolConfirmModal(
+            this.app,
+            toolBlock.name,
+            toolBlock.input,
+            this.t,
+            (result: boolean) => {
+              // onClose에서 중복 호출 방지
+              if (!resolved) {
+                resolved = true;
+                resolve(result);
+              }
+            }
+          ).open();
+        });
+
+        if (!approved) {
+          // 사용자가 거부한 경우
+          statusEl.removeClass("status-running");
+          statusEl.addClass("status-error");
+          statusEl.empty();
+          setIcon(statusEl, "x");
+          this.scrollToBottom();
+          return this.t.toolDenied;
+        }
+      }
 
       try {
         // MCP 도구인지 확인하여 라우팅
@@ -1470,7 +1623,7 @@ export class ChatView extends ItemView {
         const progressEl = this.messagesEl.createDiv({ cls: "ba-index-progress" });
         const progressLabel = progressEl.createDiv({ cls: "ba-index-label" });
         const labelIcon = progressLabel.createSpan({ cls: "ba-index-label-icon" });
-        setIcon(labelIcon, KIRO_ICON_ID);
+        setIcon(labelIcon, BRANDING.icon.id);
         const labelText = progressLabel.createSpan({ text: this.t.checkingChanges });
         const progressBarOuter = progressEl.createDiv({ cls: "ba-progress-bar-outer" });
         const progressBarInner = progressBarOuter.createDiv({ cls: "ba-progress-bar-inner" });
@@ -1544,6 +1697,57 @@ export class ChatView extends ItemView {
   // 유틸리티
   // ============================================
 
+  // 마지막 어시스턴트 응답을 제거하고 다시 생성 (REQ-8)
+  private async regenerateLastResponse(): Promise<void> {
+    // 스트리밍 중에는 실행 불가
+    if (this.isGenerating) return;
+
+    // 마지막 어시스턴트 메시지를 히스토리에서 제거
+    const trimmed = prepareRegeneration(this.messages);
+    if (!trimmed) return;
+    this.messages = trimmed;
+
+    // 마지막 어시스턴트 메시지 DOM 요소 제거
+    const assistantEls = this.messagesEl.querySelectorAll(".ba-message-assistant");
+    if (assistantEls.length > 0) {
+      assistantEls[assistantEls.length - 1].remove();
+    }
+
+    // 응답 재생성
+    await this.generateResponse();
+  }
+
+  // 현재 대화를 마크다운 파일로 내보내기
+  private async exportChat(): Promise<void> {
+    // 내보낼 메시지가 없으면 알림
+    if (this.messages.length === 0) {
+      new Notice(this.t.exportEmpty);
+      return;
+    }
+
+    // 메시지를 마크다운 포맷으로 변환
+    const lines: string[] = [];
+    for (const msg of this.messages) {
+      const role = msg.role === "user" ? "User" : "Assistant";
+      lines.push(`## ${role}\n${msg.content}\n\n---\n`);
+    }
+    const markdown = lines.join("\n");
+
+    // 파일명 생성: Chat Export YYYY-MM-DD HH-mm.md
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fileName = `Chat Export ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}.md`;
+
+    // 볼트 루트에 저장
+    try {
+      await this.app.vault.create(fileName, markdown);
+      new Notice(this.t.exportSuccess(fileName));
+    } catch (e) {
+      // 동일 파일명이 이미 존재하는 경우 등 에러 처리
+      new Notice(this.t.error(String(e)));
+    }
+  }
+
   private clearChat(): void {
           this.messages = [];
           this.messagesEl.empty();
@@ -1615,7 +1819,17 @@ export class ChatView extends ItemView {
       const history = await this.plugin.loadChatHistory();
       if (history.length > 0) {
         this.messages = history;
-        for (const msg of history) {
+        // 마지막 어시스턴트 메시지 인덱스를 찾아 재생성 버튼 추가 대상 결정
+        let lastAssistantIdx = -1;
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i].role === "assistant") {
+            lastAssistantIdx = i;
+            break;
+          }
+        }
+
+        for (let i = 0; i < history.length; i++) {
+          const msg = history[i];
           if (msg.role === "user") {
             this.renderUserMessage(msg);
           } else {
@@ -1623,6 +1837,22 @@ export class ChatView extends ItemView {
             const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
             const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
             await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
+
+            // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
+            if (i === lastAssistantIdx) {
+              const footer = msgEl.createDiv({ cls: "ba-response-footer" });
+              const regenBtn = footer.createEl("button", {
+                cls: "ba-regenerate-btn",
+                attr: { "aria-label": this.t.regenerate },
+              });
+              setIcon(regenBtn, "refresh-cw");
+              regenBtn.createSpan({ text: this.t.regenerate });
+              regenBtn.addEventListener("click", () => {
+                if (!this.isGenerating) {
+                  this.regenerateLastResponse();
+                }
+              });
+            }
           }
         }
         this.scrollToBottom();
@@ -1652,6 +1882,7 @@ class SessionListModal extends Modal {
   private sessions: ChatSession[];
   private t: ViewLang;
   private onSelect: (session: ChatSession) => void;
+  private listEl: HTMLDivElement | null = null;
 
   constructor(
     app: import("obsidian").App,
@@ -1672,24 +1903,69 @@ class SessionListModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h3", { text: this.t.chatHistory });
 
-    if (this.sessions.length === 0) {
-      contentEl.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
+    // 검색 입력 필드 추가
+    const searchContainer = contentEl.createDiv({ cls: "ba-session-search" });
+    const searchInput = searchContainer.createEl("input", {
+      type: "text",
+      placeholder: this.t.sessionSearch,
+      cls: "ba-session-search-input",
+    });
+
+    // 세션 목록 컨테이너
+    this.listEl = contentEl.createDiv({ cls: "ba-session-list" });
+
+    // 초기 렌더링 (전체 세션)
+    this.renderFilteredSessions("");
+
+    // 실시간 필터링 (keyup 이벤트)
+    searchInput.addEventListener("keyup", () => {
+      this.renderFilteredSessions(searchInput.value);
+    });
+
+    // 모달 열릴 때 검색 입력에 포커스
+    searchInput.focus();
+  }
+
+  /** 검색어로 필터링된 세션 목록을 렌더링 */
+  private renderFilteredSessions(query: string): void {
+    if (!this.listEl) return;
+    this.listEl.empty();
+
+    const results = filterSessions(this.sessions, query);
+
+    if (results.length === 0) {
+      const msg = query.trim()
+        ? this.t.sessionSearchNoResults
+        : this.t.noSessions;
+      this.listEl.createEl("p", { text: msg, cls: "setting-item-description" });
       return;
     }
 
-    const listEl = contentEl.createDiv({ cls: "ba-session-list" });
-    for (const session of this.sessions) {
-      const row = listEl.createDiv({ cls: "ba-session-row" });
+    for (const result of results) {
+      const session = result.session;
+      const row = this.listEl.createDiv({ cls: "ba-session-row" });
 
       // 세션 정보 (클릭하면 복원)
       const infoEl = row.createDiv({ cls: "ba-session-info" });
-      infoEl.createDiv({ cls: "ba-session-title", text: session.title });
+
+      // 하이라이트된 제목 (innerHTML 사용)
+      const titleEl = infoEl.createDiv({ cls: "ba-session-title" });
+      titleEl.innerHTML = result.highlightedTitle;
+
+      // 날짜 정보
       const date = new Date(session.updatedAt);
       const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
       infoEl.createDiv({
         cls: "ba-session-date",
         text: `${this.t.sessionDate(dateStr)} · ${session.messages.length} messages`,
       });
+
+      // 검색어가 있고 첫 메시지에서 매칭된 경우 미리보기 표시
+      if (query.trim() && result.highlightedPreview) {
+        const previewEl = infoEl.createDiv({ cls: "ba-session-preview" });
+        previewEl.innerHTML = result.highlightedPreview;
+      }
+
       infoEl.addEventListener("click", () => {
         this.onSelect(session);
         this.close();
@@ -1704,8 +1980,8 @@ class SessionListModal extends Modal {
         await this.plugin.saveSessions(this.sessions);
         row.remove();
         if (this.sessions.length === 0) {
-          listEl.remove();
-          contentEl.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
+          this.listEl?.empty();
+          this.listEl?.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
         }
       });
     }
@@ -1715,6 +1991,7 @@ class SessionListModal extends Modal {
     this.contentEl.empty();
   }
 }
+
 
 // 볼트 파일 검색 모달
 class FileSearchModal extends FuzzySuggestModal<TFile> {
@@ -1736,6 +2013,80 @@ class FileSearchModal extends FuzzySuggestModal<TFile> {
 
   onChooseItem(item: TFile): void {
     this.onChoose(item);
+  }
+}
+
+// 파괴적 도구 실행 전 사용자 확인 모달
+class ToolConfirmModal extends Modal {
+  private toolName: string;
+  private toolInput: Record<string, unknown>;
+  private t: ViewLang;
+  private resolvePromise: (approved: boolean) => void;
+
+  constructor(
+    app: import("obsidian").App,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    t: ViewLang,
+    resolvePromise: (approved: boolean) => void
+  ) {
+    super(app);
+    this.toolName = toolName;
+    this.toolInput = toolInput;
+    this.t = t;
+    this.resolvePromise = resolvePromise;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("ba-tool-confirm-modal");
+
+    // 제목
+    contentEl.createEl("h3", { text: this.t.toolConfirmTitle });
+
+    // 도구 이름 안내 메시지
+    contentEl.createEl("p", {
+      text: this.t.toolConfirmMessage(this.toolName),
+      cls: "ba-tool-confirm-message",
+    });
+
+    // 파라미터 표시
+    contentEl.createEl("p", {
+      text: this.t.toolConfirmParams,
+      cls: "ba-tool-confirm-params-label",
+    });
+    const paramsEl = contentEl.createEl("pre", { cls: "ba-tool-confirm-params" });
+    paramsEl.setText(JSON.stringify(this.toolInput, null, 2));
+
+    // 버튼 행
+    const btnRow = contentEl.createDiv({ cls: "ba-tool-confirm-btn-row" });
+
+    // 실행 버튼
+    const approveBtn = btnRow.createEl("button", {
+      text: this.t.toolConfirmApprove,
+      cls: "mod-cta",
+    });
+    approveBtn.addEventListener("click", () => {
+      this.resolvePromise(true);
+      this.close();
+    });
+
+    // 거부 버튼
+    const denyBtn = btnRow.createEl("button", {
+      text: this.t.toolConfirmDeny,
+      cls: "mod-warning",
+    });
+    denyBtn.addEventListener("click", () => {
+      this.resolvePromise(false);
+      this.close();
+    });
+  }
+
+  onClose(): void {
+    // 모달이 닫힐 때 아직 resolve되지 않았으면 거부로 처리
+    this.resolvePromise(false);
+    this.contentEl.empty();
   }
 }
 

@@ -9,6 +9,8 @@ export class VaultIndexer {
   private index: Map<string, VaultIndexEntry> = new Map();
   private indexing = false;
   private useEmbeddings = true;
+  // 인덱싱 중 발생한 파일 변경을 큐잉하기 위한 대기열
+  private pendingFiles: Set<string> = new Set();
 
   constructor(app: App, client: BedrockClient) {
     this.app = app;
@@ -112,6 +114,10 @@ export class VaultIndexer {
       }
 
       this.indexing = false;
+
+      // 인덱싱 중 큐잉된 파일들을 순차 처리
+      await this.processPendingFiles();
+
       let msg = `인덱싱 완료: ${processed}개 처리`;
       if (skippedUpToDate.length > 0) msg += `, ${skippedUpToDate.length}개 최신`;
       if (skippedEmpty > 0) msg += `, ${skippedEmpty}개 빈 파일`;
@@ -147,8 +153,33 @@ export class VaultIndexer {
       });
     }
 
+  // 인덱싱 중 큐잉된 대기 파일들을 순차 처리
+  private async processPendingFiles(): Promise<void> {
+    if (this.pendingFiles.size === 0) return;
+
+    const paths = Array.from(this.pendingFiles);
+    this.pendingFiles.clear();
+
+    for (const path of paths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) {
+        try {
+          await this.indexFile(file);
+        } catch (error) {
+          console.error(`대기열 파일 인덱싱 실패: ${path}`, error);
+        }
+      }
+    }
+  }
+
   // 단일 파일 인덱싱
+  // 전체 인덱싱 중이면 대기열에 추가 후 즉시 리턴
   async indexFile(file: TFile): Promise<void> {
+    if (this.indexing) {
+      this.pendingFiles.add(file.path);
+      return;
+    }
+
     const existing = this.index.get(file.path);
     if (existing && existing.lastModified >= file.stat.mtime) {
       return;

@@ -5,7 +5,8 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest --run"
   },
   "keywords": [],
   "author": "",
@@ -16,7 +17,8 @@
     "esbuild": "^0.21.0",
     "obsidian": "latest",
     "tslib": "2.6.2",
-    "typescript": "5.4.5"
+    "typescript": "5.4.5",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock": "^3.997.0",

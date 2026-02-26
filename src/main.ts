@@ -1,4 +1,4 @@
-import { Plugin, TFile, addIcon } from "obsidian";
+import { Notice, Plugin, TFile, addIcon } from "obsidian";
 import { BedrockClient } from "./bedrock-client";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
@@ -6,15 +6,13 @@ import { ChatView, VIEW_TYPE } from "./chat-view";
 import { BedrockSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
+import { BRANDING } from "./branding";
 
-const INDEX_FILE = ".assistant-kiro-index.json";
-const CHAT_HISTORY_FILE = ".assistant-kiro-chat.json";
-const CHAT_SESSIONS_FILE = ".assistant-kiro-sessions.json";
+const INDEX_FILE = BRANDING.files.index;
+const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
+const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
+const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
-
-// 커스텀 Kiro 아이콘 (icon.svg 기반, viewBox 맞춤)
-const KIRO_ICON = `<svg viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="m" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#m)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="currentColor"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="currentColor"/></g></svg>`;
-export const KIRO_ICON_ID = "kiro-assistant";
 
 export default class BedrockAssistantPlugin extends Plugin {
   settings: BedrockAssistantSettings;
@@ -22,12 +20,16 @@ export default class BedrockAssistantPlugin extends Plugin {
   indexer: VaultIndexer;
   toolExecutor: ToolExecutor;
   mcpManager: McpManager;
+  // 인덱싱 진행률 표시용 상태바 아이템
+  private statusBarItem: HTMLElement;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // 커스텀 아이콘 등록
-    addIcon(KIRO_ICON_ID, KIRO_ICON);
+    // 커스텀 아이콘 등록 (SVG가 있는 경우에만)
+    if (BRANDING.icon.svg) {
+      addIcon(BRANDING.icon.id, BRANDING.icon.svg);
+    }
 
     // Bedrock 클라이언트 초기화
     this.bedrockClient = new BedrockClient(this.settings);
@@ -38,8 +40,9 @@ export default class BedrockAssistantPlugin extends Plugin {
     // 도구 실행기 초기화
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
 
-    // MCP 매니저 초기화
+    // MCP 매니저 초기화 및 타임아웃 설정 적용
     this.mcpManager = new McpManager();
+    this.mcpManager.setTimeout(this.settings.mcpTimeout);
 
     // 사이드바 뷰 등록 (MCP 로드보다 먼저 등록해야 레이아웃 복원 시 뷰가 준비됨)
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -60,12 +63,15 @@ export default class BedrockAssistantPlugin extends Plugin {
     this.loadIndex().catch((e) => console.warn("인덱스 로드 실패:", e));
 
     // 리본 아이콘 추가
-    this.addRibbonIcon(KIRO_ICON_ID, "Assistant Kiro", () => {
+    this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
       this.activateView();
     });
 
     // 설정 탭 추가
     this.addSettingTab(new BedrockSettingTab(this.app, this));
+
+    // 인덱싱 진행률 표시용 상태바 아이템 등록
+    this.statusBarItem = this.addStatusBarItem();
 
     // 커맨드 등록
     this.addCommand({
@@ -78,7 +84,17 @@ export default class BedrockAssistantPlugin extends Plugin {
       id: "index-vault",
       name: "볼트 인덱싱",
       callback: async () => {
-        await this.indexer.indexVault();
+        // 상태바에 인덱싱 진행률 표시
+        this.statusBarItem.setText("인덱싱 중... 0%");
+        await this.indexer.indexVault((current, total) => {
+          const percent = Math.round((current / total) * 100);
+          this.statusBarItem.setText(`인덱싱 중... ${percent}%`);
+        });
+        // 완료 표시 후 3초 뒤 텍스트 제거
+        this.statusBarItem.setText("인덱싱 완료 ✓");
+        setTimeout(() => {
+          this.statusBarItem.setText("");
+        }, 3000);
         await this.saveIndex();
       },
     });
@@ -195,7 +211,7 @@ export default class BedrockAssistantPlugin extends Plugin {
     }
   }
 
-  // 세션 목록 로드
+  // 세션 목록 로드 (파싱 실패 시 백업에서 복구 시도)
   async loadSessions(): Promise<ChatSession[]> {
     try {
       const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
@@ -204,18 +220,53 @@ export default class BedrockAssistantPlugin extends Plugin {
         return JSON.parse(data) as ChatSession[];
       }
     } catch {
-      // 파일 없거나 파싱 실패
+      // 파싱 실패 시 백업 파일에서 복구 시도
+      console.warn("세션 파일 파싱 실패, 백업에서 복구 시도...");
+      try {
+        const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
+        if (bakFile && bakFile instanceof TFile) {
+          const bakData = await this.app.vault.read(bakFile);
+          const sessions = JSON.parse(bakData) as ChatSession[];
+          // 복구 성공: 원본 파일을 백업 데이터로 복원
+          const origFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+          if (origFile && origFile instanceof TFile) {
+            await this.app.vault.modify(origFile, bakData);
+          }
+          new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
+          return sessions;
+        }
+      } catch {
+        // 백업 복구도 실패
+      }
+      new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
     }
     return [];
   }
 
-  // 세션 목록 저장
+  // 세션 목록 저장 (저장 전 기존 파일을 .bak으로 백업)
   async saveSessions(sessions: ChatSession[]): Promise<void> {
     try {
+      // 기존 세션 파일이 있으면 백업 생성
+      const existingFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+      if (existingFile && existingFile instanceof TFile) {
+        try {
+          const existingData = await this.app.vault.read(existingFile);
+          const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
+          if (bakFile && bakFile instanceof TFile) {
+            await this.app.vault.modify(bakFile, existingData);
+          } else {
+            await this.app.vault.create(CHAT_SESSIONS_BACKUP_FILE, existingData);
+          }
+        } catch {
+          // 백업 생성 실패는 저장을 중단하지 않음
+          console.warn("세션 백업 파일 생성 실패");
+        }
+      }
+
+      // 세션 데이터 저장
       const data = JSON.stringify(sessions);
-      const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
-      if (file && file instanceof TFile) {
-        await this.app.vault.modify(file, data);
+      if (existingFile && existingFile instanceof TFile) {
+        await this.app.vault.modify(existingFile, data);
       } else {
         await this.app.vault.create(CHAT_SESSIONS_FILE, data);
       }
@@ -261,7 +312,7 @@ export default class BedrockAssistantPlugin extends Plugin {
 
   // MCP 설정 파일 경로 (플러그인 폴더 내)
   getMcpConfigPath(): string {
-    return `${this.app.vault.configDir}/plugins/assistant-kiro/${MCP_CONFIG_FILE}`;
+    return `${this.app.vault.configDir}/plugins/${BRANDING.pluginId}/${MCP_CONFIG_FILE}`;
   }
 
   // MCP 설정 로드 및 서버 연결
