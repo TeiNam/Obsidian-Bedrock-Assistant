@@ -5,7 +5,7 @@ import { SKILLS } from "./skills";
 // 설정 탭 다국어 레이블
 const I18N = {
   en: {
-    title: "Assistant Kiro Settings",
+    title: "Bedrock Assistant Settings",
     pluginDesc: "An AI assistant sidebar for Obsidian powered by AWS Bedrock. Chat with Claude models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
@@ -97,7 +97,7 @@ const I18N = {
     folderSelectPlaceholder: "Select a folder...",
   },
   ko: {
-    title: "Assistant Kiro 설정",
+    title: "Bedrock Assistant 설정",
     pluginDesc: "AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바입니다. Claude 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
@@ -237,7 +237,7 @@ export class BedrockSettingTab extends PluginSettingTab {
             this.plugin.settings.language = value as "en" | "ko";
             await this.plugin.saveSettings();
             // 열려있는 채팅 뷰 UI 즉시 재빌드
-            const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
             for (const leaf of leaves) {
               (leaf.view as any).rebuildUI?.();
             }
@@ -477,7 +477,7 @@ export class BedrockSettingTab extends PluginSettingTab {
           .onClick(async () => {
             await this.plugin.clearAllSessions();
             // 열려있는 채팅 뷰도 초기화
-            const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
             for (const leaf of leaves) {
               (leaf.view as any).clearChat?.();
             }
@@ -519,7 +519,7 @@ export class BedrockSettingTab extends PluginSettingTab {
             this.plugin.settings.chatFontSize = value;
             await this.plugin.saveSettings();
             // 열려있는 채팅 뷰에 즉시 반영
-            const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+            const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
             for (const leaf of leaves) {
               (leaf.view as any).applyFontSize?.();
             }
@@ -822,7 +822,7 @@ class McpConfigModal extends Modal {
     this.onSaved();
 
     // 채팅 뷰의 MCP 인디케이터도 갱신
-    const leaves = this.app.workspace.getLeavesOfType("assistant-kiro-view");
+    const leaves = this.app.workspace.getLeavesOfType("bedrock-assistant-view");
     for (const leaf of leaves) {
       (leaf.view as any).updateMcpIndicator?.();
     }

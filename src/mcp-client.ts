@@ -138,7 +138,7 @@ class McpServerConnection {
       await this.sendRequest("initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "assistant-kiro", version: "0.1.0" },
+        clientInfo: { name: "bedrock-assistant", version: "0.1.0" },
       });
 
       this.sendNotification("notifications/initialized", {});

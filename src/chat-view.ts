@@ -1,10 +1,10 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
 import type BedrockAssistantPlugin from "./main";
-import { KIRO_ICON_ID } from "./main";
+import { BOT_ICON_ID } from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 
-export const VIEW_TYPE = "assistant-kiro-view";
+export const VIEW_TYPE = "bedrock-assistant-view";
 
 // 채팅 뷰 다국어 레이블
 const VIEW_I18N = {
@@ -186,7 +186,7 @@ export class ChatView extends ItemView {
   }
 
   getIcon(): string {
-    return KIRO_ICON_ID;
+    return BOT_ICON_ID;
   }
 
   // 현재 언어에 맞는 I18N 레이블 반환
@@ -233,8 +233,8 @@ export class ChatView extends ItemView {
     // 타이틀
     const titleSlot = header.createDiv({ cls: "ba-title-slot" });
     const titleIcon = titleSlot.createDiv({ cls: "ba-title-icon" });
-    setIcon(titleIcon, KIRO_ICON_ID);
-    titleSlot.createEl("h4", { text: "Assistant Kiro", cls: "ba-title-text" });
+    setIcon(titleIcon, BOT_ICON_ID);
+    titleSlot.createEl("h4", { text: "Bedrock Assistant", cls: "ba-title-text" });
 
     // 액션 버튼들
     const actions = header.createDiv({ cls: "ba-header-actions" });
@@ -1469,7 +1469,7 @@ export class ChatView extends ItemView {
         const progressEl = this.messagesEl.createDiv({ cls: "ba-index-progress" });
         const progressLabel = progressEl.createDiv({ cls: "ba-index-label" });
         const labelIcon = progressLabel.createSpan({ cls: "ba-index-label-icon" });
-        setIcon(labelIcon, KIRO_ICON_ID);
+        setIcon(labelIcon, BOT_ICON_ID);
         const labelText = progressLabel.createSpan({ text: this.t.checkingChanges });
         const progressBarOuter = progressEl.createDiv({ cls: "ba-progress-bar-outer" });
         const progressBarInner = progressBarOuter.createDiv({ cls: "ba-progress-bar-inner" });

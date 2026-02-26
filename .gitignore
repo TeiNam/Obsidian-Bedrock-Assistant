@@ -8,8 +8,9 @@ node_modules/
 data.json
 
 # 인덱스/히스토리 파일
-.assistant-kiro-index.json
-.assistant-kiro-chat.json
+.bedrock-assistant-index.json
+.bedrock-assistant-chat.json
+.bedrock-assistant-sessions.json
 
 # 시스템 파일
 .DS_Store

@@ -1,6 +1,6 @@
 {
-  "id": "assistant-kiro",
-  "name": "Assistant Kiro",
+  "id": "bedrock-assistant",
+  "name": "Bedrock Assistant",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
   "description": "AWS Bedrock 기반 AI 어시스턴트. Claude 채팅, Titan 임베딩을 활용한 볼트 인덱싱 및 Obsidian 제어.",

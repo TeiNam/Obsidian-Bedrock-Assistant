@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-assistant-kiro",
+  "name": "obsidian-bedrock-assistant",
   "version": "0.1.0",
   "description": "Obsidian sidebar AI assistant powered by AWS Bedrock (Claude + Titan Embedding)",
   "main": "main.js",
