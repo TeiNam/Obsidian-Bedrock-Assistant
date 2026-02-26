@@ -1293,7 +1293,29 @@ export class ChatView extends ItemView {
       // 전일자(또는 가장 최근) To-Do에서 미완료 항목 가져오기
       const carryOver = await this.getUnfinishedTasks(folder, now);
       if (carryOver.length > 0) {
-        content = this.injectCarryOverTasks(content, carryOver);
+        // AI로 미완료 항목을 템플릿 섹션별로 분류
+        const classified = await this.classifyTasksWithAI(content, carryOver);
+
+        if (classified.has("__fallback__")) {
+          // AI 분류 실패 또는 섹션 부족 → 기존 방식으로 주입
+          content = this.injectCarryOverTasks(content, classified.get("__fallback__")!);
+        } else {
+          // 섹션별로 분류된 항목을 해당 위치에 주입
+          for (const [section, sectionTasks] of classified) {
+            const taskBlock = sectionTasks.join("\n");
+            // 해당 섹션 헤더를 찾아서 그 아래에 삽입
+            const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const headerPattern = new RegExp("^(##\\s+" + escapedSection + ".*)", "im");
+            const headerMatch = content.match(headerPattern);
+            if (headerMatch && headerMatch.index !== undefined) {
+              const insertPos = headerMatch.index + headerMatch[0].length;
+              content = content.substring(0, insertPos) + "\n" + taskBlock + content.substring(insertPos);
+            } else {
+              // 매칭 섹션 없으면 문서 끝에 추가
+              content += "\n\n## \uD83D\uDD04 " + section + "\n\n" + taskBlock + "\n";
+            }
+          }
+        }
       }
 
       const file = await this.app.vault.create(path, content);
@@ -1346,30 +1368,133 @@ export class ChatView extends ItemView {
 
   // 미완료 항목을 템플릿 콘텐츠에 주입
   private injectCarryOverTasks(content: string, tasks: string[]): string {
-    const taskBlock = tasks.join("\n");
+      const taskBlock = tasks.join("\n");
 
-    // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
-    // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
-    const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
-    const match = content.match(sectionPattern);
+      // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
+      // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
+      const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
+      const match = content.match(sectionPattern);
 
-    if (match && match.index !== undefined) {
-      // 섹션 헤더 다음 줄에 삽입
-      const insertPos = match.index + match[0].length;
-      const after = content.substring(insertPos);
-      // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
-      const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
-      if (nextContentMatch && nextContentMatch.index !== undefined) {
-        const pos = insertPos + nextContentMatch.index;
-        return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
+      if (match && match.index !== undefined) {
+        // 섹션 헤더 다음 줄에 삽입
+        const insertPos = match.index + match[0].length;
+        const after = content.substring(insertPos);
+        // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
+        const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
+        if (nextContentMatch && nextContentMatch.index !== undefined) {
+          const pos = insertPos + nextContentMatch.index;
+          return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
+        }
+        // 섹션 끝에 추가
+        return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
       }
-      // 섹션 끝에 추가
-      return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
+
+      // 섹션을 못 찾으면 문서 끝에 추가
+      return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
     }
 
-    // 섹션을 못 찾으면 문서 끝에 추가
-    return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
-  }
+    /**
+     * AI를 사용해 미완료 태스크를 템플릿 섹션별로 분류
+     * 템플릿의 ## 헤더를 읽어서 각 항목을 적절한 섹션에 배치
+     */
+    private async classifyTasksWithAI(
+      templateContent: string,
+      tasks: string[]
+    ): Promise<Map<string, string[]>> {
+      // 템플릿에서 ## 섹션 헤더 추출
+      const sectionHeaders: string[] = [];
+      for (const line of templateContent.split("\n")) {
+        const m = line.match(/^##\s+(.+)/);
+        if (m) sectionHeaders.push(m[1].trim());
+      }
+
+      // 섹션이 2개 미만이면 분류 불필요
+      if (sectionHeaders.length < 2) {
+        const result = new Map<string, string[]>();
+        result.set("__fallback__", tasks);
+        return result;
+      }
+
+      const lang = this.plugin.settings.language === "ko" ? "ko" : "en";
+      const prompt = lang === "ko"
+        ? `다음은 To-Do 템플릿의 섹션 목록과 미완료 항목들입니다.
+  각 항목을 가장 적절한 섹션에 분류해주세요.
+
+  섹션 목록:
+  ${sectionHeaders.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+
+  미완료 항목:
+  ${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*- \[ \]\s*/, "")}`).join("\n")}
+
+  JSON 형식으로만 응답하세요. 키는 섹션 이름, 값은 항목 번호 배열입니다.
+  예시: {"업무": [1, 3], "개인": [2]}
+  분류가 애매한 항목은 첫 번째 섹션에 넣으세요.`
+        : `Here are the section headers from a To-Do template and unfinished tasks.
+  Classify each task into the most appropriate section.
+
+  Sections:
+  ${sectionHeaders.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+
+  Unfinished tasks:
+  ${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*- \[ \]\s*/, "")}`).join("\n")}
+
+  Respond ONLY in JSON. Keys are section names, values are arrays of task numbers.
+  Example: {"Work": [1, 3], "Personal": [2]}
+  Put ambiguous tasks in the first section.`;
+
+      try {
+        const messages = [{ role: "user" as const, content: [{ text: prompt }] }];
+        const result = await this.plugin.bedrockClient.converse(messages);
+        const textBlock = result.contentBlocks.find((b) => b.type === "text");
+        if (!textBlock || textBlock.type !== "text") throw new Error("No text response");
+
+        // JSON 추출 (코드블록 안에 있을 수 있음)
+        let jsonStr = textBlock.text.trim();
+        const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
+
+        const classification = JSON.parse(jsonStr) as Record<string, number[]>;
+        const classified = new Map<string, string[]>();
+
+        for (const [section, indices] of Object.entries(classification)) {
+          const sectionTasks: string[] = [];
+          for (const idx of indices) {
+            if (idx >= 1 && idx <= tasks.length) {
+              sectionTasks.push(tasks[idx - 1]);
+            }
+          }
+          if (sectionTasks.length > 0) {
+            classified.set(section, sectionTasks);
+          }
+        }
+
+        // 분류되지 않은 항목 처리
+        const classifiedIndices = new Set(
+          Object.values(classification).flat()
+        );
+        const unclassified: string[] = [];
+        for (let i = 0; i < tasks.length; i++) {
+          if (!classifiedIndices.has(i + 1)) {
+            unclassified.push(tasks[i]);
+          }
+        }
+        if (unclassified.length > 0) {
+          const firstSection = sectionHeaders[0];
+          const existing = classified.get(firstSection) || [];
+          classified.set(firstSection, [...existing, ...unclassified]);
+        }
+
+        return classified;
+      } catch (e) {
+        // AI 분류 실패 시 폴백: 전부 하나로
+        console.warn("AI 태스크 분류 실패, 폴백 사용:", e);
+        const result = new Map<string, string[]>();
+        result.set("__fallback__", tasks);
+        return result;
+      }
+    }
+
+
 
   // 기준 일수를 초과한 To-Do 파일을 아카이브 폴더로 이동
   private async archiveOldTodos(todoFolder: string, now: Date): Promise<void> {

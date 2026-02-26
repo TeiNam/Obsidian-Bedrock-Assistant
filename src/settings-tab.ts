@@ -694,22 +694,6 @@ export class BedrockSettingTab extends PluginSettingTab {
       );
 
 
-    const mcpStatus = this.plugin.mcpManager.getStatus();
-    if (mcpStatus.length > 0) {
-      const statusEl = containerEl.createDiv({ cls: "setting-item-description" });
-      for (const s of mcpStatus) {
-        const icon = s.connected ? "🟢" : "🔴";
-        statusEl.createDiv({
-          text: `${icon} ${s.name} — ${s.toolCount} tools`,
-        });
-      }
-    } else {
-      containerEl.createEl("p", {
-        text: t.mcpNoServers,
-        cls: "setting-item-description",
-      });
-    }
-
     new Setting(containerEl)
       .setName(t.mcpManage)
       .setDesc(t.mcpManageDesc)
@@ -725,6 +709,23 @@ export class BedrockSettingTab extends PluginSettingTab {
           this.display();
         })
       );
+
+    // MCP 서버 상태 리스트 (관리 버튼 아래, 들여쓰기)
+    const mcpStatus = this.plugin.mcpManager.getStatus();
+    if (mcpStatus.length > 0) {
+      const statusEl = containerEl.createDiv({ cls: "ba-mcp-status-list" });
+      for (const s of mcpStatus) {
+        const icon = s.connected ? "🟢" : "🔴";
+        statusEl.createDiv({
+          text: `${icon} ${s.name} — ${s.toolCount} tools`,
+        });
+      }
+    } else {
+      containerEl.createEl("p", {
+        text: t.mcpNoServers,
+        cls: "setting-item-description ba-mcp-status-list",
+      });
+    }
   }
 
   // 비밀 입력 필드 옆에 눈 아이콘 토글 버튼 추가
