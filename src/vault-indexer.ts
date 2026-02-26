@@ -16,72 +16,136 @@ export class VaultIndexer {
   }
 
   // 전체 볼트 인덱싱
-  async indexVault(onProgress?: (current: number, total: number) => void): Promise<IndexResult> {
-    if (this.indexing) {
-      new Notice("인덱싱이 이미 진행 중입니다.");
-      return { processed: 0, skipped: 0, errors: [] };
-    }
-
-    this.indexing = true;
-    const files = this.app.vault.getMarkdownFiles();
-    let processed = 0;
-    let skipped = 0;
-    const failures: IndexFailure[] = [];
-
-    new Notice(`볼트 인덱싱 시작: ${files.length}개 파일`);
-
-    // 첫 파일로 임베딩 가능 여부 테스트
-    if (files.length > 0) {
-      try {
-        await this.client.getEmbedding("test");
-        this.useEmbeddings = true;
-      } catch (error) {
-        console.warn("임베딩 모델 사용 불가, 키워드 검색으로 전환:", error);
-        this.useEmbeddings = false;
-        new Notice("⚠️ 임베딩 모델 접근 불가 → 키워드 검색 모드로 인덱싱");
+  // 인크리멘털 볼트 인덱싱 (변경/신규 파일만 처리, 삭제된 파일 정리)
+    async indexVault(onProgress?: (current: number, total: number) => void): Promise<IndexResult> {
+      if (this.indexing) {
+        new Notice("인덱싱이 이미 진행 중입니다.");
+        return { processed: 0, skipped: 0, errors: [] };
       }
-    }
 
-    for (const file of files) {
-      try {
-        const content = await this.app.vault.cachedRead(file);
-        if (!content.trim()) {
-          skipped++;
-          onProgress?.(processed + failures.length + skipped, files.length);
-          continue;
+      this.indexing = true;
+      const files = this.app.vault.getMarkdownFiles();
+
+      // 삭제된 파일 인덱스에서 제거
+      const currentPaths = new Set(files.map((f) => f.path));
+      const removedPaths: string[] = [];
+      for (const indexedPath of this.index.keys()) {
+        if (!currentPaths.has(indexedPath)) {
+          removedPaths.push(indexedPath);
         }
-        await this.indexFile(file);
-        processed++;
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        failures.push({ path: file.path, reason });
-        console.error(`인덱싱 실패: ${file.path}`, error);
-        // API 속도 제한 에러 시 잠시 대기 후 재시도
-        if (this.useEmbeddings) {
-          await sleep(1000);
-          try {
-            await this.indexFile(file);
-            failures.pop(); // 재시도 성공 시 실패 목록에서 제거
-            processed++;
-          } catch {
-            // 재시도도 실패하면 넘어감
+      }
+      for (const p of removedPaths) {
+        this.index.delete(p);
+      }
+
+      // 변경/신규 파일만 필터링
+      const filesToIndex: TFile[] = [];
+      const skippedUpToDate: TFile[] = [];
+      for (const file of files) {
+        const existing = this.index.get(file.path);
+        if (existing && existing.lastModified >= file.stat.mtime) {
+          skippedUpToDate.push(file);
+        } else {
+          filesToIndex.push(file);
+        }
+      }
+
+      const totalFiles = filesToIndex.length;
+      let processed = 0;
+      let skippedEmpty = 0;
+      const failures: IndexFailure[] = [];
+
+      if (totalFiles === 0) {
+        this.indexing = false;
+        const msg = removedPaths.length > 0
+          ? `인덱스 정리 완료: ${removedPaths.length}개 삭제됨, 변경 파일 없음`
+          : "모든 파일이 최신 상태입니다.";
+        new Notice(msg);
+        return { processed: 0, skipped: skippedUpToDate.length, errors: [] };
+      }
+
+      new Notice(`인크리멘털 인덱싱: ${totalFiles}개 파일 (${skippedUpToDate.length}개 스킵)`);
+
+      // 첫 파일로 임베딩 가능 여부 테스트 (인덱스가 비어있을 때만)
+      if (!this.hasEmbeddings() || this.index.size === 0) {
+        try {
+          await this.client.getEmbedding("test");
+          this.useEmbeddings = true;
+        } catch (error) {
+          console.warn("임베딩 모델 사용 불가, 키워드 검색으로 전환:", error);
+          this.useEmbeddings = false;
+          new Notice("⚠️ 임베딩 모델 접근 불가 → 키워드 검색 모드로 인덱싱");
+        }
+      }
+
+      for (const file of filesToIndex) {
+        try {
+          const content = await this.app.vault.cachedRead(file);
+          if (!content.trim()) {
+            skippedEmpty++;
+            onProgress?.(processed + failures.length + skippedEmpty, totalFiles);
+            continue;
+          }
+          // indexFile 내부의 lastModified 체크를 우회하기 위해 직접 인덱싱
+          await this.forceIndexFile(file);
+          processed++;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          failures.push({ path: file.path, reason });
+          console.error(`인덱싱 실패: ${file.path}`, error);
+          // API 속도 제한 에러 시 잠시 대기 후 재시도
+          if (this.useEmbeddings) {
+            await sleep(1000);
+            try {
+              await this.forceIndexFile(file);
+              failures.pop();
+              processed++;
+            } catch {
+              // 재시도도 실패하면 넘어감
+            }
           }
         }
-      }
-      onProgress?.(processed + failures.length + skipped, files.length);
+        onProgress?.(processed + failures.length + skippedEmpty, totalFiles);
 
-      // 임베딩 사용 시 API 속도 제한 방지 (200ms로 증가)
-      if (this.useEmbeddings) await sleep(200);
+        // 임베딩 사용 시 API 속도 제한 방지
+        if (this.useEmbeddings) await sleep(200);
+      }
+
+      this.indexing = false;
+      let msg = `인덱싱 완료: ${processed}개 처리`;
+      if (skippedUpToDate.length > 0) msg += `, ${skippedUpToDate.length}개 최신`;
+      if (skippedEmpty > 0) msg += `, ${skippedEmpty}개 빈 파일`;
+      if (removedPaths.length > 0) msg += `, ${removedPaths.length}개 삭제 정리`;
+      if (failures.length > 0) msg += `, ${failures.length}개 실패`;
+      new Notice(msg);
+
+      return { processed, skipped: skippedUpToDate.length + skippedEmpty, errors: failures };
     }
 
-    this.indexing = false;
-    let msg = `인덱싱 완료: ${processed}개 성공`;
-    if (skipped > 0) msg += `, ${skipped}개 빈 파일 스킵`;
-    if (failures.length > 0) msg += `, ${failures.length}개 실패`;
-    new Notice(msg);
+    // lastModified 체크 없이 강제 인덱싱
+    private async forceIndexFile(file: TFile): Promise<void> {
+      const content = await this.app.vault.cachedRead(file);
+      if (!content.trim()) return;
 
-    return { processed, skipped, errors: failures };
-  }
+      const titleMatch = content.match(/^#\s+(.+)$/m);
+      const title = titleMatch ? titleMatch[1] : file.basename;
+      const excerpt = content.slice(0, 500);
+
+      let embedding: number[] = [];
+      if (this.useEmbeddings) {
+        const embeddingText = `${title}\n${content.slice(0, 5000)}`;
+        embedding = await this.client.getEmbedding(embeddingText);
+      }
+
+      this.index.set(file.path, {
+        path: file.path,
+        embedding,
+        lastModified: file.stat.mtime,
+        title,
+        excerpt,
+        searchText: `${title}\n${content}`.toLowerCase(),
+      });
+    }
 
   // 단일 파일 인덱싱
   async indexFile(file: TFile): Promise<void> {

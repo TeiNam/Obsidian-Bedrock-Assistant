@@ -1,11 +1,13 @@
 // 플러그인 설정 타입
 export interface BedrockAssistantSettings {
+  language: "en" | "ko";
   awsRegion: string;
-  // 자격증명 소스: "manual" = 직접 입력, "env" = 환경변수/프로파일
-  awsCredentialSource: "manual" | "env";
+  // 자격증명 소스: "manual" = 직접 입력, "env" = 환경변수/프로파일, "apikey" = Bedrock API Key
+  awsCredentialSource: "manual" | "env" | "apikey";
   awsAccessKeyId: string;
   awsSecretAccessKey: string;
   awsProfile: string; // env 모드에서 사용할 AWS 프로파일명
+  bedrockApiKey: string; // Bedrock API Key (Bearer 토큰)
   chatModel: string;
   embeddingModel: string;
   maxTokens: number;
@@ -16,24 +18,44 @@ export interface BedrockAssistantSettings {
   enabledSkills: string[];
   // 대화 히스토리 저장 여부
   persistChat: boolean;
+  // 템플릿 저장 폴더 경로
+  templateFolder: string;
+  // 채팅 영역 폰트 크기 (px)
+  chatFontSize: number;
+  // To-Do 리스트 저장 폴더 경로
+  todoFolder: string;
+  // To-Do 템플릿 파일명 (템플릿 폴더 내, .md 제외)
+  todoTemplateName: string;
+  // To-Do 아카이브 폴더 경로
+  todoArchiveFolder: string;
+  // To-Do 아카이브 기준 일수
+  todoArchiveDays: number;
 }
 
 export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
+  language: "en",
   awsRegion: "us-east-1",
   awsCredentialSource: "manual",
   awsAccessKeyId: "",
   awsSecretAccessKey: "",
   awsProfile: "default",
+  bedrockApiKey: "",
   chatModel: "global.anthropic.claude-opus-4-6-v1",
   embeddingModel: "amazon.titan-embed-text-v2:0",
   maxTokens: 32000,
-  temperature: 0.7,
+  temperature: 0.1,
   systemPrompt:
-    "You are a helpful assistant embedded in Obsidian. You can help with note-taking, searching the vault, and answering questions based on the user's notes. Respond in the same language the user uses.",
-  welcomeGreeting: "무엇을 도와드릴까요?",
+    "You are a helpful assistant embedded in Obsidian. You can help with note-taking, searching the vault, and answering questions based on the user's notes. Respond in the same language the user uses. When writing code blocks, always specify the programming language (e.g. ```python, ```javascript, ```sql) so that syntax highlighting and Code Styler plugin can render them properly.",
+  welcomeGreeting: "",
   autoAttachActiveNote: true,
   enabledSkills: ["obsidian-markdown", "obsidian-bases", "json-canvas"],
   persistChat: true,
+  templateFolder: "Templates",
+  chatFontSize: 14,
+  todoFolder: "ToDo",
+  todoTemplateName: "Daily To-Do",
+  todoArchiveFolder: "ToDo/Archive",
+  todoArchiveDays: 7,
 };
 
 // 채팅 메시지 타입
@@ -41,6 +63,15 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+}
+
+// 채팅 세션 타입 (다중 대화 관리)
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
 }
 
 // 볼트 인덱스 항목
@@ -110,4 +141,12 @@ export interface IndexResult {
   processed: number;
   skipped: number;
   errors: IndexFailure[];
+}
+
+// 모델 정보 (목록 조회 결과)
+export interface ModelInfo {
+  modelId: string;
+  modelName: string;
+  provider: string;
+  isProfile: boolean; // 추론 프로파일 여부
 }
