@@ -140,6 +140,17 @@ export const TOOLS: ToolDefinition[] = [
       required: ["source_path", "destination_path"],
     },
   },
+  {
+    name: "delete_file",
+    description: "파일 또는 폴더를 삭제합니다. 폴더의 경우 하위 내용도 함께 삭제됩니다. 삭제된 항목은 옵시디언 휴지통(.trash)으로 이동합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "삭제할 파일/폴더 경로 (예: old-notes/draft.md)" },
+      },
+      required: ["path"],
+    },
+  },
 ];
 
 // 도구 실행기
@@ -188,6 +199,8 @@ export class ToolExecutor {
             input.source_path as string,
             input.destination_path as string
           );
+        case "delete_file":
+          return await this.deleteFile(input.path as string);
         default:
           return `알 수 없는 도구: ${toolName}`;
       }
@@ -405,5 +418,17 @@ export class ToolExecutor {
     const type = source instanceof TFolder ? "폴더" : "파일";
     new Notice(`${type} 이동됨: ${destPath}`);
     return `${type}을(를) 이동했습니다: ${sourcePath} → ${destPath}`;
+  }
+
+  private async deleteFile(path: string): Promise<string> {
+    const target = this.app.vault.getAbstractFileByPath(path);
+    if (!target) {
+      return `파일/폴더를 찾을 수 없습니다: ${path}`;
+    }
+    const type = target instanceof TFolder ? "폴더" : "파일";
+    // 옵시디언 휴지통(.trash)으로 이동
+    await this.app.vault.trash(target, false);
+    new Notice(`${type} 삭제됨: ${path}`);
+    return `${type}을(를) 삭제했습니다: ${path}`;
   }
 }
