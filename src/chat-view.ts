@@ -806,40 +806,6 @@ export class ChatView extends ItemView {
 
       this.scrollToBottom();
 
-      // 파괴적 도구 목록 확인 및 사용자 확인 모달 표시
-      const DESTRUCTIVE_TOOLS = ["edit_note", "delete_file", "move_file", "create_note"];
-      if (
-        this.plugin.settings.confirmToolExecution &&
-        DESTRUCTIVE_TOOLS.includes(toolBlock.name)
-      ) {
-        const approved = await new Promise<boolean>((resolve) => {
-          let resolved = false;
-          new ToolConfirmModal(
-            this.app,
-            toolBlock.name,
-            toolBlock.input,
-            this.t,
-            (result: boolean) => {
-              // onClose에서 중복 호출 방지
-              if (!resolved) {
-                resolved = true;
-                resolve(result);
-              }
-            }
-          ).open();
-        });
-
-        if (!approved) {
-          // 사용자가 거부한 경우
-          statusEl.removeClass("status-running");
-          statusEl.addClass("status-error");
-          statusEl.empty();
-          setIcon(statusEl, "x");
-          this.scrollToBottom();
-          return this.t.toolDenied;
-        }
-      }
-
       try {
         // MCP 도구인지 확인하여 라우팅
         let result: string;
