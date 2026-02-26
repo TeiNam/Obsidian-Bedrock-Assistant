@@ -379,4 +379,33 @@ export class BedrockClient {
     const body = JSON.parse(new TextDecoder().decode(response.body));
     return body.embedding;
   }
+
+  /**
+   * 경량 converse 호출 (시스템 프롬프트/스킬 없이, 낮은 maxTokens)
+   * 분류, 요약 등 간단한 작업에 사용
+   */
+  async converseLight(
+    userText: string,
+    systemText = "You are a helpful assistant. Respond only in JSON.",
+    maxTokens = 1024
+  ): Promise<{ text: string }> {
+    const input = {
+      modelId: this.settings.chatModel,
+      messages: [{ role: "user", content: [{ text: userText }] }],
+      system: [{ text: systemText }],
+      inferenceConfig: { maxTokens, temperature: 0 },
+    };
+    const command = new ConverseCommand(input as any);
+    const response = await this.client.send(command);
+    const output = response.output;
+    if (output && "message" in output && output.message?.content) {
+      for (const block of output.message.content) {
+        if ("text" in block && block.text) {
+          return { text: block.text };
+        }
+      }
+    }
+    throw new Error("No text in converseLight response");
+  }
+
 }

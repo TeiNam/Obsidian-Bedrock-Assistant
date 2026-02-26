@@ -1293,29 +1293,27 @@ export class ChatView extends ItemView {
       // 전일자(또는 가장 최근) To-Do에서 미완료 항목 가져오기
       const carryOver = await this.getUnfinishedTasks(folder, now);
       if (carryOver.length > 0) {
-        // AI로 미완료 항목을 템플릿 섹션별로 분류
-        const classified = await this.classifyTasksWithAI(content, carryOver);
+        // 템플릿에서 오늘의 할 일 섹션 내 ### 서브섹션 추출
+        const subSections = this.extractTodoSubSections(content);
 
-        if (classified.has("__fallback__")) {
-          // AI 분류 실패 또는 섹션 부족 → 기존 방식으로 주입
-          content = this.injectCarryOverTasks(content, classified.get("__fallback__")!);
-        } else {
-          // 섹션별로 분류된 항목을 해당 위치에 주입
+        if (subSections.length >= 2) {
+          // AI로 서브섹션별 분류
+          const classified = await this.classifyTasksForSections(subSections, carryOver);
+          // 각 서브섹션의 빈 체크박스 자리에 분류된 항목 주입
           for (const [section, sectionTasks] of classified) {
-            const taskBlock = sectionTasks.join("\n");
-            // 해당 섹션 헤더를 찾아서 그 아래에 삽입
-            const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const headerPattern = new RegExp("^(##\\s+" + escapedSection + ".*)", "im");
-            const headerMatch = content.match(headerPattern);
-            if (headerMatch && headerMatch.index !== undefined) {
-              const insertPos = headerMatch.index + headerMatch[0].length;
-              content = content.substring(0, insertPos) + "\n" + taskBlock + content.substring(insertPos);
-            } else {
-              // 매칭 섹션 없으면 문서 끝에 추가
-              content += "\n\n## \uD83D\uDD04 " + section + "\n\n" + taskBlock + "\n";
-            }
+            content = this.injectTasksIntoSubSection(content, section, sectionTasks);
           }
+        } else {
+          // 서브섹션이 없으면 기존 방식으로 주입
+          content = this.injectCarryOverTasks(content, carryOver);
         }
+      }
+
+      // 이전 투두의 메모 섹션에서 오늘 이후(오늘 포함) 날짜 항목을 메모에 승계
+      const datedNotes = await this.getDatedNotesFromPrevTodo(folder, now);
+      if (datedNotes.length > 0) {
+        const noteLines = datedNotes.map((n) => n.raw);
+        content = this.injectNotesIntoMemoSection(content, noteLines);
       }
 
       const file = await this.app.vault.create(path, content);
@@ -1394,62 +1392,72 @@ export class ChatView extends ItemView {
     }
 
     /**
-     * AI를 사용해 미완료 태스크를 템플릿 섹션별로 분류
-     * 템플릿의 ## 헤더를 읽어서 각 항목을 적절한 섹션에 배치
+     * 템플릿의 "오늘의 할 일" / "To-Do" 섹션 내 ### 서브섹션 이름 추출
      */
-    private async classifyTasksWithAI(
-      templateContent: string,
+    private extractTodoSubSections(content: string): string[] {
+      const lines = content.split("\n");
+      const subSections: string[] = [];
+      let inTodoSection = false;
+
+      for (const line of lines) {
+        // ## 오늘의 할 일 / To-Do 섹션 시작 감지
+        if (/^##\s+.*(?:오늘의 할 일|할 일|to.?do|tasks)/i.test(line)) {
+          inTodoSection = true;
+          continue;
+        }
+        // 다음 ## 섹션이 나오면 종료 (### 제외)
+        if (inTodoSection && /^##\s+/.test(line) && !/^###/.test(line)) {
+          break;
+        }
+        // ### 서브섹션 수집
+        if (inTodoSection) {
+          const m = line.match(/^###\s+(.+)/);
+          if (m) subSections.push(m[1].trim());
+        }
+      }
+      return subSections;
+    }
+
+    /**
+     * AI를 사용해 미완료 태스크를 지정된 서브섹션별로 분류
+     */
+    private async classifyTasksForSections(
+      sections: string[],
       tasks: string[]
     ): Promise<Map<string, string[]>> {
-      // 템플릿에서 ## 섹션 헤더 추출
-      const sectionHeaders: string[] = [];
-      for (const line of templateContent.split("\n")) {
-        const m = line.match(/^##\s+(.+)/);
-        if (m) sectionHeaders.push(m[1].trim());
-      }
-
-      // 섹션이 2개 미만이면 분류 불필요
-      if (sectionHeaders.length < 2) {
-        const result = new Map<string, string[]>();
-        result.set("__fallback__", tasks);
-        return result;
-      }
-
       const lang = this.plugin.settings.language === "ko" ? "ko" : "en";
       const prompt = lang === "ko"
-        ? `다음은 To-Do 템플릿의 섹션 목록과 미완료 항목들입니다.
-  각 항목을 가장 적절한 섹션에 분류해주세요.
+        ? `다음은 미완료 To-Do 항목들과 분류할 카테고리입니다.
+각 항목을 가장 적절한 카테고리에 분류해주세요.
 
-  섹션 목록:
-  ${sectionHeaders.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+카테고리:
+${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
-  미완료 항목:
-  ${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*- \[ \]\s*/, "")}`).join("\n")}
+미완료 항목:
+${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*-\s*\[ \]\s*/, "").replace(/^\t/, "")}`).join("\n")}
 
-  JSON 형식으로만 응답하세요. 키는 섹션 이름, 값은 항목 번호 배열입니다.
-  예시: {"업무": [1, 3], "개인": [2]}
-  분류가 애매한 항목은 첫 번째 섹션에 넣으세요.`
-        : `Here are the section headers from a To-Do template and unfinished tasks.
-  Classify each task into the most appropriate section.
+JSON 형식으로만 응답하세요. 키는 카테고리 이름(위 목록과 정확히 동일), 값은 항목 번호 배열입니다.
+예시: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
+모든 항목을 반드시 분류하세요.`
+        : `Classify these unfinished To-Do items into the given categories.
 
-  Sections:
-  ${sectionHeaders.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+Categories:
+${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
-  Unfinished tasks:
-  ${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*- \[ \]\s*/, "")}`).join("\n")}
+Items:
+${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*-\s*\[ \]\s*/, "").replace(/^\t/, "")}`).join("\n")}
 
-  Respond ONLY in JSON. Keys are section names, values are arrays of task numbers.
-  Example: {"Work": [1, 3], "Personal": [2]}
-  Put ambiguous tasks in the first section.`;
+Respond ONLY in JSON. Keys must exactly match category names above, values are arrays of item numbers.
+Example: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
+Classify ALL items.`;
 
       try {
-        const messages = [{ role: "user" as const, content: [{ text: prompt }] }];
-        const result = await this.plugin.bedrockClient.converse(messages);
-        const textBlock = result.contentBlocks.find((b) => b.type === "text");
-        if (!textBlock || textBlock.type !== "text") throw new Error("No text response");
+        const result = await this.plugin.bedrockClient.converseLight(
+          prompt,
+          "You are a task classifier. Respond only in JSON."
+        );
 
-        // JSON 추출 (코드블록 안에 있을 수 있음)
-        let jsonStr = textBlock.text.trim();
+        let jsonStr = result.text.trim();
         const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
         if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
 
@@ -1468,10 +1476,8 @@ export class ChatView extends ItemView {
           }
         }
 
-        // 분류되지 않은 항목 처리
-        const classifiedIndices = new Set(
-          Object.values(classification).flat()
-        );
+        // 분류되지 않은 항목은 첫 번째 섹션에 추가
+        const classifiedIndices = new Set(Object.values(classification).flat());
         const unclassified: string[] = [];
         for (let i = 0; i < tasks.length; i++) {
           if (!classifiedIndices.has(i + 1)) {
@@ -1479,19 +1485,244 @@ export class ChatView extends ItemView {
           }
         }
         if (unclassified.length > 0) {
-          const firstSection = sectionHeaders[0];
+          const firstSection = sections[0];
           const existing = classified.get(firstSection) || [];
           classified.set(firstSection, [...existing, ...unclassified]);
         }
 
         return classified;
       } catch (e) {
-        // AI 분류 실패 시 폴백: 전부 하나로
-        console.warn("AI 태스크 분류 실패, 폴백 사용:", e);
+        console.warn("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
         const result = new Map<string, string[]>();
-        result.set("__fallback__", tasks);
+        result.set(sections[0], tasks);
         return result;
       }
+    }
+
+    /**
+     * 템플릿의 특정 ### 서브섹션 내 빈 체크박스(- [ ] ) 자리에 태스크 주입
+     */
+    private injectTasksIntoSubSection(
+      content: string,
+      sectionName: string,
+      tasks: string[]
+    ): string {
+      const lines = content.split("\n");
+      const result: string[] = [];
+      let found = false;
+      let injected = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // ### 서브섹션 헤더 매칭
+        if (!injected && line.match(new RegExp("^###\\s+" + sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))) {
+          found = true;
+          result.push(line);
+          continue;
+        }
+        // 해당 섹션 내 빈 체크박스를 찾으면 태스크로 교체
+        if (found && !injected && /^\s*- \[ \]\s*$/.test(line)) {
+          // 들여쓰기 레벨 유지
+          for (const task of tasks) {
+            result.push(task);
+          }
+          injected = true;
+          continue;
+        }
+        // 다음 ### 또는 ## 섹션이 나오면 해당 섹션 종료
+        if (found && !injected && /^#{2,3}\s+/.test(line)) {
+          // 섹션 끝까지 빈 체크박스를 못 찾았으면 헤더 앞에 삽입
+          for (const task of tasks) {
+            result.push(task);
+          }
+          injected = true;
+        }
+        result.push(line);
+      }
+
+      // 끝까지 못 찾았으면 마지막에 추가
+      if (found && !injected) {
+        for (const task of tasks) {
+          result.push(task);
+        }
+      }
+
+      return result.join("\n");
+    }
+
+    /**
+     * 이전 투두의 메모 섹션에서 날짜가 포함된 항목 추출
+     * 날짜가 오늘 이후(오늘 포함)인 항목만 반환
+     */
+    private async getDatedNotesFromPrevTodo(
+      todoFolder: string,
+      today: Date
+    ): Promise<Array<{ date: string; text: string; time: string | null; raw: string }>> {
+      const folder = this.app.vault.getAbstractFileByPath(todoFolder);
+      if (!folder) return [];
+
+      const children = (folder as any).children || [];
+      const dated: { file: TFile; date: Date }[] = [];
+      for (const child of children) {
+        if (!(child instanceof TFile) || child.extension !== "md") continue;
+        const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) continue;
+        const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+        if (d < today) dated.push({ file: child, date: d });
+      }
+      if (dated.length === 0) return [];
+
+      dated.sort((a, b) => b.date.getTime() - a.date.getTime());
+      const latest = dated[0].file;
+      const content = await this.app.vault.cachedRead(latest);
+
+      const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+      const lines = content.split("\n");
+      let inMemo = false;
+
+      for (const line of lines) {
+        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
+          inMemo = true;
+          continue;
+        }
+        if (inMemo && /^##\s+/.test(line) && !/^###/.test(line)) break;
+
+        if (inMemo) {
+          const parsed = this.parseDateFromNoteLine(line, today);
+          if (parsed) {
+            // 오늘 이후(오늘 포함)만 승계
+            if (parsed.dateStr >= todayStr) {
+              results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
+            }
+          }
+        }
+      }
+      return results;
+    }
+
+    /**
+     * 메모 줄에서 다양한 날짜 형식을 파싱
+     * 지원 형식: 2026-03-01, 03/01, 3/1, 3월 1일, 3/3(화)
+     */
+    private parseDateFromNoteLine(
+      line: string,
+      refDate: Date
+    ): { dateStr: string; text: string; time: string | null } | null {
+      // 리스트 항목이 아니면 스킵
+      if (!/^-\s+/.test(line)) return null;
+      const content = line.replace(/^-\s+/, "");
+
+      const year = refDate.getFullYear();
+
+      // 줄 전체에서 날짜 패턴을 탐색 (이모지, 볼드, 기호 등 무시)
+      // 마크다운 서식 제거: **, *, 📌 등
+      const cleaned = content.replace(/\*\*/g, "").replace(/\*/g, "").trim();
+
+      let month = 0;
+      let day = 0;
+      let dateYear = year;
+      let timeStr: string | null = null;
+      let textPart = "";
+
+      // 1) YYYY-MM-DD
+      const m1 = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+      // 2) M/D 또는 MM/DD (요일 옵션)
+      const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^\)]*\))?/) : null;
+      // 3) N월 N일
+      const m3 = (!m1 && !m2) ? cleaned.match(/(\d{1,2})월\s*(\d{1,2})일/) : null;
+
+      if (m1) {
+        dateYear = Number(m1[1]);
+        month = Number(m1[2]);
+        day = Number(m1[3]);
+      } else if (m2) {
+        month = Number(m2[1]);
+        day = Number(m2[2]);
+      } else if (m3) {
+        month = Number(m3[1]);
+        day = Number(m3[2]);
+      } else {
+        return null;
+      }
+
+      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+      const dateStr = `${dateYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+      // 시간 추출: HH:MM 패턴 (날짜 뒤에 나오는 것)
+      const timeMatch = cleaned.match(/(\d{1,2}:\d{2})/);
+      if (timeMatch) {
+        timeStr = timeMatch[1].replace(/^(\d):/, "0$1:");
+      } else {
+        // N시 패턴
+        const timeMatch2 = cleaned.match(/(\d{1,2})시/);
+        if (timeMatch2) {
+          timeStr = `${timeMatch2[1].padStart(2, "0")}:00`;
+        }
+      }
+
+      // 텍스트 추출: 날짜/시간 이후의 의미 있는 텍스트
+      // 시간 패턴(HH:MM) 이후의 콜론을 구분자로 사용
+      const datePattern = m1 || m2 || m3;
+      if (datePattern && datePattern.index !== undefined) {
+        let afterDate = cleaned.substring(datePattern.index + datePattern[0].length).trim();
+        // 시간 패턴 제거 (HH:MM)
+        afterDate = afterDate.replace(/^\s*\d{1,2}:\d{2}/, "").trim();
+        // "예정" 같은 부가 설명 제거
+        afterDate = afterDate.replace(/^예정\s*/, "").trim();
+        // 구분자 콜론/대시 제거
+        afterDate = afterDate.replace(/^[:\-–—]\s*/, "").trim();
+        textPart = afterDate;
+      }
+
+      if (!textPart) return null;
+
+      return { dateStr, text: textPart, time: timeStr };
+    }
+
+    /**
+     * 메모 섹션에 항목 주입
+     */
+    private injectNotesIntoMemoSection(content: string, notes: string[]): string {
+      const lines = content.split("\n");
+      const result: string[] = [];
+      let inMemo = false;
+      let injected = false;
+
+      for (const line of lines) {
+        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
+          inMemo = true;
+          result.push(line);
+          continue;
+        }
+        // 메모 섹션 내 빈 항목(- ) 또는 첫 번째 빈 줄에 주입
+        if (inMemo && !injected && /^-\s*$/.test(line)) {
+          for (const note of notes) {
+            result.push(note);
+          }
+          injected = true;
+          continue;
+        }
+        // 다음 ## 섹션이면 메모 종료, 아직 주입 안 했으면 여기서
+        if (inMemo && !injected && /^##\s+/.test(line) && !/^###/.test(line)) {
+          for (const note of notes) {
+            result.push(note);
+          }
+          result.push("");
+          injected = true;
+        }
+        result.push(line);
+      }
+
+      if (!injected) {
+        for (const note of notes) {
+          result.push(note);
+        }
+      }
+
+      return result.join("\n");
     }
 
 
