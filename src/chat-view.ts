@@ -68,6 +68,8 @@ const VIEW_I18N = {
     toolConfirmParams: "Parameters:",
     toolConfirmApprove: "Execute",
     toolConfirmDeny: "Deny",
+    toolConfirmDontAsk: "Don't ask again",
+    toolRunning: "Running...",
     toolDenied: "Tool execution denied by user.",
     toolConsecutiveFailures: "Tool execution failed 3 times in a row. Stopping the tool loop to prevent further errors.",
     attachedFileLabel: (path: string) => `[Attached file: ${path}]`,
@@ -141,6 +143,8 @@ ${content}`,
     toolConfirmParams: "파라미터:",
     toolConfirmApprove: "실행",
     toolConfirmDeny: "거부",
+    toolConfirmDontAsk: "다음부터 묻지 않기",
+    toolRunning: "실행 중...",
     toolDenied: "사용자가 도구 실행을 거부했습니다.",
     toolConsecutiveFailures: "도구 실행이 3회 연속 실패하여 루프를 중단합니다. 추가 오류를 방지하기 위해 중단되었습니다.",
     attachedFileLabel: (path: string) => `[첨부 파일: ${path}]`,
@@ -550,6 +554,15 @@ export class ChatView extends ItemView {
     }
   }
 
+  // 어시스턴트 메시지 상단에 아이콘 + 이름 라벨을 추가하는 헬퍼
+  private addAssistantLabel(msgEl: HTMLElement): void {
+    const labelEl = msgEl.createDiv({ cls: "ba-assistant-label" });
+    const iconEl = labelEl.createDiv({ cls: "ba-assistant-label-icon" });
+    setIcon(iconEl, BRANDING.icon.id);
+    labelEl.createSpan({ cls: "ba-assistant-label-name", text: BRANDING.displayName });
+  }
+
+
   // ============================================
   // 대화 히스토리 토큰 트리밍 (REQ-3)
   // ============================================
@@ -576,6 +589,7 @@ export class ChatView extends ItemView {
 
       // 어시스턴트 메시지 컨테이너
       const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+      this.addAssistantLabel(msgEl);
       const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
       const thinkingEl = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
       this.scrollToBottom();
@@ -625,6 +639,8 @@ export class ChatView extends ItemView {
           // requestAnimationFrame 기반 디바운싱 변수
           let renderPending = false;
           let streamingPreEl: HTMLPreElement | null = null;
+          // 스트리밍 텍스트를 감싸는 wrapper (도구 호출 UI 보존을 위해 별도 div 사용)
+          const streamingState = { wrapper: null as HTMLElement | null };
 
           const result = await this.plugin.bedrockClient.converse(
             converseMessages,
@@ -633,6 +649,9 @@ export class ChatView extends ItemView {
               // 텍스트 델타: 누적만 하고 렌더링은 다음 프레임에서 한 번만 수행
               if (this.abortController?.signal.aborted) return;
               if (thinkingEl.parentElement) thinkingEl.remove();
+              // 다음 라운드 "생각 중..." 표시도 제거
+              const pendingThinking = contentEl.querySelector(".ba-thinking");
+              if (pendingThinking) pendingThinking.remove();
               roundText += delta;
               fullText += delta;
 
@@ -644,23 +663,25 @@ export class ChatView extends ItemView {
                 renderPending = false;
                 if (this.abortController?.signal.aborted) return;
 
-                // 스트리밍 중에는 <pre> 태그로 빠르게 표시 (마크다운 파싱 생략)
+                // 스트리밍 중에는 별도 div 안의 <pre> 태그로 빠르게 표시
+                // Dataview 등 다른 플러그인 간섭을 방지하기 위해 MarkdownRenderer는 완료 후에만 호출
                 if (!streamingPreEl) {
-                  contentEl.empty();
-                  streamingPreEl = contentEl.createEl("pre", { cls: "ba-streaming-text" });
+                  streamingState.wrapper = contentEl.createDiv({ cls: "ba-streaming-wrapper" });
+                  streamingPreEl = streamingState.wrapper.createEl("pre", { cls: "ba-streaming-text" });
                 }
-                streamingPreEl.textContent = fullText;
+                streamingPreEl.textContent = roundText;
                 this.scrollToBottom();
               });
             },
             this.abortController.signal
           );
 
-          // 스트리밍 완료 후 마크다운으로 최종 렌더링
-          if (streamingPreEl && fullText) {
-            contentEl.empty();
+          // 스트리밍 완료 후 마크다운으로 최종 렌더링 (스트리밍 wrapper만 교체)
+          if (streamingState.wrapper && roundText) {
+            streamingState.wrapper.empty();
             streamingPreEl = null;
-            MarkdownRenderer.render(this.app, fullText, contentEl, "", this);
+            await MarkdownRenderer.render(this.app, roundText, streamingState.wrapper, "", this);
+            streamingState.wrapper = null;
             this.scrollToBottom();
           }
 
@@ -790,92 +811,102 @@ export class ChatView extends ItemView {
 
   // 도구 실행 + UI 렌더링, 결과 문자열 반환
     private async executeAndRenderTool(
-      toolBlock: ContentBlockToolUse,
-      contentEl: HTMLElement
-    ): Promise<string> {
-      const toolEl = contentEl.createDiv({ cls: "ba-tool-call" });
-      const toolHeader = toolEl.createDiv({ cls: "ba-tool-header" });
+          toolBlock: ContentBlockToolUse,
+          contentEl: HTMLElement
+        ): Promise<string> {
+          const toolEl = contentEl.createDiv({ cls: "ba-tool-call" });
+          const toolHeader = toolEl.createDiv({ cls: "ba-tool-header" });
 
-      const iconEl = toolHeader.createDiv({ cls: "ba-tool-icon" });
-      setIcon(iconEl, "wrench");
+          const iconEl = toolHeader.createDiv({ cls: "ba-tool-icon" });
+          setIcon(iconEl, "wrench");
 
-      toolHeader.createSpan({ cls: "ba-tool-name", text: toolBlock.name });
+          toolHeader.createSpan({ cls: "ba-tool-name", text: toolBlock.name });
 
-      const statusEl = toolHeader.createDiv({ cls: "ba-tool-status status-running" });
-      setIcon(statusEl, "loader");
+          const statusEl = toolHeader.createDiv({ cls: "ba-tool-status status-running" });
+          setIcon(statusEl, "loader");
 
-      this.scrollToBottom();
-
-      // 파괴적 도구 실행 전 사용자 확인 모달 표시
-      if (needsToolConfirmation(toolBlock.name, this.plugin.settings.confirmToolExecution)) {
-        const approved = await new Promise<boolean>((resolve) => {
-          new ToolConfirmModal(
-            this.app,
-            toolBlock.name,
-            toolBlock.input as Record<string, unknown>,
-            this.t,
-            resolve
-          ).open();
-        });
-
-        if (!approved) {
-          // 사용자가 거부한 경우: UI 업데이트 후 취소 메시지 반환
-          statusEl.removeClass("status-running");
-          statusEl.addClass("status-error");
-          statusEl.empty();
-          setIcon(statusEl, "x");
-
-          const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
-          resultEl.setText(this.t.toolDenied);
+          // 도구 헤더 아래에 "실행 중..." 표시 (별도 div로 확실히 표시)
+          const runningLabel = toolEl.createDiv({ cls: "ba-tool-running", text: this.t.toolRunning });
 
           this.scrollToBottom();
-          return this.t.toolDenied;
+
+          // 파괴적 도구 실행 전 사용자 확인 모달 표시
+          if (needsToolConfirmation(toolBlock.name, this.plugin.settings.confirmToolExecution)) {
+            const approved = await new Promise<boolean>((resolve) => {
+              new ToolConfirmModal(
+                this.app,
+                toolBlock.name,
+                toolBlock.input as Record<string, unknown>,
+                this.t,
+                this.plugin,
+                resolve
+              ).open();
+            });
+
+            if (!approved) {
+              statusEl.removeClass("status-running");
+              statusEl.addClass("status-error");
+              statusEl.empty();
+              setIcon(statusEl, "x");
+              runningLabel.remove();
+
+              const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
+              resultEl.setText(this.t.toolDenied);
+
+              this.scrollToBottom();
+              return this.t.toolDenied;
+            }
+          }
+
+          try {
+            // MCP 도구인지 확인하여 라우팅
+            let result: string;
+            if (this.plugin.mcpManager.isMcpTool(toolBlock.name)) {
+              result = await this.plugin.mcpManager.executeTool(
+                toolBlock.name,
+                toolBlock.input
+              );
+            } else {
+              result = await this.plugin.toolExecutor.execute(
+                toolBlock.name,
+                toolBlock.input
+              );
+            }
+
+            // 성공 UI
+            statusEl.removeClass("status-running");
+            statusEl.addClass("status-completed");
+            statusEl.empty();
+            setIcon(statusEl, "check");
+            runningLabel.remove();
+
+            const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
+            resultEl.setText(result.slice(0, 500) + (result.length > 500 ? "..." : ""));
+
+            toolHeader.createSpan({
+              cls: "ba-tool-summary",
+              text: result.slice(0, 80).replace(/\n/g, " "),
+            });
+
+            this.scrollToBottom();
+            return result;
+          } catch (error) {
+            // 실패 UI
+            statusEl.removeClass("status-running");
+            statusEl.addClass("status-error");
+            statusEl.empty();
+            setIcon(statusEl, "x");
+            runningLabel.remove();
+
+            this.scrollToBottom();
+            const errMsg = this.t.toolError((error as Error).message);
+            return errMsg;
+          }
         }
-      }
 
-      try {
-        // MCP 도구인지 확인하여 라우팅
-        let result: string;
-        if (this.plugin.mcpManager.isMcpTool(toolBlock.name)) {
-          result = await this.plugin.mcpManager.executeTool(
-            toolBlock.name,
-            toolBlock.input
-          );
-        } else {
-          result = await this.plugin.toolExecutor.execute(
-            toolBlock.name,
-            toolBlock.input
-          );
-        }
 
-        // 성공 UI
-        statusEl.removeClass("status-running");
-        statusEl.addClass("status-completed");
-        statusEl.empty();
-        setIcon(statusEl, "check");
 
-        const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
-        resultEl.setText(result.slice(0, 500) + (result.length > 500 ? "..." : ""));
 
-        toolHeader.createSpan({
-          cls: "ba-tool-summary",
-          text: result.slice(0, 80).replace(/\n/g, " "),
-        });
-
-        this.scrollToBottom();
-        return result;
-      } catch (error) {
-        // 실패 UI
-        statusEl.removeClass("status-running");
-        statusEl.addClass("status-error");
-        statusEl.empty();
-        setIcon(statusEl, "x");
-
-        this.scrollToBottom();
-        const errMsg = this.t.toolError((error as Error).message);
-        return errMsg;
-      }
-    }
 
 
   // ============================================
@@ -1830,11 +1861,20 @@ Classify ALL items.`;
         return;
       }
 
-      // 응답에서 태그 파싱
+      // 응답에서 태그 파싱 (다양한 AI 응답 형식 대응)
       const rawTags = textBlock.text.trim();
       const tags = rawTags
         .split(/[,，、\n]+/)
-        .map((t) => t.trim().replace(/^#/, ""))
+        .map((t) => t.trim())
+        // YAML 리스트 접두사 "- " 제거
+        .map((t) => t.replace(/^-\s*/, ""))
+        // "tags:" 헤더 라인 제거
+        .map((t) => t.replace(/^tags:\s*/i, ""))
+        // 백틱 제거
+        .map((t) => t.replace(/`/g, ""))
+        // # 접두사 제거
+        .map((t) => t.replace(/^#+\s*/, ""))
+        .map((t) => t.trim())
         .filter((t) => t.length > 0)
         .slice(0, 3);
 
@@ -2191,6 +2231,7 @@ Classify ALL items.`;
           } else {
             // 어시스턴트 메시지는 마크다운 렌더링
             const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+            this.addAssistantLabel(msgEl);
             const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
             await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
 
@@ -2375,23 +2416,28 @@ class FileSearchModal extends FuzzySuggestModal<TFile> {
 }
 
 // 파괴적 도구 실행 전 사용자 확인 모달
+// 파괴적 도구 실행 전 사용자 확인 모달
 class ToolConfirmModal extends Modal {
   private toolName: string;
   private toolInput: Record<string, unknown>;
   private t: ViewLang;
   private resolvePromise: (approved: boolean) => void;
+  private plugin: BedrockAssistantPlugin;
+  private resolved = false;
 
   constructor(
     app: import("obsidian").App,
     toolName: string,
     toolInput: Record<string, unknown>,
     t: ViewLang,
+    plugin: BedrockAssistantPlugin,
     resolvePromise: (approved: boolean) => void
   ) {
     super(app);
     this.toolName = toolName;
     this.toolInput = toolInput;
     this.t = t;
+    this.plugin = plugin;
     this.resolvePromise = resolvePromise;
   }
 
@@ -2400,8 +2446,11 @@ class ToolConfirmModal extends Modal {
     contentEl.empty();
     contentEl.addClass("ba-tool-confirm-modal");
 
-    // 제목
-    contentEl.createEl("h3", { text: this.t.toolConfirmTitle });
+    // 헤더 (아이콘 + 제목)
+    const header = contentEl.createDiv({ cls: "ba-tool-confirm-header" });
+    const headerIcon = header.createDiv({ cls: "ba-tool-confirm-header-icon" });
+    setIcon(headerIcon, "alert-triangle");
+    header.createEl("h3", { text: this.t.toolConfirmTitle });
 
     // 도구 이름 안내 메시지
     contentEl.createEl("p", {
@@ -2417,36 +2466,63 @@ class ToolConfirmModal extends Modal {
     const paramsEl = contentEl.createEl("pre", { cls: "ba-tool-confirm-params" });
     paramsEl.setText(JSON.stringify(this.toolInput, null, 2));
 
+    // "다음부터 묻지 않기" 체크박스
+    const checkRow = contentEl.createDiv({ cls: "ba-tool-confirm-check-row" });
+    const checkbox = checkRow.createEl("input", {
+      type: "checkbox",
+      cls: "ba-tool-confirm-checkbox",
+    });
+    checkbox.id = "ba-tool-confirm-dont-ask";
+    checkRow.createEl("label", {
+      text: this.t.toolConfirmDontAsk,
+      attr: { for: "ba-tool-confirm-dont-ask" },
+      cls: "ba-tool-confirm-check-label",
+    });
+
     // 버튼 행
     const btnRow = contentEl.createDiv({ cls: "ba-tool-confirm-btn-row" });
 
-    // 실행 버튼
+    // 거부 버튼 (왼쪽)
+    const denyBtn = btnRow.createEl("button", {
+      text: this.t.toolConfirmDeny,
+    });
+    denyBtn.addEventListener("click", () => {
+      this.handleDontAsk(checkbox.checked);
+      this.resolved = true;
+      this.resolvePromise(false);
+      this.close();
+    });
+
+    // 실행 버튼 (오른쪽, 강조)
     const approveBtn = btnRow.createEl("button", {
       text: this.t.toolConfirmApprove,
       cls: "mod-cta",
     });
     approveBtn.addEventListener("click", () => {
+      this.handleDontAsk(checkbox.checked);
+      this.resolved = true;
       this.resolvePromise(true);
       this.close();
     });
+  }
 
-    // 거부 버튼
-    const denyBtn = btnRow.createEl("button", {
-      text: this.t.toolConfirmDeny,
-      cls: "mod-warning",
-    });
-    denyBtn.addEventListener("click", () => {
-      this.resolvePromise(false);
-      this.close();
-    });
+  // "다음부터 묻지 않기" 체크 시 설정 저장
+  private handleDontAsk(checked: boolean): void {
+    if (checked) {
+      this.plugin.settings.confirmToolExecution = false;
+      this.plugin.saveSettings();
+    }
   }
 
   onClose(): void {
     // 모달이 닫힐 때 아직 resolve되지 않았으면 거부로 처리
-    this.resolvePromise(false);
+    if (!this.resolved) {
+      this.resolvePromise(false);
+    }
     this.contentEl.empty();
   }
 }
+
 
 
 
