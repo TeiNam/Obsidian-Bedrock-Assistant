@@ -56,6 +56,8 @@ export class VaultIndexer {
       let processed = 0;
       let skippedEmpty = 0;
       const failures: IndexFailure[] = [];
+      // 진행률 단조 증가 보장을 위한 최대 보고값 추적
+      let maxReportedProgress = 0;
 
       if (totalFiles === 0) {
         this.indexing = false;
@@ -85,7 +87,9 @@ export class VaultIndexer {
           const content = await this.app.vault.cachedRead(file);
           if (!content.trim()) {
             skippedEmpty++;
-            onProgress?.(processed + failures.length + skippedEmpty, totalFiles);
+            const currentProgress = processed + failures.length + skippedEmpty;
+            maxReportedProgress = Math.max(maxReportedProgress, currentProgress);
+            onProgress?.(maxReportedProgress, totalFiles);
             continue;
           }
           // indexFile 내부의 lastModified 체크를 우회하기 위해 직접 인덱싱
@@ -107,7 +111,9 @@ export class VaultIndexer {
             }
           }
         }
-        onProgress?.(processed + failures.length + skippedEmpty, totalFiles);
+        const currentProgress = processed + failures.length + skippedEmpty;
+        maxReportedProgress = Math.max(maxReportedProgress, currentProgress);
+        onProgress?.(maxReportedProgress, totalFiles);
 
         // 임베딩 사용 시 API 속도 제한 방지
         if (this.useEmbeddings) await sleep(200);

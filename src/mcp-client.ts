@@ -270,21 +270,24 @@ class McpServerConnection {
 
   // JSON-RPC 메시지 처리
   private handleJsonMessage(raw: string): void {
-    try {
-      const msg = JSON.parse(raw) as JsonRpcResponse;
-      if (msg.id !== undefined && this.pending.has(msg.id)) {
-        const p = this.pending.get(msg.id)!;
-        this.pending.delete(msg.id);
-        if (msg.error) {
-          p.reject(new Error(`MCP 오류: ${msg.error.message}`));
-        } else {
-          p.resolve(msg.result);
+      try {
+        const msg = JSON.parse(raw) as JsonRpcResponse;
+        if (msg.id !== undefined && this.pending.has(msg.id)) {
+          const p = this.pending.get(msg.id)!;
+          this.pending.delete(msg.id);
+          if (msg.error) {
+            p.reject(new Error(`MCP 오류: ${msg.error.message}`));
+          } else {
+            p.resolve(msg.result);
+          }
+        } else if (msg.id !== undefined && !this.pending.has(msg.id)) {
+          // 타임아웃으로 pending Map에서 제거된 요청에 대한 늦은 응답
+          console.debug(`[MCP] 타임아웃 후 늦은 응답 도착 (id: ${msg.id})`);
         }
+      } catch {
+        // JSON 파싱 실패 무시
       }
-    } catch {
-      // JSON 파싱 실패 무시
     }
-  }
 
   // 서버 연결 종료
   // 서버 연결 종료

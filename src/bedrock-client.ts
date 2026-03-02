@@ -43,52 +43,60 @@ export class BedrockClient {
     this.client = this.createClient();
   }
 
-  private createClient(): BedrockRuntimeClient {
-      const config: Record<string, unknown> = {
-        region: this.settings.awsRegion,
+  // credential 설정 로직을 공통으로 추출 (manual/apikey/env 분기)
+  private buildClientConfig(): Record<string, unknown> {
+    const config: Record<string, unknown> = {
+      region: this.settings.awsRegion,
+    };
+
+    if (this.settings.awsCredentialSource === "manual" && this.settings.awsAccessKeyId) {
+      // 수동 입력 자격증명
+      config.credentials = {
+        accessKeyId: this.settings.awsAccessKeyId,
+        secretAccessKey: this.settings.awsSecretAccessKey,
       };
-
-      if (this.settings.awsCredentialSource === "manual" && this.settings.awsAccessKeyId) {
-        // 수동 입력 자격증명
-        config.credentials = {
-          accessKeyId: this.settings.awsAccessKeyId,
-          secretAccessKey: this.settings.awsSecretAccessKey,
-        };
-      } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-        // Bedrock API Key 인증: Bearer 토큰 방식
-        // SDK에 더미 자격증명을 넣고, 미들웨어로 Authorization 헤더를 덮어씀
-        config.credentials = {
-          accessKeyId: "apikey",
-          secretAccessKey: "apikey",
-        };
-      }
-      // "env" 모드: credentials 미지정 → SDK 기본 체인 사용
-
-      const client = new BedrockRuntimeClient(config as any);
-
-      // API Key 모드일 때 미들웨어로 Bearer 토큰 주입
-      if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-        const apiKey = this.settings.bedrockApiKey;
-        client.middlewareStack.add(
-          (next: any) => async (args: any) => {
-            // SigV4 서명 대신 Bearer 토큰 사용
-            args.request.headers["Authorization"] = `Bearer ${apiKey}`;
-            // SigV4가 추가한 불필요한 헤더 제거
-            delete args.request.headers["x-amz-date"];
-            delete args.request.headers["x-amz-security-token"];
-            delete args.request.headers["x-amz-content-sha256"];
-            return next(args);
-          },
-          {
-            step: "finalizeRequest",
-            name: "bedrockApiKeyAuth",
-            override: true,
-          }
-        );
-      }
-
-      return client;
+    } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+      // Bedrock API Key 인증: Bearer 토큰 방식
+      // SDK에 더미 자격증명을 넣고, 미들웨어로 Authorization 헤더를 덮어씀
+      config.credentials = {
+        accessKeyId: "apikey",
+        secretAccessKey: "apikey",
+      };
     }
+    // "env" 모드: credentials 미지정 → SDK 기본 체인 사용
+
+    return config;
+  }
+
+  // API Key 모드일 때 미들웨어로 Bearer 토큰 주입
+  private applyApiKeyMiddleware(client: { middlewareStack: any }): void {
+    if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
+      const apiKey = this.settings.bedrockApiKey;
+      client.middlewareStack.add(
+        (next: any) => async (args: any) => {
+          // SigV4 서명 대신 Bearer 토큰 사용
+          args.request.headers["Authorization"] = `Bearer ${apiKey}`;
+          // SigV4가 추가한 불필요한 헤더 제거
+          delete args.request.headers["x-amz-date"];
+          delete args.request.headers["x-amz-security-token"];
+          delete args.request.headers["x-amz-content-sha256"];
+          return next(args);
+        },
+        {
+          step: "finalizeRequest",
+          name: "bedrockApiKeyAuth",
+          override: true,
+        }
+      );
+    }
+  }
+
+  private createClient(): BedrockRuntimeClient {
+    const config = this.buildClientConfig();
+    const client = new BedrockRuntimeClient(config as any);
+    this.applyApiKeyMiddleware(client);
+    return client;
+  }
 
   // 사용 가능한 모델 목록 반환 (Bedrock 추론 프로파일에서 최신 Claude 모델 조회)
   async listModels(): Promise<ModelInfo[]> {
@@ -143,38 +151,9 @@ export class BedrockClient {
 
   // Bedrock 컨트롤 플레인 클라이언트 생성 (모델 목록 조회용)
   private createControlClient(): BedrockControlClient {
-    const config: Record<string, unknown> = {
-      region: this.settings.awsRegion,
-    };
-
-    if (this.settings.awsCredentialSource === "manual" && this.settings.awsAccessKeyId) {
-      config.credentials = {
-        accessKeyId: this.settings.awsAccessKeyId,
-        secretAccessKey: this.settings.awsSecretAccessKey,
-      };
-    } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-      config.credentials = {
-        accessKeyId: "apikey",
-        secretAccessKey: "apikey",
-      };
-    }
-
+    const config = this.buildClientConfig();
     const client = new BedrockControlClient(config as any);
-
-    if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-      const apiKey = this.settings.bedrockApiKey;
-      client.middlewareStack.add(
-        (next: any) => async (args: any) => {
-          args.request.headers["Authorization"] = `Bearer ${apiKey}`;
-          delete args.request.headers["x-amz-date"];
-          delete args.request.headers["x-amz-security-token"];
-          delete args.request.headers["x-amz-content-sha256"];
-          return next(args);
-        },
-        { step: "finalizeRequest", name: "bedrockApiKeyAuth", override: true }
-      );
-    }
-
+    this.applyApiKeyMiddleware(client);
     return client;
   }
 

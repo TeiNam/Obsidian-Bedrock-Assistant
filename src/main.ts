@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Notice, Plugin, TFile, addIcon } from "obsidian";
 import { BedrockClient } from "./bedrock-client";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
@@ -7,6 +7,7 @@ import { BedrockSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING } from "./branding";
+import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -28,7 +29,6 @@ export default class BedrockAssistantPlugin extends Plugin {
 
     // 커스텀 아이콘 등록 (SVG가 있는 경우에만)
     if (BRANDING.icon.svg) {
-      const { addIcon } = await import("obsidian");
       addIcon(BRANDING.icon.id, BRANDING.icon.svg);
     }
 
@@ -220,65 +220,54 @@ export default class BedrockAssistantPlugin extends Plugin {
     }
   }
 
-  // 세션 목록 로드 (파싱 실패 시 백업에서 복구 시도)
-  async loadSessions(): Promise<ChatSession[]> {
-    try {
-      const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
-      if (file && file instanceof TFile) {
-        const data = await this.app.vault.read(file);
-        return JSON.parse(data) as ChatSession[];
-      }
-    } catch {
-      // 파싱 실패 시 백업 파일에서 복구 시도
-      console.warn("세션 파일 파싱 실패, 백업에서 복구 시도...");
-      try {
-        const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
-        if (bakFile && bakFile instanceof TFile) {
-          const bakData = await this.app.vault.read(bakFile);
-          const sessions = JSON.parse(bakData) as ChatSession[];
-          // 복구 성공: 원본 파일을 백업 데이터로 복원
-          const origFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
-          if (origFile && origFile instanceof TFile) {
-            await this.app.vault.modify(origFile, bakData);
-          }
-          new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
-          return sessions;
+  // Obsidian Vault API를 FileAdapter 인터페이스로 감싸는 어댑터 생성
+  private createVaultFileAdapter(): FileAdapter {
+    const vault = this.app.vault;
+    return {
+      exists: async (path: string): Promise<boolean> => {
+        const file = vault.getAbstractFileByPath(path);
+        return file instanceof TFile;
+      },
+      read: async (path: string): Promise<string> => {
+        const file = vault.getAbstractFileByPath(path);
+        if (file && file instanceof TFile) {
+          return vault.read(file);
         }
-      } catch {
-        // 백업 복구도 실패
-      }
-      new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
-    }
-    return [];
+        throw new Error(`파일을 찾을 수 없습니다: ${path}`);
+      },
+      write: async (path: string, data: string): Promise<void> => {
+        const file = vault.getAbstractFileByPath(path);
+        if (file && file instanceof TFile) {
+          await vault.modify(file, data);
+        } else {
+          throw new Error(`파일을 찾을 수 없습니다: ${path}`);
+        }
+      },
+      create: async (path: string, data: string): Promise<void> => {
+        await vault.create(path, data);
+      },
+    };
   }
 
-  // 세션 목록 저장 (저장 전 기존 파일을 .bak으로 백업)
+  // 세션 목록 로드 (session-recovery.ts 모듈 활용)
+  async loadSessions(): Promise<ChatSession[]> {
+    const adapter = this.createVaultFileAdapter();
+    const result = await loadSessionsWithRecovery(adapter, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
+
+    if (result.recovered) {
+      new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
+    } else if (result.error) {
+      new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
+    }
+
+    return result.sessions;
+  }
+
+  // 세션 목록 저장 (session-recovery.ts 모듈 활용)
   async saveSessions(sessions: ChatSession[]): Promise<void> {
     try {
-      // 기존 세션 파일이 있으면 백업 생성
-      const existingFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
-      if (existingFile && existingFile instanceof TFile) {
-        try {
-          const existingData = await this.app.vault.read(existingFile);
-          const bakFile = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_BACKUP_FILE);
-          if (bakFile && bakFile instanceof TFile) {
-            await this.app.vault.modify(bakFile, existingData);
-          } else {
-            await this.app.vault.create(CHAT_SESSIONS_BACKUP_FILE, existingData);
-          }
-        } catch {
-          // 백업 생성 실패는 저장을 중단하지 않음
-          console.warn("세션 백업 파일 생성 실패");
-        }
-      }
-
-      // 세션 데이터 저장
-      const data = JSON.stringify(sessions);
-      if (existingFile && existingFile instanceof TFile) {
-        await this.app.vault.modify(existingFile, data);
-      } else {
-        await this.app.vault.create(CHAT_SESSIONS_FILE, data);
-      }
+      const adapter = this.createVaultFileAdapter();
+      await saveSessionsWithBackup(adapter, sessions, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
     } catch (error) {
       console.error("세션 저장 실패:", error);
     }
