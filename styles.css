@@ -1323,3 +1323,142 @@ body.theme-light .ba-message-content pre {
 .ba-mcp-status-list > div {
   padding: 2px 0;
 }
+
+/* ============================================
+   어시스턴트 메시지 라벨 (아이콘 + 이름)
+   ============================================ */
+.ba-assistant-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ba-assistant-label-icon {
+  display: flex;
+  align-items: center;
+  color: var(--ba-brand);
+  flex-shrink: 0;
+}
+
+.ba-assistant-label-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ba-assistant-label-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ============================================
+   파괴적 도구 확인 모달
+   ============================================ */
+.ba-tool-confirm-modal {
+  padding: 4px 0;
+}
+
+.ba-tool-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ba-tool-confirm-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ba-tool-confirm-header-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-warning);
+  flex-shrink: 0;
+}
+
+.ba-tool-confirm-header-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ba-tool-confirm-message {
+  font-size: 14px;
+  color: var(--text-normal);
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.ba-tool-confirm-params-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ba-tool-confirm-params {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0 0 14px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ba-tool-confirm-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-tool-confirm-checkbox {
+  margin: 0;
+  cursor: pointer;
+}
+
+.ba-tool-confirm-check-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ba-tool-confirm-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ba-tool-confirm-btn-row button {
+  padding: 6px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ============================================
+   도구 실행 중 진행 표시
+   ============================================ */
+.ba-tool-running {
+  display: block;
+  font-size: 13px;
+  color: var(--ba-brand);
+  font-style: italic;
+  padding: 2px 0 2px 24px;
+  animation: ba-pulse 1.5s ease-in-out infinite;
+}
