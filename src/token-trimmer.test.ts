@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { trimConversationHistory, estimateTokens } from "./token-trimmer";
+import { trimConversationHistory, estimateTokens, CHARS_PER_TOKEN } from "./token-trimmer";
 import type { ConverseMessage, ToolDefinition } from "./types";
 
 // 테스트용 헬퍼: 지정된 길이의 텍스트를 가진 메시지 생성
@@ -25,8 +25,8 @@ describe("estimateTokens", () => {
   it("메시지 배열의 토큰 수를 추정한다", () => {
     const messages = [makeMessage("user", 100)];
     const tokens = estimateTokens(messages);
-    // JSON.stringify 길이 / 4 (올림)
-    const expected = Math.ceil(JSON.stringify(messages).length / 4);
+    // JSON.stringify 길이 / CHARS_PER_TOKEN (올림)
+    const expected = Math.ceil(JSON.stringify(messages).length / CHARS_PER_TOKEN);
     expect(tokens).toBe(expected);
   });
 
@@ -122,5 +122,90 @@ describe("trimConversationHistory", () => {
     const messages: ConverseMessage[] = [];
     trimConversationHistory(messages, emptyTools);
     expect(messages.length).toBe(0);
+  });
+});
+
+
+/**
+ * Property 1: Fault Condition - 토큰 추정 비율 일관성
+ * estimateTokens()와 updateContextRing()이 동일한 CHARS_PER_TOKEN 비율을 사용하는지 확인
+ *
+ * **Validates: Requirements 2.8**
+ */
+describe("토큰 추정 비율 일관성 (Property 1: Fault Condition)", () => {
+  it("CHARS_PER_TOKEN이 2.5이어야 한다", () => {
+    expect(CHARS_PER_TOKEN).toBe(2.5);
+  });
+
+  it("estimateTokens()가 CHARS_PER_TOKEN 비율을 사용한다", () => {
+    const messages = [makeMessage("user", 250)];
+    const result = estimateTokens(messages);
+    // 수동으로 기대값 계산: JSON.stringify 길이 / CHARS_PER_TOKEN (올림)
+    const jsonLength = JSON.stringify(messages).length;
+    const expected = Math.ceil(jsonLength / CHARS_PER_TOKEN);
+    expect(result).toBe(expected);
+  });
+
+  it("동일 텍스트에 대해 토큰 추정 결과가 일관된다 (동일 입력 → 동일 출력)", () => {
+    const messages = [
+      makeMessage("user", 500),
+      makeMessage("assistant", 300),
+    ];
+    const firstEstimate = estimateTokens(messages);
+    const secondEstimate = estimateTokens(messages);
+    expect(firstEstimate).toBe(secondEstimate);
+  });
+
+  it("다양한 길이의 텍스트에서 CHARS_PER_TOKEN 비율이 일관되게 적용된다", () => {
+    const testCases = [10, 100, 1000, 10000];
+    for (const charLength of testCases) {
+      const messages = [makeMessage("user", charLength)];
+      const result = estimateTokens(messages);
+      const jsonLength = JSON.stringify(messages).length;
+      const expected = Math.ceil(jsonLength / CHARS_PER_TOKEN);
+      expect(result).toBe(expected);
+    }
+  });
+});
+
+/**
+ * Property 2: Preservation - trimConversationHistory() 동작 보존
+ * 토큰 추정 변경 후에도 컨텍스트 윈도우 초과 방지 로직이 정상 동작하는지 확인
+ *
+ * **Validates: Requirements 3.9**
+ */
+describe("trimConversationHistory() 동작 보존 (Property 2: Preservation)", () => {
+  it("토큰 한도 초과 시 메시지를 올바르게 트리밍한다", () => {
+    // CHARS_PER_TOKEN=2.5 기준: 160K 토큰 ≈ 400K 문자
+    // 각 메시지 50K 문자 × 20개 = 1M 문자 ≈ 400K 토큰 → 초과
+    const messages = makeConversation(10, 50000);
+    const originalLength = messages.length;
+    trimConversationHistory(messages, emptyTools);
+    expect(messages.length).toBeLessThan(originalLength);
+  });
+
+  it("최소 2개 메시지(마지막 user+assistant 쌍)는 항상 유지한다", () => {
+    // 극단적으로 큰 메시지로 트리밍 유도
+    const messages: ConverseMessage[] = [
+      makeMessage("user", 800000),
+      makeMessage("assistant", 800000),
+    ];
+    trimConversationHistory(messages, emptyTools);
+    // 최소 2개는 유지되어야 함
+    expect(messages.length).toBe(2);
+  });
+
+  it("트리밍 후 전체 토큰이 컨텍스트 윈도우 한도 이내이거나 최소 메시지만 남는다", () => {
+    const messages = makeConversation(15, 40000);
+    trimConversationHistory(messages, emptyTools);
+
+    const currentTokens = estimateTokens(messages);
+    // 200K * 0.8 = 160K 토큰 한도 (도구 없으므로 예약 토큰 3000만 차감)
+    const maxTokens = 200000 * 0.8 - 3000;
+
+    // 트리밍 후 한도 이내이거나, 최소 메시지(2개)만 남아야 함
+    const withinLimit = currentTokens <= maxTokens;
+    const atMinimum = messages.length <= 2;
+    expect(withinLimit || atMinimum).toBe(true);
   });
 });

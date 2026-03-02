@@ -3,10 +3,12 @@ import type BedrockAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 import { BRANDING } from "./branding";
-import { trimConversationHistory } from "./token-trimmer";
+import { trimConversationHistory, CHARS_PER_TOKEN } from "./token-trimmer";
 import { isToolError } from "./tool-failure-tracker";
 import { prepareRegeneration } from "./regenerate-helper";
 import { filterSessions } from "./session-search";
+import { DESTRUCTIVE_TOOLS, needsToolConfirmation } from "./tool-confirm-utils";
+import { isAllowedTextExtension } from "./file-extension-utils";
 
 export const VIEW_TYPE = BRANDING.viewType;
 
@@ -534,16 +536,11 @@ export class ChatView extends ItemView {
     this.messages.push(userMsg);
     this.renderUserMessage(userMsg);
 
-    // 첨부 파일 컨텍스트가 있으면 내부적으로 주입
+    // 첨부 파일 컨텍스트를 별도로 구성 (원본 메시지는 변경하지 않음)
     const contextPrefix = this.buildContextPrefix();
-    if (contextPrefix) {
-      // 실제 API에 보내는 메시지에만 컨텍스트 추가 (UI에는 원본 표시)
-      const lastMsg = this.messages[this.messages.length - 1];
-      lastMsg.content = contextPrefix + text;
-    }
 
-    // AI 응답 생성
-    await this.generateResponse();
+    // AI 응답 생성 (컨텍스트 접두사는 API 호출용 복사본에만 적용)
+    await this.generateResponse(contextPrefix);
   }
 
   private handleStop(): void {
@@ -572,7 +569,7 @@ export class ChatView extends ItemView {
   // 응답 생성 (도구 사용 루프 포함)
   // ============================================
 
-  private async generateResponse(): Promise<void> {
+  private async generateResponse(contextPrefix?: string): Promise<void> {
       this.setGenerating(true);
       this.abortController = new AbortController();
       const startTime = Date.now();
@@ -584,9 +581,12 @@ export class ChatView extends ItemView {
       this.scrollToBottom();
 
       // Converse API용 메시지 히스토리 구성
-      const converseMessages: ConverseMessage[] = this.messages.map((m) => ({
+      // 원본 this.messages는 변경하지 않고, API 호출용 복사본에만 컨텍스트 접두사 적용
+      const converseMessages: ConverseMessage[] = this.messages.map((m, i) => ({
         role: m.role,
-        content: [{ text: m.content }],
+        content: [{ text: (contextPrefix && i === this.messages.length - 1 && m.role === "user")
+          ? contextPrefix + m.content
+          : m.content }],
       }));
 
       // 바이너리 첨부 파일을 마지막 user 메시지에 추가
@@ -806,6 +806,33 @@ export class ChatView extends ItemView {
 
       this.scrollToBottom();
 
+      // 파괴적 도구 실행 전 사용자 확인 모달 표시
+      if (needsToolConfirmation(toolBlock.name, this.plugin.settings.confirmToolExecution)) {
+        const approved = await new Promise<boolean>((resolve) => {
+          new ToolConfirmModal(
+            this.app,
+            toolBlock.name,
+            toolBlock.input as Record<string, unknown>,
+            this.t,
+            resolve
+          ).open();
+        });
+
+        if (!approved) {
+          // 사용자가 거부한 경우: UI 업데이트 후 취소 메시지 반환
+          statusEl.removeClass("status-running");
+          statusEl.addClass("status-error");
+          statusEl.empty();
+          setIcon(statusEl, "x");
+
+          const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
+          resultEl.setText(this.t.toolDenied);
+
+          this.scrollToBottom();
+          return this.t.toolDenied;
+        }
+      }
+
       try {
         // MCP 도구인지 확인하여 라우팅
         let result: string;
@@ -896,7 +923,7 @@ export class ChatView extends ItemView {
   private async addFileContext(path: string, manual = true): Promise<void> {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (!file || !(file instanceof TFile)) return;
-      if (file.extension !== "md") return;
+      if (!isAllowedTextExtension(file.extension)) return;
 
       const content = await this.app.vault.cachedRead(file as any);
       this.attachedFiles.set(path, content);
@@ -1865,7 +1892,7 @@ Classify ALL items.`;
         const ext = path.split(".").pop()?.toLowerCase() || "";
         const imageExts = ["png", "jpg", "jpeg", "gif", "webp"];
         if (imageExts.includes(ext)) {
-          totalChars += 765 * 2.5; // 이미지 토큰을 문자 수로 환산
+          totalChars += 765 * CHARS_PER_TOKEN; // 이미지 토큰을 문자 수로 환산
         } else {
           totalChars += data.byteLength / 3; // 문서 바이트 기반 추정
         }
@@ -1877,8 +1904,8 @@ Classify ALL items.`;
       // 시스템 프롬프트
       totalChars += this.plugin.settings.systemPrompt.length;
 
-      // 대략적 토큰 추정 (한국어 혼합 기준 약 2.5자/토큰)
-      const estimatedTokens = Math.ceil(totalChars / 2.5);
+      // 대략적 토큰 추정 (CHARS_PER_TOKEN 상수 사용)
+      const estimatedTokens = Math.ceil(totalChars / CHARS_PER_TOKEN);
       const ratio = Math.min(estimatedTokens / contextWindow, 1);
 
       // SVG 링 업데이트 (선형 비율 사용 — 라벨 수치와 일치)
@@ -2080,7 +2107,10 @@ Classify ALL items.`;
           this.renderWelcome();
           // 저장된 히스토리도 삭제
           this.plugin.saveChatHistory([]);
-          // 바이너리 첨부 파일도 초기화
+          // 모든 첨부 파일 상태 초기화
+          this.attachedFiles.clear();
+          this.manuallyAttachedPaths.clear();
+          this.autoAttachedPath = null;
           this.attachedBinaryFiles.clear();
           this.updateContextRing();
         }
@@ -2196,6 +2226,8 @@ Classify ALL items.`;
     async onClose(): Promise<void> {
       this.handleStop();
       this.persistHistory();
+      // 드롭다운 이벤트 리스너 정리 (document 레벨 리스너 누수 방지)
+      this.closeModelDropdown();
     }
 
 }

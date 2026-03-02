@@ -233,6 +233,16 @@ export class ToolExecutor {
     if (existing) {
       return `파일이 이미 존재합니다: ${path}`;
     }
+
+    // 부모 폴더가 없으면 자동 생성 (applyTemplate, moveFile과 동일 패턴)
+    const parentDir = path.substring(0, path.lastIndexOf("/"));
+    if (parentDir) {
+      const dirExists = this.app.vault.getAbstractFileByPath(parentDir);
+      if (!dirExists) {
+        await this.app.vault.createFolder(parentDir);
+      }
+    }
+
     await this.app.vault.create(path, content);
     new Notice(`노트 생성됨: ${path}`);
     return `노트가 생성되었습니다: ${path}`;
