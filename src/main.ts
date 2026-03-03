@@ -8,6 +8,7 @@ import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
+import { encryptSettings, decryptSettings } from "./safe-storage";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -16,13 +17,13 @@ const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
 
 export default class BedrockAssistantPlugin extends Plugin {
-  settings: BedrockAssistantSettings;
-  bedrockClient: BedrockClient;
-  indexer: VaultIndexer;
-  toolExecutor: ToolExecutor;
-  mcpManager: McpManager;
+  settings!: BedrockAssistantSettings;
+  bedrockClient!: BedrockClient;
+  indexer!: VaultIndexer;
+  toolExecutor!: ToolExecutor;
+  mcpManager!: McpManager;
   // 인덱싱 진행률 표시용 상태바 아이템
-  private statusBarItem: HTMLElement;
+  private statusBarItem!: HTMLElement;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -147,11 +148,15 @@ export default class BedrockAssistantPlugin extends Plugin {
 
   // 설정 로드/저장
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const raw = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // 암호화된 민감 필드를 복호화하여 메모리에 보관
+    this.settings = decryptSettings(raw);
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    // 민감 필드를 암호화하여 디스크에 저장 (메모리의 settings는 평문 유지)
+    const encrypted = encryptSettings(this.settings);
+    await this.saveData(encrypted);
     this.bedrockClient?.updateSettings(this.settings);
   }
 

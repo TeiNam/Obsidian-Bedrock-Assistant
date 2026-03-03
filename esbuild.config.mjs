@@ -24,7 +24,7 @@ esbuild.build({
     ...builtins,
   ],
   format: "cjs",
-  target: "es2020",
+  target: "chrome106",
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,
