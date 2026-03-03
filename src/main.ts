@@ -225,42 +225,65 @@ export default class BedrockAssistantPlugin extends Plugin {
     const vault = this.app.vault;
     return {
       exists: async (path: string): Promise<boolean> => {
-        const file = vault.getAbstractFileByPath(path);
-        return file instanceof TFile;
+        return await vault.adapter.exists(path);
       },
       read: async (path: string): Promise<string> => {
-        const file = vault.getAbstractFileByPath(path);
-        if (file && file instanceof TFile) {
-          return vault.read(file);
-        }
-        throw new Error(`파일을 찾을 수 없습니다: ${path}`);
+        return await vault.adapter.read(path);
       },
       write: async (path: string, data: string): Promise<void> => {
         const file = vault.getAbstractFileByPath(path);
         if (file && file instanceof TFile) {
           await vault.modify(file, data);
         } else {
-          throw new Error(`파일을 찾을 수 없습니다: ${path}`);
+          // 캐시에 없지만 파일은 존재할 수 있으므로 adapter로 직접 쓰기
+          await vault.adapter.write(path, data);
         }
       },
       create: async (path: string, data: string): Promise<void> => {
-        await vault.create(path, data);
+        try {
+          await vault.create(path, data);
+        } catch {
+          // race condition: 다른 호출이 먼저 파일을 생성한 경우
+          // getAbstractFileByPath 캐시가 stale할 수 있으므로 adapter를 직접 사용
+          const existing = vault.getAbstractFileByPath(path);
+          if (existing && existing instanceof TFile) {
+            await vault.modify(existing, data);
+          } else {
+            // 캐시에 없지만 파일은 존재하는 경우 adapter로 직접 쓰기
+            await vault.adapter.write(path, data);
+          }
+        }
       },
     };
   }
 
   // 세션 목록 로드 (session-recovery.ts 모듈 활용)
   async loadSessions(): Promise<ChatSession[]> {
-    const adapter = this.createVaultFileAdapter();
-    const result = await loadSessionsWithRecovery(adapter, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
+    try {
+      const adapter = this.createVaultFileAdapter();
+      const result = await loadSessionsWithRecovery(adapter, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
 
-    if (result.recovered) {
-      new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
-    } else if (result.error) {
-      new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
+      if (result.recovered) {
+        new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
+      } else if (result.error) {
+        new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
+      }
+
+      return result.sessions;
+    } catch (error) {
+      console.error("세션 로드 실패:", error);
+      // fallback: 직접 Vault API로 로드 시도
+      try {
+        const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+        if (file && file instanceof TFile) {
+          const data = await this.app.vault.read(file);
+          return JSON.parse(data) as ChatSession[];
+        }
+      } catch (fallbackError) {
+        console.error("세션 로드 fallback 실패:", fallbackError);
+      }
+      return [];
     }
-
-    return result.sessions;
   }
 
   // 세션 목록 저장 (session-recovery.ts 모듈 활용)
@@ -270,6 +293,25 @@ export default class BedrockAssistantPlugin extends Plugin {
       await saveSessionsWithBackup(adapter, sessions, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
     } catch (error) {
       console.error("세션 저장 실패:", error);
+      // fallback: 직접 Vault API로 저장 시도
+      try {
+        const data = JSON.stringify(sessions);
+        const file = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+        if (file && file instanceof TFile) {
+          await this.app.vault.modify(file, data);
+        } else {
+          try {
+            await this.app.vault.create(CHAT_SESSIONS_FILE, data);
+          } catch {
+            const retry = this.app.vault.getAbstractFileByPath(CHAT_SESSIONS_FILE);
+            if (retry && retry instanceof TFile) {
+              await this.app.vault.modify(retry, data);
+            }
+          }
+        }
+      } catch (fallbackError) {
+        console.error("세션 저장 fallback 실패:", fallbackError);
+      }
     }
   }
 
