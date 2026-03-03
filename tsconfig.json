@@ -4,14 +4,13 @@
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
-    "target": "ES2020",
+    "target": "ES2022",
     "allowJs": true,
-    "noImplicitAny": false,
+    "strict": true,
     "moduleResolution": "node",
     "importHelpers": true,
     "isolatedModules": true,
-    "strictNullChecks": true,
-    "lib": ["DOM", "ES2020"],
+    "lib": ["DOM", "ES2022"],
     "outDir": "./dist",
     "paths": {
       "src/*": ["src/*"]

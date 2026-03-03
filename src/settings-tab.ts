@@ -757,8 +757,8 @@ export class BedrockSettingTab extends PluginSettingTab {
 class McpConfigModal extends Modal {
   private plugin: BedrockAssistantPlugin;
   private onSaved: () => void;
-  private textArea: HTMLTextAreaElement;
-  private statusEl: HTMLElement;
+  private textArea!: HTMLTextAreaElement;
+  private statusEl!: HTMLElement;
 
   constructor(app: App, plugin: BedrockAssistantPlugin, onSaved: () => void) {
     super(app);

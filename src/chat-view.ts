@@ -174,14 +174,14 @@ export class ChatView extends ItemView {
   private plugin: BedrockAssistantPlugin;
   private messages: ChatMessage[] = [];
 
-  // DOM 요소
-  private viewContainerEl: HTMLElement;
-  private messagesEl: HTMLElement;
-  private inputEl: HTMLTextAreaElement;
-  private sendBtn: HTMLElement;
-  private stopBtn: HTMLElement;
-  private contextRow: HTMLElement;
-  private fileChipContainer: HTMLElement;
+  // DOM 요소 (onOpen()에서 초기화)
+  private viewContainerEl!: HTMLElement;
+  private messagesEl!: HTMLElement;
+  private inputEl!: HTMLTextAreaElement;
+  private sendBtn!: HTMLElement;
+  private stopBtn!: HTMLElement;
+  private contextRow!: HTMLElement;
+  private fileChipContainer!: HTMLElement;
   private isGenerating = false;
   private abortController: AbortController | null = null;
 
@@ -191,14 +191,14 @@ export class ChatView extends ItemView {
   private manuallyAttachedPaths: Set<string> = new Set(); // 수동 첨부 경로 (문서 이동 시 유지)
   private autoAttachedPath: string | null = null; // 자동 첨부 경로 (문서 이동 시 교체)
 
-  // 모델 선택
-  private modelSelectorEl: HTMLElement;
-  private modelLabelEl: HTMLElement;
+  // 모델 선택 (onOpen()에서 초기화)
+  private modelSelectorEl!: HTMLElement;
+  private modelLabelEl!: HTMLElement;
   private cachedModels: ModelInfo[] = [];
   private modelDropdownEl: HTMLElement | null = null;
 
-  // MCP 상태 표시
-  private mcpStatusEl: HTMLElement;
+  // MCP 상태 표시 (onOpen()에서 초기화)
+  private mcpStatusEl!: HTMLElement;
 
   // 컨텍스트 사용량 링
   private contextRingEl: SVGCircleElement | null = null;

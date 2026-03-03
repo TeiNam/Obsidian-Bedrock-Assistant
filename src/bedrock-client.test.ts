@@ -276,7 +276,7 @@ describe("BedrockClient - Preservation (Property 2)", () => {
           "x-amz-date": "some-date",
           "x-amz-security-token": "some-token",
           "x-amz-content-sha256": "some-hash",
-        },
+        } as Record<string, string>,
       },
     };
 
