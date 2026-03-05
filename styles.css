@@ -1666,3 +1666,69 @@ body.theme-light .ba-message-content pre {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ============================================
+   회고 모달
+   ============================================ */
+.ba-retro-modal.modal {
+  width: 300px;
+  max-width: 300px;
+  padding: 16px;
+}
+
+.ba-retro-modal h2 {
+  margin: 0 0 10px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.ba-retro-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  margin: 0 0 14px;
+  text-align: center;
+}
+
+.ba-retro-warning {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  text-align: center;
+  padding: 8px 12px;
+  background: var(--background-modifier-error-hover);
+  border-radius: 6px;
+}
+
+.ba-retro-btn-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ba-retro-btn-row button {
+  min-width: 64px;
+  padding: 4px 14px;
+  font-size: 13px;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 4px !important;
+  background: var(--background-primary) !important;
+  color: var(--text-normal) !important;
+  cursor: pointer;
+}
+
+.ba-retro-btn-row button:hover {
+  background: var(--background-modifier-hover) !important;
+}
+
+.ba-retro-btn-row button.mod-cta {
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  border-color: var(--interactive-accent) !important;
+}
+
+.ba-retro-btn-row button.mod-cta:hover {
+  background: var(--interactive-accent-hover) !important;
+  border-color: var(--interactive-accent-hover) !important;
+}

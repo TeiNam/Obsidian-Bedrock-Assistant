@@ -66,6 +66,16 @@ const VIEW_I18N = {
     cleanArchiveDelete: "Delete selected",
     cleanArchiveCancel: "Cancel",
     cleanArchiveDeleted: (n: number) => `${n} file(s) deleted`,
+    retrospective: "Retrospective",
+    retroConfirmTitle: "Daily Retrospective",
+    retroConfirmMessage: "Have you finished all tasks for today?",
+    retroNotYet: "Not yet",
+    retroDone: "Done",
+    retroNoTodo: "No To-Do found for today. Please create today's To-Do first.",
+    retroOk: "OK",
+    retroGenerating: "Generating retrospective...",
+    retroComplete: "Retrospective added to today's To-Do.",
+    retroFailed: (e: string) => `Retrospective failed: ${e}`,
     searchPlaceholder: "Search for a note to attach...",
     unsupportedExt: (ext: string) => `Unsupported file format: .${ext}`,
     webSearchHint: "[Web search enabled: Search the web for up-to-date information when needed. Include source URLs.]",
@@ -149,6 +159,16 @@ ${content}`,
     cleanArchiveDelete: "선택 항목 삭제",
     cleanArchiveCancel: "취소",
     cleanArchiveDeleted: (n: number) => `${n}개 파일 삭제됨`,
+    retrospective: "회고",
+    retroConfirmTitle: "오늘의 회고",
+    retroConfirmMessage: "오늘 할 일을 모두 끝마쳤나요?",
+    retroNotYet: "아직",
+    retroDone: "했음",
+    retroNoTodo: "오늘자 To-Do 문서가 없습니다. 먼저 오늘 문서를 작성해주세요.",
+    retroOk: "확인",
+    retroGenerating: "회고 작성 중...",
+    retroComplete: "오늘자 To-Do에 회고가 추가되었습니다.",
+    retroFailed: (e: string) => `회고 작성 실패: ${e}`,
     searchPlaceholder: "첨부할 노트를 검색하세요...",
     unsupportedExt: (ext: string) => `지원하지 않는 파일 형식입니다: .${ext}`,
     webSearchHint: "[웹 서치 활성화됨: 필요한 경우 최신 정보를 웹에서 검색하여 답변에 포함하세요. 출처 URL을 함께 제공하세요.]",
@@ -232,6 +252,16 @@ ${content}`,
     cleanArchiveDelete: "選択項目を削除",
     cleanArchiveCancel: "キャンセル",
     cleanArchiveDeleted: (n: number) => `${n}件のファイルを削除しました`,
+    retrospective: "振り返り",
+    retroConfirmTitle: "今日の振り返り",
+    retroConfirmMessage: "今日のタスクはすべて完了しましたか？",
+    retroNotYet: "まだ",
+    retroDone: "完了",
+    retroNoTodo: "今日のTo-Doドキュメントがありません。先に今日のドキュメントを作成してください。",
+    retroOk: "OK",
+    retroGenerating: "振り返りを作成中...",
+    retroComplete: "今日のTo-Doに振り返りが追加されました。",
+    retroFailed: (e: string) => `振り返り作成失敗: ${e}`,
     searchPlaceholder: "添付するノートを検索...",
     unsupportedExt: (ext: string) => `サポートされていないファイル形式: .${ext}`,
     webSearchHint: "[Web検索有効: 必要に応じて最新情報をWebで検索して回答に含めてください。出典URLも提供してください。]",
@@ -406,16 +436,24 @@ export class ChatView extends ItemView {
 
     // 액션 툴바 (입력창 바로 위)
     const actionToolbar = inputContainer.createDiv({ cls: "ba-action-toolbar" });
-    const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
-    setIcon(tagBtn, "tag");
-    tagBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.generateTags });
-    tagBtn.addEventListener("click", () => this.generateTags());
 
     // To-Do 생성 버튼
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
     todoBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.createTodo });
     todoBtn.addEventListener("click", () => this.createTodoNote());
+
+    // 회고 버튼
+    const retroBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.retrospective } });
+    setIcon(retroBtn, "book-open");
+    retroBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.retrospective });
+    retroBtn.addEventListener("click", () => this.openRetrospectiveModal());
+
+    // 태그 생성 버튼
+    const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
+    setIcon(tagBtn, "tag");
+    tagBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.generateTags });
+    tagBtn.addEventListener("click", () => this.generateTags());
 
     // 아카이브 비우기 버튼
     const cleanBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.cleanArchive } });
@@ -2240,6 +2278,11 @@ Classify ALL items.`;
     new CleanArchiveModal(this.app, this.plugin, this.t).open();
   }
 
+  // 회고 모달 열기
+  private openRetrospectiveModal(): void {
+    new RetrospectiveModal(this.app, this.plugin, this.t).open();
+  }
+
   // 현재 대화를 마크다운 파일로 내보내기
   private async exportChat(): Promise<void> {
     // 내보낼 메시지가 없으면 알림
@@ -2774,6 +2817,136 @@ class CleanArchiveModal extends Modal {
 }
 
 
+// 회고 모달
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+class RetrospectiveModal extends Modal {
+  private plugin: BedrockAssistantPlugin;
+  private t: Record<string, any>;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+    super(app);
+    this.plugin = plugin;
+    this.t = t;
+  }
 
+  async onOpen(): Promise<void> {
+    const { contentEl } = this;
+    // 모달 컨테이너에 클래스 추가 (사이즈 제어)
+    this.modalEl.addClass("ba-retro-modal");
+    contentEl.addClass("ba-retro-content");
 
+    // 오늘자 To-Do 파일 존재 확인
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const todoFolder = this.plugin.settings.todoFolder || "ToDo";
+    const todoPath = `${todoFolder}/${dateStr}.md`;
+    const todoFile = this.app.vault.getAbstractFileByPath(todoPath);
+
+    if (!todoFile || !(todoFile instanceof TFile)) {
+      // 오늘자 문서 없음 경고
+      contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
+      contentEl.createEl("p", { text: this.t.retroNoTodo, cls: "ba-retro-warning" });
+      const btnRow = contentEl.createDiv({ cls: "ba-retro-btn-row" });
+      const okBtn = btnRow.createEl("button", { text: this.t.retroOk, cls: "mod-cta" });
+      okBtn.addEventListener("click", () => this.close());
+      return;
+    }
+
+    // 할 일 완료 여부 확인 모달
+    contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
+    contentEl.createEl("p", { text: this.t.retroConfirmMessage, cls: "ba-retro-message" });
+
+    const btnRow = contentEl.createDiv({ cls: "ba-retro-btn-row" });
+    const notYetBtn = btnRow.createEl("button", { text: this.t.retroNotYet });
+    notYetBtn.addEventListener("click", () => this.close());
+
+    const doneBtn = btnRow.createEl("button", { text: this.t.retroDone, cls: "mod-cta" });
+    doneBtn.addEventListener("click", async () => {
+      contentEl.empty();
+      contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
+      contentEl.createEl("p", { text: this.t.retroGenerating, cls: "ba-retro-message" });
+
+      try {
+        await this.generateRetrospective(todoFile as TFile, dateStr);
+        new Notice(this.t.retroComplete);
+      } catch (error) {
+        new Notice(this.t.retroFailed((error as Error).message));
+      }
+      this.close();
+    });
+  }
+
+  // 회고 생성 및 To-Do 문서에 추가
+  private async generateRetrospective(todoFile: TFile, dateStr: string): Promise<void> {
+    const todoContent = await this.app.vault.read(todoFile);
+
+    // 오늘 생성된 파일 수집 (To-Do 파일, 아카이브 비우기 대상 폴더 제외)
+    const todoFolder = this.plugin.settings.todoFolder || "ToDo";
+    const archiveCleanFolder = this.plugin.settings.archiveCleanFolder || "ToDo/Archive";
+    const allFiles = this.app.vault.getFiles();
+    const todayStart = new Date(dateStr + "T00:00:00").getTime();
+    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+
+    const todayFiles: { path: string; content: string }[] = [];
+    for (const file of allFiles) {
+      // 생성일이 오늘인 파일만
+      if (file.stat.ctime < todayStart || file.stat.ctime >= todayEnd) continue;
+      // To-Do 파일 자체 제외
+      if (file.path === todoFile.path) continue;
+      // 아카이브 비우기 대상 폴더 제외
+      if (file.path.startsWith(archiveCleanFolder + "/")) continue;
+      // 마크다운 파일만
+      if (file.extension !== "md") continue;
+
+      try {
+        const content = await this.app.vault.cachedRead(file);
+        // 너무 긴 파일은 앞부분만
+        todayFiles.push({
+          path: file.path,
+          content: content.length > 2000 ? content.substring(0, 2000) + "..." : content,
+        });
+      } catch {
+        // 읽기 실패 시 건너뜀
+      }
+    }
+
+    // AI로 회고 생성
+    const lang = this.plugin.settings.language;
+    const langLabel = lang === "ko" ? "한국어" : lang === "ja" ? "日本語" : "English";
+
+    const filesContext = todayFiles.length > 0
+      ? todayFiles.map((f) => `### ${f.path}\n${f.content}`).join("\n\n")
+      : "(No additional files created today)";
+
+    const prompt = `You are a daily retrospective assistant. Analyze the following To-Do document and today's created files, then write a retrospective summary.
+
+Language: Write in ${langLabel}.
+
+## Today's To-Do
+${todoContent}
+
+## Files Created Today (${todayFiles.length} files)
+${filesContext}
+
+## Instructions
+- Summarize what was accomplished today based on the To-Do items and created files
+- Note any incomplete tasks and possible reasons
+- Provide brief insights or suggestions for improvement
+- Keep it concise (under 300 words)
+- Use markdown format with a ## heading
+- The heading should be "${lang === "ko" ? "📝 오늘의 회고" : lang === "ja" ? "📝 今日の振り返り" : "📝 Daily Retrospective"}"`;
+
+    const { BedrockClient } = await import("./bedrock-client");
+    const client = new BedrockClient(this.plugin.settings);
+    const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
+
+    // To-Do 문서 끝에 회고 추가
+    const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
+    await this.app.vault.modify(todoFile, updatedContent);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
