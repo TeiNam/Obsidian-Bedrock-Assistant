@@ -62,7 +62,11 @@ export default class BedrockAssistantPlugin extends Plugin {
       // 레이아웃이 아직 준비 안 됐을 수 있으므로 준비 후에도 한 번 더 갱신
       this.app.workspace.onLayoutReady(() => refreshMcpIndicator());
     }).catch((e) => console.warn("MCP 설정 로드 실패:", e));
-    this.loadIndex().catch((e) => console.warn("인덱스 로드 실패:", e));
+
+    // 인덱스 로드는 레이아웃 준비 후 실행 (볼트 파일 시스템이 완전히 준비된 상태에서 로드)
+    this.app.workspace.onLayoutReady(() => {
+      this.loadIndex().catch((e) => console.warn("인덱스 로드 실패:", e));
+    });
 
     // 리본 아이콘 추가
     this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
