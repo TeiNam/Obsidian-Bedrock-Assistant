@@ -180,7 +180,15 @@ export default class BedrockAssistantPlugin extends Plugin {
       if (file && file instanceof TFile) {
         await this.app.vault.modify(file, data);
       } else {
-        await this.app.vault.create(INDEX_FILE, data);
+        // 파일이 없으면 생성 시도, 이미 존재하면 modify로 재시도
+        try {
+          await this.app.vault.create(INDEX_FILE, data);
+        } catch {
+          const existing = this.app.vault.getAbstractFileByPath(INDEX_FILE);
+          if (existing && existing instanceof TFile) {
+            await this.app.vault.modify(existing, data);
+          }
+        }
       }
     } catch (error) {
       console.error("인덱스 저장 실패:", error);

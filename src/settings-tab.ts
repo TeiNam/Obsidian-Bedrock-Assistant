@@ -33,7 +33,7 @@ const I18N = {
     chatModel: "Chat Model",
     chatModelDesc: "Bedrock Claude model ID",
     embeddingModel: "Embedding Model",
-    embeddingModelDesc: "Bedrock embedding model ID",
+    embeddingModelDesc: "Bedrock embedding model ID (used for vault document indexing)",
     genSettings: "Generation Settings",
     maxTokens: "Max Tokens",
     maxTokensDesc: "Maximum response tokens",
@@ -42,6 +42,9 @@ const I18N = {
     systemPrompt: "System Prompt",
     systemPromptDesc: "Defines the AI assistant's default behavior",
     systemPromptPlaceholder: "Enter system prompt...",
+    systemPromptEdit: "Edit",
+    systemPromptSave: "Save",
+    systemPromptCancel: "Cancel",
     ux: "User Experience",
     greeting: "Welcome Greeting",
     greetingDesc: "Greeting shown when opening the sidebar",
@@ -73,6 +76,16 @@ const I18N = {
     todoArchiveFolderDesc: "Folder to move old to-do files into",
     todoArchiveDays: "Archive After (days)",
     todoArchiveDaysDesc: "Move to-do files older than this many days to the archive folder",
+    archiveClean: "Archive Cleanup",
+    archiveCleanFolder: "Cleanup Folder",
+    archiveCleanFolderDesc: "Folder to clean up old archived files from",
+    archiveCleanDays: "Delete After (days)",
+    archiveCleanDaysDesc: "Delete archived files older than this many days when using the Clean Archive button",
+    webClip: "Web Clipper",
+    webClipFolder: "Save Folder",
+    webClipFolderDesc: "Folder to save web page summaries",
+    webClipModel: "AI Model",
+    webClipModelDesc: "Model used for web page translation and summarization",
     skills: "Obsidian Skills",
     skillsDesc: "Enabled skills add Obsidian knowledge to the system prompt for accurate syntax usage.",
     mcpServers: "MCP Servers",
@@ -129,7 +142,7 @@ const I18N = {
     chatModel: "채팅 모델",
     chatModelDesc: "Bedrock Claude 모델 ID",
     embeddingModel: "임베딩 모델",
-    embeddingModelDesc: "Bedrock 임베딩 모델 ID",
+    embeddingModelDesc: "Bedrock 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
     genSettings: "생성 설정",
     maxTokens: "최대 토큰",
     maxTokensDesc: "응답 최대 토큰 수",
@@ -138,6 +151,9 @@ const I18N = {
     systemPrompt: "시스템 프롬프트",
     systemPromptDesc: "AI 어시스턴트의 기본 동작을 정의하는 프롬프트",
     systemPromptPlaceholder: "시스템 프롬프트를 입력하세요...",
+    systemPromptEdit: "편집",
+    systemPromptSave: "저장",
+    systemPromptCancel: "취소",
     ux: "사용자 경험",
     greeting: "환영 인사",
     greetingDesc: "사이드바를 열 때 표시되는 인사말",
@@ -169,6 +185,16 @@ const I18N = {
     todoArchiveFolderDesc: "오래된 To-Do 파일을 이동할 폴더",
     todoArchiveDays: "아카이브 기준 (일)",
     todoArchiveDaysDesc: "이 일수를 초과한 To-Do 파일을 아카이브 폴더로 이동합니다",
+    archiveClean: "아카이브 비우기",
+    archiveCleanFolder: "비우기 대상 폴더",
+    archiveCleanFolderDesc: "아카이브 비우기 버튼으로 삭제할 파일이 있는 폴더",
+    archiveCleanDays: "삭제 기준 (일)",
+    archiveCleanDaysDesc: "아카이브 비우기 버튼 사용 시 이 일수를 초과한 아카이브 파일을 삭제합니다",
+    webClip: "웹 클리퍼",
+    webClipFolder: "저장 폴더",
+    webClipFolderDesc: "웹 페이지 요약을 저장할 폴더",
+    webClipModel: "AI 모델",
+    webClipModelDesc: "웹 페이지 번역 및 요약에 사용할 모델",
     skills: "Obsidian 스킬",
     skillsDesc: "활성화된 스킬의 지식이 시스템 프롬프트에 추가되어 AI가 Obsidian 문법을 정확하게 사용합니다.",
     mcpServers: "MCP 서버",
@@ -196,6 +222,115 @@ const I18N = {
     confirmToolExecutionDesc: "파괴적 도구(편집, 삭제, 이동, 생성) 실행 전 확인 대화상자를 표시합니다",
     mcpTimeout: "MCP 도구 타임아웃",
     mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (10~120초)",
+  },
+  ja: {
+    title: BRANDING.settingsTitle.ja,
+    pluginDesc: "AWS Bedrock搭載のObsidian AIアシスタントサイドバーです。Claudeモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
+    sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
+    language: "言語",
+    languageDesc: "設定UIの言語",
+    awsAuth: "AWS認証",
+    awsRegion: "AWSリージョン",
+    awsRegionDesc: "Bedrockを使用するAWSリージョン",
+    credSource: "認証情報ソース",
+    credSourceDesc: "manual: キーを直接入力（平文で保存）、env: 環境変数/AWSプロファイルを使用（推奨）",
+    credManual: "直接入力 (Manual)",
+    credEnv: "環境変数 / プロファイル",
+    credApiKey: "Bedrock APIキー",
+    accessKey: "AWSアクセスキーID",
+    accessKeyDesc: "IAMユーザーのアクセスキーID",
+    secretKey: "AWSシークレットアクセスキー",
+    secretKeyDesc: "IAMユーザーのシークレットアクセスキー",
+    secretKeyPlaceholder: "シークレットキーを入力",
+    apiKey: "Bedrock APIキー",
+    apiKeyDesc: "Bedrock APIキー（Bearerトークン認証）",
+    apiKeyPlaceholder: "APIキーを入力",
+    awsProfile: "AWSプロファイル",
+    awsProfileDesc: "~/.aws/credentialsのプロファイル（空欄でデフォルトチェーン）",
+    modelSettings: "モデル設定",
+    chatModel: "チャットモデル",
+    chatModelDesc: "Bedrock ClaudeモデルID",
+    embeddingModel: "埋め込みモデル",
+    embeddingModelDesc: "Bedrock埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
+    genSettings: "生成設定",
+    maxTokens: "最大トークン数",
+    maxTokensDesc: "応答の最大トークン数",
+    temperature: "Temperature",
+    temperatureDesc: "応答の創造性 (0.0 ~ 1.0)",
+    systemPrompt: "システムプロンプト",
+    systemPromptDesc: "AIアシスタントのデフォルト動作を定義します",
+    systemPromptPlaceholder: "システムプロンプトを入力...",
+    systemPromptEdit: "編集",
+    systemPromptSave: "保存",
+    systemPromptCancel: "キャンセル",
+    ux: "ユーザー体験",
+    greeting: "ウェルカムメッセージ",
+    greetingDesc: "サイドバーを開いた時に表示される挨拶",
+    autoAttach: "アクティブノートを自動添付",
+    autoAttachDesc: "現在開いているノートをコンテキストとして自動的に含める",
+    persistChat: "チャット履歴を保存",
+    persistChatDesc: "プラグイン再起動後も会話を保持",
+    clearHistory: "全履歴を削除",
+    clearHistoryDesc: "保存されたすべてのチャットセッションを削除",
+    clearHistoryBtn: "履歴を削除",
+    clearHistoryConfirm: "すべてのチャット履歴が削除されました。",
+    templateFolder: "テンプレートフォルダ",
+    templateFolderDesc: "テンプレートを保存するボルト内のフォルダパス",
+    chatFontSize: "チャットフォントサイズ",
+    chatFontSizeDesc: "チャットエリアのフォントサイズ (px)",
+    codeBlock: "コードブロック",
+    codeBlockDesc: "AIが言語指定付きのコードブロック（例: ```python）を書くと、Code Stylerプラグインが自動的にシンタックスハイライト、ヘッダー、アイコンを適用します。",
+    codeStylerInstall: "Code Stylerをインストール",
+    codeStylerInfo: "Code Stylerプラグインをインストールして、言語別スタイリングでコードブロックの表示を強化します。",
+    todo: "To-Do",
+    todoFolder: "To-Doフォルダ",
+    todoFolderDesc: "To-Doリストを保存するボルト内のフォルダパス",
+    todoTasksInstall: "Tasksプラグインをインストール",
+    todoTasksInfo: "Tasksプラグインをインストールして、期限、繰り返しタスク、クエリなどの高度なタスク管理を有効にします。",
+    todoTemplate: "To-Doテンプレート",
+    todoTemplateDesc: "テンプレートフォルダ内のテンプレートファイル名（.md不要）。変数: {{date}}, {{prevDate}}。",
+    todoTemplatePlaceholder: "Daily To-Do",
+    todoArchiveFolder: "アーカイブフォルダ",
+    todoArchiveFolderDesc: "古いTo-Doファイルを移動するフォルダ",
+    todoArchiveDays: "アーカイブ基準（日数）",
+    todoArchiveDaysDesc: "この日数を超えたTo-DoファイルをアーカイブフォルダにMoveします",
+    archiveClean: "アーカイブ整理",
+    archiveCleanFolder: "整理対象フォルダ",
+    archiveCleanFolderDesc: "アーカイブ整理ボタンで削除するファイルがあるフォルダ",
+    archiveCleanDays: "削除基準（日数）",
+    archiveCleanDaysDesc: "アーカイブ整理ボタン使用時、この日数を超えたアーカイブファイルを削除します",
+    webClip: "Webクリッパー",
+    webClipFolder: "保存フォルダ",
+    webClipFolderDesc: "Webページ要約を保存するフォルダ",
+    webClipModel: "AIモデル",
+    webClipModelDesc: "Webページの翻訳・要約に使用するモデル",
+    skills: "Obsidianスキル",
+    skillsDesc: "有効なスキルの知識がシステムプロンプトに追加され、AIがObsidian構文を正確に使用します。",
+    mcpServers: "MCPサーバー",
+    mcpNoServers: "MCPサーバーが設定されていません。",
+    mcpManage: "MCPサーバー管理",
+    mcpManageDesc: "MCPサーバー設定を編集し、接続を管理します",
+    mcpEdit: "設定を編集",
+    mcpStopAll: "すべて停止",
+    mcpStopped: "すべてのMCPサーバー接続が終了しました。",
+    mcpModalTitle: "MCPサーバー設定",
+    mcpModalTools: (name: string, count: number) => `${name} — ツール${count}個`,
+    mcpModalDesc: "MCPサーバー設定をJSON形式で編集してください。",
+    mcpModalSave: "保存して接続",
+    mcpModalCancel: "閉じる",
+    mcpModalJsonError: "❌ JSON形式が正しくありません。",
+    mcpModalSaving: "MCP設定を保存しました。サーバーに接続中...",
+    mcpModalConnected: (names: string) => `✅ MCP接続: ${names}`,
+    mcpModalFailed: (names: string) => `❌ MCP失敗: ${names}`,
+    mcpModalNoServers: "MCPサーバーが設定されていません。",
+    mcpStatusTitle: "接続状態",
+    mcpStatusDisconnected: (name: string) => `${name} — 切断`,
+    mcpStatusNone: "接続されたサーバーがありません。",
+    folderSelectPlaceholder: "フォルダを選択...",
+    confirmToolExecution: "破壊的ツールの実行確認",
+    confirmToolExecutionDesc: "破壊的ツール（編集、削除、移動、作成）の実行前に確認ダイアログを表示します",
+    mcpTimeout: "MCPツールタイムアウト",
+    mcpTimeoutDesc: "MCPツールリクエストのタイムアウト（10〜120秒）",
   },
 } as const;
 
@@ -241,9 +376,10 @@ export class BedrockSettingTab extends PluginSettingTab {
         dropdown
           .addOption("en", "English")
           .addOption("ko", "한국어")
+          .addOption("ja", "日本語")
           .setValue(this.plugin.settings.language)
           .onChange(async (value) => {
-            this.plugin.settings.language = value as "en" | "ko";
+            this.plugin.settings.language = value as "en" | "ko" | "ja";
             await this.plugin.saveSettings();
             // 열려있는 채팅 뷰 UI 즉시 재빌드
             const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
@@ -425,17 +561,11 @@ export class BedrockSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(t.systemPrompt)
       .setDesc(t.systemPromptDesc)
-      .addTextArea((text) => {
-        text
-          .setPlaceholder(t.systemPromptPlaceholder)
-          .setValue(this.plugin.settings.systemPrompt)
-          .onChange(async (value) => {
-            this.plugin.settings.systemPrompt = value;
-            await this.plugin.saveSettings();
-          });
-        text.inputEl.rows = 6;
-        text.inputEl.style.width = "100%";
-      });
+      .addButton((btn) =>
+        btn.setButtonText(t.systemPromptEdit).onClick(() => {
+          new SystemPromptModal(this.app, this.plugin, t).open();
+        })
+      );
 
     // 사용자 경험 설정
     containerEl.createEl("h3", { text: t.ux });
@@ -549,9 +679,10 @@ export class BedrockSettingTab extends PluginSettingTab {
 
     // 코드 블록 설정
     containerEl.createEl("h3", { text: t.codeBlock });
-    containerEl.createEl("p", {
+    const codeBlockBox = containerEl.createDiv({ cls: "ba-about-box" });
+    codeBlockBox.createEl("p", {
       text: t.codeBlockDesc,
-      cls: "setting-item-description",
+      cls: "ba-about-desc",
     });
 
     const codeStylerSetting = new Setting(containerEl)
@@ -635,22 +766,123 @@ export class BedrockSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(t.todoArchiveDays)
       .setDesc(t.todoArchiveDaysDesc)
-      .addSlider((slider) =>
-        slider
-          .setLimits(1, 30, 1)
-          .setValue(this.plugin.settings.todoArchiveDays)
-          .setDynamicTooltip()
+      .addText((text) =>
+        text
+          .setPlaceholder("7")
+          .setValue(String(this.plugin.settings.todoArchiveDays))
           .onChange(async (value) => {
-            this.plugin.settings.todoArchiveDays = value;
-            await this.plugin.saveSettings();
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0) {
+              this.plugin.settings.todoArchiveDays = num;
+              await this.plugin.saveSettings();
+            }
           })
       );
 
+    // 아카이브 비우기 설정
+    containerEl.createEl("h3", { text: t.archiveClean });
+
+    new Setting(containerEl)
+      .setName(t.archiveCleanFolder)
+      .setDesc(t.archiveCleanFolderDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("ToDo/Archive")
+          .setValue(this.plugin.settings.archiveCleanFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.archiveCleanFolder = value.trim() || "ToDo/Archive";
+            await this.plugin.saveSettings();
+          })
+      )
+      .addButton((btn) =>
+        btn.setIcon("folder").setTooltip("Browse").onClick(() => {
+          new FolderSuggestModal(this.app, async (folder) => {
+            this.plugin.settings.archiveCleanFolder = folder;
+            await this.plugin.saveSettings();
+            this.display();
+          }, t.folderSelectPlaceholder).open();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName(t.archiveCleanDays)
+      .setDesc(t.archiveCleanDaysDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("90")
+          .setValue(String(this.plugin.settings.archiveCleanDays))
+          .onChange(async (value) => {
+            const num = parseInt(value);
+            if (!isNaN(num) && num > 0) {
+              this.plugin.settings.archiveCleanDays = num;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    // 웹 클리퍼 설정
+    containerEl.createEl("h3", { text: t.webClip });
+
+    new Setting(containerEl)
+      .setName(t.webClipFolder)
+      .setDesc(t.webClipFolderDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("WebClips")
+          .setValue(this.plugin.settings.webClipFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.webClipFolder = value.trim() || "WebClips";
+            await this.plugin.saveSettings();
+          })
+      )
+      .addButton((btn) =>
+        btn.setIcon("folder").setTooltip("Browse").onClick(() => {
+          new FolderSuggestModal(this.app, async (folder) => {
+            this.plugin.settings.webClipFolder = folder;
+            await this.plugin.saveSettings();
+            this.display();
+          }, t.folderSelectPlaceholder).open();
+        })
+      );
+
+    // 웹 클리퍼 모델 선택 (채팅 모델 목록에서 선택)
+    const webClipModelSetting = new Setting(containerEl)
+      .setName(t.webClipModel)
+      .setDesc(t.webClipModelDesc)
+      .addDropdown((dropdown) => {
+        // 현재 설정값을 기본 옵션으로 추가
+        const current = this.plugin.settings.webClipModel;
+        dropdown.addOption(current, current);
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.webClipModel = value;
+          await this.plugin.saveSettings();
+        });
+
+        // 비동기로 모델 목록 로드 후 드롭다운 갱신
+        (async () => {
+          try {
+            const { BedrockClient } = await import("./bedrock-client");
+            const client = new BedrockClient(this.plugin.settings);
+            const models = await client.listModels();
+            // 기존 옵션 제거 후 재구성
+            dropdown.selectEl.empty();
+            for (const m of models) {
+              dropdown.addOption(m.modelId, m.modelName || m.modelId);
+            }
+            dropdown.setValue(this.plugin.settings.webClipModel);
+          } catch {
+            // 모델 로드 실패 시 현재값 유지
+          }
+        })();
+      });
+
     // Obsidian 스킬 설정
     containerEl.createEl("h3", { text: t.skills });
-    containerEl.createEl("p", {
+    const skillsBox = containerEl.createDiv({ cls: "ba-about-box" });
+    skillsBox.createEl("p", {
       text: t.skillsDesc,
-      cls: "setting-item-description",
+      cls: "ba-about-desc",
     });
 
     for (const skill of SKILLS) {
@@ -752,6 +984,55 @@ export class BedrockSettingTab extends PluginSettingTab {
   }
 }
 
+
+// 시스템 프롬프트 편집 모달
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+class SystemPromptModal extends Modal {
+  private plugin: BedrockAssistantPlugin;
+  private t: Record<string, any>;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(app: App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+    super(app);
+    this.plugin = plugin;
+    this.t = t;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("ba-sysprompt-modal");
+
+    contentEl.createEl("h2", { text: this.t.systemPrompt });
+
+    const textarea = contentEl.createEl("textarea", {
+      cls: "ba-sysprompt-textarea",
+      attr: { placeholder: this.t.systemPromptPlaceholder },
+    });
+    textarea.value = this.plugin.settings.systemPrompt;
+    textarea.rows = 16;
+
+    const btnRow = contentEl.createDiv({ cls: "ba-sysprompt-btn-row" });
+
+    const cancelBtn = btnRow.createEl("button", { text: this.t.systemPromptCancel });
+    cancelBtn.addEventListener("click", () => this.close());
+
+    const saveBtn = btnRow.createEl("button", {
+      text: this.t.systemPromptSave,
+      cls: "mod-cta",
+    });
+    saveBtn.addEventListener("click", async () => {
+      this.plugin.settings.systemPrompt = textarea.value;
+      await this.plugin.saveSettings();
+      this.close();
+    });
+
+    setTimeout(() => textarea.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
 // MCP 설정 편집 모달
 class McpConfigModal extends Modal {

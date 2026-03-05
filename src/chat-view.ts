@@ -9,6 +9,7 @@ import { prepareRegeneration } from "./regenerate-helper";
 import { filterSessions } from "./session-search";
 import { DESTRUCTIVE_TOOLS, needsToolConfirmation } from "./tool-confirm-utils";
 import { isAllowedTextExtension } from "./file-extension-utils";
+import { WebClipperModal } from "./web-clipper";
 
 export const VIEW_TYPE = BRANDING.viewType;
 
@@ -58,6 +59,13 @@ const VIEW_I18N = {
     todoExists: (path: string) => `To-Do already exists: ${path}`,
     todoError: (e: string) => `To-Do creation failed: ${e}`,
     todoArchived: (n: number) => `${n} old to-do(s) archived`,
+    cleanArchive: "Clean archive",
+    cleanArchiveTitle: "Clean Archive",
+    cleanArchiveEmpty: "No old files to delete.",
+    cleanArchiveSelectAll: "Select all",
+    cleanArchiveDelete: "Delete selected",
+    cleanArchiveCancel: "Cancel",
+    cleanArchiveDeleted: (n: number) => `${n} file(s) deleted`,
     searchPlaceholder: "Search for a note to attach...",
     unsupportedExt: (ext: string) => `Unsupported file format: .${ext}`,
     webSearchHint: "[Web search enabled: Search the web for up-to-date information when needed. Include source URLs.]",
@@ -73,6 +81,7 @@ const VIEW_I18N = {
     toolDenied: "Tool execution denied by user.",
     toolConsecutiveFailures: "Tool execution failed 3 times in a row. Stopping the tool loop to prevent further errors.",
     attachedFileLabel: (path: string) => `[Attached file: ${path}]`,
+    webClip: "Summarize web page",
     exportChat: "Export chat",
     exportSuccess: (path: string) => `Chat exported: ${path}`,
     exportEmpty: "No messages to export.",
@@ -133,6 +142,13 @@ ${content}`,
     todoExists: (path: string) => `이미 존재합니다: ${path}`,
     todoError: (e: string) => `To-Do 생성 실패: ${e}`,
     todoArchived: (n: number) => `${n}개의 오래된 To-Do가 아카이브됨`,
+    cleanArchive: "아카이브 비우기",
+    cleanArchiveTitle: "아카이브 비우기",
+    cleanArchiveEmpty: "삭제할 오래된 파일이 없습니다.",
+    cleanArchiveSelectAll: "전체 선택",
+    cleanArchiveDelete: "선택 항목 삭제",
+    cleanArchiveCancel: "취소",
+    cleanArchiveDeleted: (n: number) => `${n}개 파일 삭제됨`,
     searchPlaceholder: "첨부할 노트를 검색하세요...",
     unsupportedExt: (ext: string) => `지원하지 않는 파일 형식입니다: .${ext}`,
     webSearchHint: "[웹 서치 활성화됨: 필요한 경우 최신 정보를 웹에서 검색하여 답변에 포함하세요. 출처 URL을 함께 제공하세요.]",
@@ -148,6 +164,7 @@ ${content}`,
     toolDenied: "사용자가 도구 실행을 거부했습니다.",
     toolConsecutiveFailures: "도구 실행이 3회 연속 실패하여 루프를 중단합니다. 추가 오류를 방지하기 위해 중단되었습니다.",
     attachedFileLabel: (path: string) => `[첨부 파일: ${path}]`,
+    webClip: "웹 페이지 요약",
     exportChat: "대화 내보내기",
     exportSuccess: (path: string) => `대화 내보내기 완료: ${path}`,
     exportEmpty: "내보낼 메시지가 없습니다.",
@@ -161,6 +178,89 @@ ${content}`,
 
 ---
 제목: ${title}
+
+${content}`,
+  },
+  ja: {
+    indexVault: "ボルトインデックス",
+    newChat: "新しいチャット",
+    generateTags: "タグ生成",
+    placeholder: "メッセージを入力...",
+    attachNote: "現在のノートを添付",
+    searchFile: "ファイル検索・添付",
+    attachFile: "ファイル添付",
+    webSearch: "Web検索",
+    contextUsage: "コンテキスト使用量",
+    copy: "コピー",
+    thinking: "考え中...",
+    defaultGreeting: "何かお手伝いできますか？",
+    indexedNotes: (n: number) => `📊 インデックス済みノート: ${n}件`,
+    indexHint: "💡 上部のDBアイコンでボルトをインデックスしてください",
+    noOpenNote: "開いているノートがありません。",
+    tagsExist: "タグは既に存在します。",
+    generatingTags: "タグ生成中...",
+    tagsFailed: "タグ生成失敗",
+    tagsExtractFail: "タグを抽出できません。",
+    tagsAdded: (t: string) => `タグ追加: ${t}`,
+    tagsError: (e: string) => `タグ生成失敗: ${e}`,
+    modelLoading: "モデル一覧を読み込み中...",
+    modelFailed: "モデル取得失敗",
+    error: (e: string) => `エラー: ${e}`,
+    checkingChanges: " 変更を確認中...",
+    indexing: (pct: number) => ` インデックス中... ${pct}%`,
+    filesProgress: (c: number, t: number) => `${c} / ${t} ファイル`,
+    allUpToDate: " すべてのファイルが最新です",
+    totalIndexed: (n: number) => `合計${n}件のノートをインデックス完了`,
+    indexDone: " インデックス完了",
+    updated: (n: number) => `${n}件更新`,
+    failed: (n: number) => `${n}件失敗`,
+    totalIndexedShort: (n: number) => `合計${n}件インデックス済み`,
+    failHeader: (n: number) => `⚠️ ${n}件のファイルのインデックスに失敗`,
+    createTodo: "To-Do作成",
+    chatHistory: "チャット履歴",
+    noSessions: "保存されたセッションがありません。",
+    deleteSession: "削除",
+    sessionDate: (d: string) => `${d}`,
+    todoCreated: (path: string) => `To-Do作成完了: ${path}`,
+    todoExists: (path: string) => `既に存在します: ${path}`,
+    todoError: (e: string) => `To-Do作成失敗: ${e}`,
+    todoArchived: (n: number) => `${n}件の古いTo-Doをアーカイブしました`,
+    cleanArchive: "アーカイブ整理",
+    cleanArchiveTitle: "アーカイブ整理",
+    cleanArchiveEmpty: "削除する古いファイルがありません。",
+    cleanArchiveSelectAll: "すべて選択",
+    cleanArchiveDelete: "選択項目を削除",
+    cleanArchiveCancel: "キャンセル",
+    cleanArchiveDeleted: (n: number) => `${n}件のファイルを削除しました`,
+    searchPlaceholder: "添付するノートを検索...",
+    unsupportedExt: (ext: string) => `サポートされていないファイル形式: .${ext}`,
+    webSearchHint: "[Web検索有効: 必要に応じて最新情報をWebで検索して回答に含めてください。出典URLも提供してください。]",
+    contextLabel: (used: string, total: string) => `コンテキスト: ~${used}K / ${total}K トークン`,
+    toolError: (e: string) => `ツール実行エラー: ${e}`,
+    toolConfirmTitle: "ツール実行確認",
+    toolConfirmMessage: (name: string) => `AIが破壊的ツールを実行しようとしています: "${name}"`,
+    toolConfirmParams: "パラメータ:",
+    toolConfirmApprove: "実行",
+    toolConfirmDeny: "拒否",
+    toolConfirmDontAsk: "次回から確認しない",
+    toolRunning: "実行中...",
+    toolDenied: "ユーザーがツール実行を拒否しました。",
+    toolConsecutiveFailures: "ツール実行が3回連続で失敗したため、ループを停止します。",
+    attachedFileLabel: (path: string) => `[添付ファイル: ${path}]`,
+    webClip: "Webページ要約",
+    exportChat: "チャットをエクスポート",
+    exportSuccess: (path: string) => `チャットエクスポート完了: ${path}`,
+    exportEmpty: "エクスポートするメッセージがありません。",
+    regenerate: "再生成",
+    sessionSearch: "会話を検索...",
+    sessionSearchNoResults: "一致する会話がありません。",
+    tagPrompt: (title: string, content: string) => `以下のノートの内容を分析して、適切なタグを3つ生成してください。
+タグのみをカンマ区切りで1行で出力してください。他の説明は不要です。
+タグは日本語または英語で、ノートの内容に合わせて作成してください。
+例: プロジェクト管理, AI, 議事録
+
+---
+タイトル: ${title}
 
 ${content}`,
   },
@@ -280,6 +380,11 @@ export class ChatView extends ItemView {
     setIcon(exportBtn, "download");
     exportBtn.addEventListener("click", () => this.exportChat());
 
+    // 웹 페이지 요약 버튼
+    const webClipBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.webClip } });
+    setIcon(webClipBtn, "globe");
+    webClipBtn.addEventListener("click", () => this.openWebClipper());
+
     // 인덱싱 버튼
     const indexBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.indexVault } });
     setIcon(indexBtn, "file-search");
@@ -311,6 +416,12 @@ export class ChatView extends ItemView {
     setIcon(todoBtn, "check-square");
     todoBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.createTodo });
     todoBtn.addEventListener("click", () => this.createTodoNote());
+
+    // 아카이브 비우기 버튼
+    const cleanBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.cleanArchive } });
+    setIcon(cleanBtn, "trash-2");
+    cleanBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.cleanArchive });
+    cleanBtn.addEventListener("click", () => this.openCleanArchiveModal());
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
 
@@ -1378,12 +1489,21 @@ export class ChatView extends ItemView {
     const latest = dated[0].file;
 
     const content = await this.app.vault.cachedRead(latest);
-    // 미완료 체크박스 항목 추출 (- [ ] 로 시작하는 줄)
+    // 미완료 체크박스 항목 추출 (계층 구조 유지)
     const lines = content.split("\n");
     const unfinished: string[] = [];
-    for (const line of lines) {
-      if (/^\s*- \[ \]\s+.+/.test(line)) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // 최상위 미완료 항목 (들여쓰기 없음)
+      if (/^- \[ \]\s+.+/.test(line)) {
         unfinished.push(line);
+        // 하위 들여쓰기 항목도 함께 수집
+        let j = i + 1;
+        while (j < lines.length && /^[\t ]+/.test(lines[j]) && lines[j].trim().length > 0) {
+          unfinished.push(lines[j]);
+          j++;
+        }
+        i = j - 1;
       }
     }
     return unfinished;
@@ -2110,6 +2230,16 @@ Classify ALL items.`;
     await this.generateResponse();
   }
 
+  // 웹 페이지 요약 모달 열기
+  private openWebClipper(): void {
+    new WebClipperModal(this.app, this.plugin).open();
+  }
+
+  // 아카이브 비우기 모달 열기
+  private openCleanArchiveModal(): void {
+    new CleanArchiveModal(this.app, this.plugin, this.t).open();
+  }
+
   // 현재 대화를 마크다운 파일로 내보내기
   private async exportChat(): Promise<void> {
     // 내보낼 메시지가 없으면 알림
@@ -2519,6 +2649,126 @@ class ToolConfirmModal extends Modal {
     if (!this.resolved) {
       this.resolvePromise(false);
     }
+    this.contentEl.empty();
+  }
+}
+
+// 아카이브 비우기 모달
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+class CleanArchiveModal extends Modal {
+  private plugin: BedrockAssistantPlugin;
+  private t: Record<string, any>;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+    super(app);
+    this.plugin = plugin;
+    this.t = t;
+  }
+
+  async onOpen(): Promise<void> {
+    const { contentEl } = this;
+    contentEl.addClass("ba-clean-archive-modal");
+    contentEl.createEl("h2", { text: this.t.cleanArchiveTitle });
+
+    const archiveFolder = this.plugin.settings.archiveCleanFolder;
+    const archiveDays = this.plugin.settings.archiveCleanDays;
+    const now = Date.now();
+    const cutoff = now - archiveDays * 24 * 60 * 60 * 1000;
+
+    // 아카이브 폴더에서 하위 폴더 포함 재귀 탐색, 생성일(ctime) 기준 n일 이전 파일 수집
+    const folder = this.app.vault.getAbstractFileByPath(archiveFolder);
+    const oldFiles: TFile[] = [];
+    const collectFiles = (parent: any) => {
+      if (!parent || !("children" in parent)) return;
+      for (const child of parent.children) {
+        if (child instanceof TFile && child.stat.ctime < cutoff) {
+          oldFiles.push(child);
+        } else if ("children" in child) {
+          collectFiles(child);
+        }
+      }
+    };
+    collectFiles(folder);
+
+    if (oldFiles.length === 0) {
+      contentEl.createEl("p", { text: this.t.cleanArchiveEmpty, cls: "ba-clean-archive-empty" });
+      const btnRow = contentEl.createDiv({ cls: "ba-clean-archive-btn-row" });
+      const closeBtn = btnRow.createEl("button", { text: this.t.cleanArchiveCancel });
+      closeBtn.addEventListener("click", () => this.close());
+      return;
+    }
+
+    // 체크박스 리스트
+    const checkboxes: { file: TFile; checkbox: HTMLInputElement }[] = [];
+
+    // 전체 선택 토글
+    const selectAllRow = contentEl.createDiv({ cls: "ba-clean-archive-select-all" });
+    const selectAllCb = selectAllRow.createEl("input", { type: "checkbox" }) as HTMLInputElement;
+    selectAllCb.checked = true;
+    selectAllRow.createSpan({ text: this.t.cleanArchiveSelectAll });
+    selectAllCb.addEventListener("change", () => {
+      for (const item of checkboxes) {
+        item.checkbox.checked = selectAllCb.checked;
+      }
+    });
+
+    const listEl = contentEl.createDiv({ cls: "ba-clean-archive-list" });
+    // 생성일 오래된 순으로 정렬
+    oldFiles.sort((a, b) => a.stat.ctime - b.stat.ctime);
+
+    for (const file of oldFiles) {
+      const row = listEl.createDiv({ cls: "ba-clean-archive-item" });
+      const cb = row.createEl("input", { type: "checkbox" }) as HTMLInputElement;
+      cb.checked = true;
+      const dateStr = new Date(file.stat.ctime).toLocaleDateString();
+      row.createSpan({ text: file.path.replace(archiveFolder + "/", ""), cls: "ba-clean-archive-name" });
+      row.createSpan({ text: dateStr, cls: "ba-clean-archive-date" });
+      checkboxes.push({ file, checkbox: cb });
+    }
+
+    // 버튼 영역
+    const btnRow = contentEl.createDiv({ cls: "ba-clean-archive-btn-row" });
+    const cancelBtn = btnRow.createEl("button", { text: this.t.cleanArchiveCancel });
+    cancelBtn.addEventListener("click", () => this.close());
+
+    const deleteBtn = btnRow.createEl("button", {
+      text: this.t.cleanArchiveDelete,
+      cls: "mod-warning",
+    });
+    deleteBtn.addEventListener("click", async () => {
+      const toDelete = checkboxes.filter((c) => c.checkbox.checked).map((c) => c.file);
+      if (toDelete.length === 0) {
+        this.close();
+        return;
+      }
+      // 선택된 파일 삭제
+      for (const file of toDelete) {
+        await this.app.vault.delete(file);
+      }
+      // 빈 하위 폴더 정리 (깊은 폴더부터 삭제)
+      const removeEmptyFolders = (parent: any) => {
+        if (!parent || !("children" in parent)) return;
+        // 하위 폴더 먼저 재귀 처리
+        for (const child of [...parent.children]) {
+          if ("children" in child) {
+            removeEmptyFolders(child);
+          }
+        }
+        // 루트 아카이브 폴더는 유지, 하위 빈 폴더만 삭제
+        if (parent.children.length === 0 && parent.path !== archiveFolder) {
+          this.app.vault.delete(parent);
+        }
+      };
+      const rootFolder = this.app.vault.getAbstractFileByPath(archiveFolder);
+      removeEmptyFolders(rootFolder);
+
+      new Notice(this.t.cleanArchiveDeleted(toDelete.length));
+      this.close();
+    });
+  }
+
+  onClose(): void {
     this.contentEl.empty();
   }
 }
