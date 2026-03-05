@@ -1,5 +1,7 @@
 # Bedrock Assistant
 
+[English](README.md) | [한국어](README-KR.md)
+
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
