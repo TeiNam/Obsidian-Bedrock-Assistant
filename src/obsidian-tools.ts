@@ -41,14 +41,16 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     name: "edit_note",
-    description: "기존 노트의 내용을 수정합니다.",
+    description: "기존 노트의 내용을 수정합니다. find/replace를 사용하면 해당 부분만 교체하고, content만 사용하면 전체를 덮어씁니다.",
     input_schema: {
       type: "object",
       properties: {
         path: { type: "string", description: "수정할 파일 경로" },
-        content: { type: "string", description: "새 내용" },
+        content: { type: "string", description: "전체 교체 시 새 내용 (find/replace 미사용 시)" },
+        find: { type: "string", description: "교체할 기존 텍스트 (부분 수정 시)" },
+        replace: { type: "string", description: "새로 바꿀 텍스트 (부분 수정 시)" },
       },
-      required: ["path", "content"],
+      required: ["path"],
     },
   },
   {
@@ -175,7 +177,7 @@ export class ToolExecutor {
         case "create_note":
           return await this.createNote(input.path as string, input.content as string);
         case "edit_note":
-          return await this.editNote(input.path as string, input.content as string);
+          return await this.editNote(input.path as string, input.content as string | undefined, input.find as string | undefined, input.replace as string | undefined);
         case "append_to_note":
           return await this.appendToNote(input.path as string, input.content as string);
         case "list_files":
@@ -248,14 +250,32 @@ export class ToolExecutor {
     return `노트가 생성되었습니다: ${path}`;
   }
 
-  private async editNote(path: string, content: string): Promise<string> {
+  private async editNote(path: string, content?: string, find?: string, replace?: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) {
       return `파일을 찾을 수 없습니다: ${path}`;
     }
-    await this.app.vault.modify(file, content);
-    new Notice(`노트 수정됨: ${path}`);
-    return `노트가 수정되었습니다: ${path}`;
+
+    // 부분 수정 모드 (find/replace)
+    if (find !== undefined && replace !== undefined) {
+      const current = await this.app.vault.read(file);
+      if (!current.includes(find)) {
+        return `교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`;
+      }
+      const updated = current.replace(find, replace);
+      await this.app.vault.modify(file, updated);
+      new Notice(`노트 부분 수정됨: ${path}`);
+      return `노트가 부분 수정되었습니다: ${path}`;
+    }
+
+    // 전체 교체 모드
+    if (content !== undefined) {
+      await this.app.vault.modify(file, content);
+      new Notice(`노트 수정됨: ${path}`);
+      return `노트가 수정되었습니다: ${path}`;
+    }
+
+    return `content 또는 find/replace 파라미터가 필요합니다.`;
   }
 
   private async appendToNote(path: string, content: string): Promise<string> {
