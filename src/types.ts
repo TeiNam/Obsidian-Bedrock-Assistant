@@ -1,6 +1,6 @@
 // 플러그인 설정 타입
 export interface BedrockAssistantSettings {
-  language: "en" | "ko";
+  language: "en" | "ko" | "ja";
   awsRegion: string;
   // 자격증명 소스: "manual" = 직접 입력, "env" = 환경변수/프로파일, "apikey" = Bedrock API Key
   awsCredentialSource: "manual" | "env" | "apikey";
@@ -34,6 +34,14 @@ export interface BedrockAssistantSettings {
   confirmToolExecution: boolean;
   // MCP 도구 요청 타임아웃 (초)
   mcpTimeout: number;
+  // 웹 클리퍼 저장 폴더 경로
+  webClipFolder: string;
+  // 웹 클리퍼 전용 모델 ID
+  webClipModel: string;
+  // 아카이브 비우기 기준 일수
+  archiveCleanDays: number;
+  // 아카이브 비우기 대상 폴더
+  archiveCleanFolder: string;
 }
 
 export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
@@ -62,6 +70,10 @@ export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
   todoArchiveDays: 7,
   confirmToolExecution: false,
   mcpTimeout: 30,
+  webClipFolder: "WebClips",
+  webClipModel: "global.anthropic.claude-sonnet-4-6-v1",
+  archiveCleanDays: 90,
+  archiveCleanFolder: "ToDo/Archive",
 };
 
 // 채팅 메시지 타입

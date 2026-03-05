@@ -1462,3 +1462,207 @@ body.theme-light .ba-message-content pre {
   padding: 2px 0 2px 24px;
   animation: ba-pulse 1.5s ease-in-out infinite;
 }
+
+/* ============================================
+   웹 클리퍼 모달
+   ============================================ */
+.web-clipper-modal {
+  max-width: 520px;
+}
+
+.web-clipper-title {
+  margin: 0 0 16px 0;
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.web-clipper-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  margin-bottom: 12px;
+}
+
+.web-clipper-input-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+}
+
+.web-clipper-url-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  outline: none;
+  color: var(--text-normal);
+  padding: 4px 0;
+}
+
+.web-clipper-url-input::placeholder {
+  color: var(--text-faint);
+}
+
+.web-clipper-status {
+  min-height: 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+.web-clipper-status-error {
+  color: var(--text-error);
+}
+
+.web-clipper-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.web-clipper-btn-cancel {
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.web-clipper-btn-submit {
+  padding: 6px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  font-weight: 500;
+}
+
+.web-clipper-btn-submit:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.web-clipper-btn-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.web-clipper-btn-loading {
+  position: relative;
+}
+
+.web-clipper-btn-loading::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 6px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: web-clipper-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes web-clipper-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   시스템 프롬프트 모달
+   ============================================ */
+.ba-sysprompt-modal {
+  max-width: 640px;
+}
+
+.ba-sysprompt-textarea {
+  width: 100%;
+  min-height: 320px;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+
+.ba-sysprompt-textarea:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.ba-sysprompt-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ============================================
+   아카이브 비우기 모달
+   ============================================ */
+.ba-clean-archive-modal {
+  max-width: 520px;
+}
+
+.ba-clean-archive-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 12px 0;
+}
+
+.ba-clean-archive-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 4px;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.ba-clean-archive-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.ba-clean-archive-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.ba-clean-archive-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ba-clean-archive-date {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ba-clean-archive-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

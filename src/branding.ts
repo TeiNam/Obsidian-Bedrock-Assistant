@@ -34,5 +34,6 @@ export const BRANDING = {
   settingsTitle: {
     en: "Assistant Kiro Settings",
     ko: "Assistant Kiro 설정",
+    ja: "Assistant Kiro 設定",
   },
 } as const;
