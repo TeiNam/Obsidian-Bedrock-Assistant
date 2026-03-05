@@ -290,7 +290,6 @@ export class VaultIndexer {
       for (const entry of entries) {
         this.index.set(entry.path, entry);
       }
-      // 임베딩 유무 확인
       this.useEmbeddings = this.hasEmbeddings();
     } catch {
       console.error("인덱스 로드 실패");

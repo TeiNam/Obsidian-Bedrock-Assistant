@@ -167,9 +167,10 @@ export default class BedrockAssistantPlugin extends Plugin {
   // 인덱스 로드/저장
   async loadIndex(): Promise<void> {
     try {
-      const file = this.app.vault.getAbstractFileByPath(INDEX_FILE);
-      if (file && file instanceof TFile) {
-        const data = await this.app.vault.read(file);
+      // 숨김 파일은 getAbstractFileByPath 캐시에 없을 수 있으므로 adapter를 직접 사용
+      const exists = await this.app.vault.adapter.exists(INDEX_FILE);
+      if (exists) {
+        const data = await this.app.vault.adapter.read(INDEX_FILE);
         this.indexer.deserialize(data);
       }
     } catch {
@@ -180,20 +181,8 @@ export default class BedrockAssistantPlugin extends Plugin {
   async saveIndex(): Promise<void> {
     try {
       const data = this.indexer.serialize();
-      const file = this.app.vault.getAbstractFileByPath(INDEX_FILE);
-      if (file && file instanceof TFile) {
-        await this.app.vault.modify(file, data);
-      } else {
-        // 파일이 없으면 생성 시도, 이미 존재하면 modify로 재시도
-        try {
-          await this.app.vault.create(INDEX_FILE, data);
-        } catch {
-          const existing = this.app.vault.getAbstractFileByPath(INDEX_FILE);
-          if (existing && existing instanceof TFile) {
-            await this.app.vault.modify(existing, data);
-          }
-        }
-      }
+      // 숨김 파일은 getAbstractFileByPath 캐시에 없을 수 있으므로 adapter를 직접 사용
+      await this.app.vault.adapter.write(INDEX_FILE, data);
     } catch (error) {
       console.error("인덱스 저장 실패:", error);
     }

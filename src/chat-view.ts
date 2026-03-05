@@ -98,7 +98,7 @@ const VIEW_I18N = {
     regenerate: "Regenerate",
     sessionSearch: "Search conversations...",
     sessionSearchNoResults: "No matching conversations.",
-    tagPrompt: (title: string, content: string) => `Analyze the following note and generate 3 appropriate tags.
+    tagPrompt: (title: string, content: string) => `Analyze the following note and generate 3 to 5 appropriate tags.
 Output only the tags separated by commas on a single line. No other explanation needed.
 Tags can be in English or the note's language, matching the content.
 Example: project-management, AI, meeting-notes
@@ -191,7 +191,7 @@ ${content}`,
     regenerate: "재생성",
     sessionSearch: "대화 검색...",
     sessionSearchNoResults: "일치하는 대화가 없습니다.",
-    tagPrompt: (title: string, content: string) => `다음 노트의 내용을 분석하여 적절한 태그 3개를 생성해주세요.
+    tagPrompt: (title: string, content: string) => `다음 노트의 내용을 분석하여 적절한 태그 3~5개를 생성해주세요.
 태그만 쉼표로 구분하여 한 줄로 출력하세요. 다른 설명은 불필요합니다.
 태그는 한국어 또는 영어로, 노트 내용에 맞게 작성하세요.
 예시: 프로젝트관리, AI, 회의록
@@ -284,7 +284,7 @@ ${content}`,
     regenerate: "再生成",
     sessionSearch: "会話を検索...",
     sessionSearchNoResults: "一致する会話がありません。",
-    tagPrompt: (title: string, content: string) => `以下のノートの内容を分析して、適切なタグを3つ生成してください。
+    tagPrompt: (title: string, content: string) => `以下のノートの内容を分析して、適切なタグを3〜5つ生成してください。
 タグのみをカンマ区切りで1行で出力してください。他の説明は不要です。
 タグは日本語または英語で、ノートの内容に合わせて作成してください。
 例: プロジェクト管理, AI, 議事録
@@ -405,16 +405,6 @@ export class ChatView extends ItemView {
     // 액션 버튼들
     const actions = header.createDiv({ cls: "ba-header-actions" });
 
-    // 대화 내보내기 버튼
-    const exportBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.exportChat } });
-    setIcon(exportBtn, "download");
-    exportBtn.addEventListener("click", () => this.exportChat());
-
-    // 웹 페이지 요약 버튼
-    const webClipBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.webClip } });
-    setIcon(webClipBtn, "globe");
-    webClipBtn.addEventListener("click", () => this.openWebClipper());
-
     // 인덱싱 버튼
     const indexBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.indexVault } });
     setIcon(indexBtn, "file-search");
@@ -424,6 +414,11 @@ export class ChatView extends ItemView {
     const newBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.newChat } });
     setIcon(newBtn, "square-pen");
     newBtn.addEventListener("click", () => this.startNewChat());
+
+    // 대화 내보내기 버튼
+    const exportBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.exportChat } });
+    setIcon(exportBtn, "download");
+    exportBtn.addEventListener("click", () => this.exportChat());
 
     // 지난 대화 버튼
     const historyBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.chatHistory } });
@@ -440,25 +435,26 @@ export class ChatView extends ItemView {
     // To-Do 생성 버튼
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
-    todoBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.createTodo });
     todoBtn.addEventListener("click", () => this.createTodoNote());
 
     // 회고 버튼
     const retroBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.retrospective } });
     setIcon(retroBtn, "book-open");
-    retroBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.retrospective });
     retroBtn.addEventListener("click", () => this.openRetrospectiveModal());
 
     // 태그 생성 버튼
     const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
     setIcon(tagBtn, "tag");
-    tagBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.generateTags });
     tagBtn.addEventListener("click", () => this.generateTags());
+
+    // 웹 페이지 요약 버튼
+    const webClipBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.webClip } });
+    setIcon(webClipBtn, "globe");
+    webClipBtn.addEventListener("click", () => this.openWebClipper());
 
     // 아카이브 비우기 버튼
     const cleanBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.cleanArchive } });
     setIcon(cleanBtn, "trash-2");
-    cleanBtn.createSpan({ cls: "ba-action-btn-label", text: this.t.cleanArchive });
     cleanBtn.addEventListener("click", () => this.openCleanArchiveModal());
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
@@ -1984,29 +1980,43 @@ Classify ALL items.`;
     const file = view.file;
     const content = await this.app.vault.cachedRead(file);
 
-    // 이미 태그가 있는지 확인
     const hasFrontmatter = content.startsWith("---");
+
+    // 본문에서 인라인 태그(#태그) 수집 및 제거용 준비
+    let bodyContent = content;
+    let frontmatterSection = "";
+    let frontmatterEnd = -1;
+
     if (hasFrontmatter) {
-      const endIdx = content.indexOf("---", 3);
-      if (endIdx > 0) {
-        const fm = content.substring(0, endIdx);
-        if (fm.includes("tags:") || fm.includes("tag:")) {
-          new Notice(this.t.tagsExist);
-          return;
-        }
+      frontmatterEnd = content.indexOf("---", 3);
+      if (frontmatterEnd > 0) {
+        frontmatterSection = content.substring(0, frontmatterEnd + 3);
+        bodyContent = content.substring(frontmatterEnd + 3);
       }
+    }
+
+    // 본문 내 인라인 태그(#태그) 제거 — 헤딩(## 등)은 제외
+    const cleanedBody = bodyContent.replace(/(?<=\s|^)#(?!#)([^\s#]+)/gm, "");
+
+    // 기존 frontmatter에서 tags/tag 속성 제거
+    let cleanedFrontmatter = frontmatterSection;
+    if (hasFrontmatter && frontmatterEnd > 0) {
+      // YAML 리스트 형식 tags 제거 (tags:\n  - xxx\n  - yyy)
+      cleanedFrontmatter = cleanedFrontmatter.replace(/^(tags|tag):[ \t]*\n(?:[ \t]+-[ \t]+.*\n?)*/gm, "");
+      // 인라인 형식 tags 제거 (tags: [xxx, yyy] 또는 tags: xxx)
+      cleanedFrontmatter = cleanedFrontmatter.replace(/^(tags|tag):[ \t]+.*\n?/gm, "");
     }
 
     new Notice(this.t.generatingTags);
 
     try {
-      // AI에게 태그 생성 요청 (도구 없이 간단한 텍스트 응답)
+      // AI에게 태그 생성 요청 (인라인 태그 제거된 본문 기반)
       const tagMessages: ConverseMessage[] = [
         {
           role: "user",
           content: [
             {
-              text: this.t.tagPrompt(file.basename, content.slice(0, 4000)),
+              text: this.t.tagPrompt(file.basename, cleanedBody.slice(0, 4000)),
             },
           ],
         },
@@ -2024,19 +2034,15 @@ Classify ALL items.`;
       const tags = rawTags
         .split(/[,，、\n]+/)
         .map((t) => t.trim())
-        // YAML 리스트 접두사 "- " 제거
         .map((t) => t.replace(/^-\s*/, ""))
-        // "tags:" 헤더 라인 제거
         .map((t) => t.replace(/^tags:\s*/i, ""))
-        // 백틱 제거
         .map((t) => t.replace(/`/g, ""))
-        // # 접두사 제거
         .map((t) => t.replace(/^#+\s*/, ""))
         .map((t) => t.trim())
         .filter((t) => t.length > 0)
-        .slice(0, 3);
+        .slice(0, 5);
 
-      if (tags.length === 0) {
+      if (tags.length < 3) {
         new Notice(this.t.tagsExtractFail);
         return;
       }
@@ -2045,15 +2051,13 @@ Classify ALL items.`;
       const tagYaml = `tags:\n${tags.map((t) => `  - ${t}`).join("\n")}`;
       let newContent: string;
 
-      if (hasFrontmatter) {
-        // 기존 frontmatter에 tags 추가
-        const endIdx = content.indexOf("---", 3);
-        const before = content.substring(0, endIdx).trimEnd();
-        const after = content.substring(endIdx);
-        newContent = `${before}\n${tagYaml}\n${after}`;
+      if (hasFrontmatter && frontmatterEnd > 0) {
+        // 기존 frontmatter에서 tags 제거 후 재삽입
+        const fmInner = cleanedFrontmatter.substring(0, cleanedFrontmatter.lastIndexOf("---")).trimEnd();
+        newContent = `${fmInner}\n${tagYaml}\n---${cleanedBody}`;
       } else {
         // frontmatter 새로 생성
-        newContent = `---\n${tagYaml}\n---\n${content}`;
+        newContent = `---\n${tagYaml}\n---\n${cleanedBody}`;
       }
 
       await this.app.vault.modify(file, newContent);
