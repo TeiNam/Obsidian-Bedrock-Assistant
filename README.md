@@ -52,6 +52,8 @@ An AI assistant sidebar plugin for Obsidian, powered by AWS Bedrock.
 | **Env / Profile** | Use environment variables or `~/.aws/credentials` profile |
 | **API Key** | Bedrock API Key (Bearer token) |
 
+> **Note:** API keys are stored locally on each device using OS keychain encryption and are not synced via iCloud. If you use iCloud to sync your vault, you must configure your AWS credentials on each device separately.
+
 ### Required IAM Permissions
 
 - `bedrock:InvokeModelWithResponseStream`

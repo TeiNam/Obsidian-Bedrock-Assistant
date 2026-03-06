@@ -52,6 +52,8 @@ AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바 플러그인입니�
 | **Env / Profile** | 환경변수 또는 `~/.aws/credentials` 프로파일 |
 | **API Key** | Bedrock API Key (Bearer 토큰) |
 
+> **참고:** API 키는 각 기기의 OS 키체인을 사용하여 로컬에만 저장되며, iCloud를 통해 동기화되지 않습니다. iCloud로 볼트를 동기화하는 경우, 각 기기에서 AWS 자격증명을 별도로 설정해야 합니다.
+
 ### 필요 IAM 권한
 
 - `bedrock:InvokeModelWithResponseStream`
