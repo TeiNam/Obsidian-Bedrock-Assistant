@@ -8,7 +8,13 @@ import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
-import { encryptSettings, decryptSettings } from "./safe-storage";
+import {
+  decryptSettings,
+  stripSensitiveFields,
+  saveCredentialsToLocal,
+  loadCredentialsFromLocal,
+  SENSITIVE_FIELDS,
+} from "./safe-storage";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -153,14 +159,38 @@ export default class BedrockAssistantPlugin extends Plugin {
   // 설정 로드/저장
   async loadSettings(): Promise<void> {
     const raw = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    // 암호화된 민감 필드를 복호화하여 메모리에 보관
-    this.settings = decryptSettings(raw);
+
+    // 마이그레이션: data.json에 암호화된 키가 남아있으면 로컬로 이전 후 제거
+    let hasMigratedKeys = false;
+    for (const field of SENSITIVE_FIELDS) {
+      const val = (raw as Record<string, unknown>)[field];
+      if (typeof val === "string" && val.length > 0) {
+        hasMigratedKeys = true;
+        break;
+      }
+    }
+
+    if (hasMigratedKeys) {
+      // 기존 data.json의 키를 복호화 후 로컬 파일로 저장
+      const decrypted = decryptSettings(raw);
+      saveCredentialsToLocal(decrypted as unknown as Record<string, unknown>);
+      // data.json에서 민감 필드 제거하여 저장
+      const stripped = stripSensitiveFields(decrypted);
+      await this.saveData(stripped);
+      this.settings = decrypted;
+    } else {
+      // 로컬 전용 파일에서 자격증명 로드
+      const credentials = loadCredentialsFromLocal();
+      this.settings = { ...raw, ...credentials } as BedrockAssistantSettings;
+    }
   }
 
   async saveSettings(): Promise<void> {
-    // 민감 필드를 암호화하여 디스크에 저장 (메모리의 settings는 평문 유지)
-    const encrypted = encryptSettings(this.settings);
-    await this.saveData(encrypted);
+    // 민감 필드는 로컬 전용 파일에 암호화하여 저장 (iCloud 동기화 안 됨)
+    saveCredentialsToLocal(this.settings as unknown as Record<string, unknown>);
+    // data.json에는 민감 필드를 제거하여 저장 (iCloud 동기화 대상)
+    const stripped = stripSensitiveFields(this.settings);
+    await this.saveData(stripped);
     this.bedrockClient?.updateSettings(this.settings);
   }
 
