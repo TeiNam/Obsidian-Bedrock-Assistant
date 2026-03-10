@@ -1,11 +1,11 @@
 import { Notice, Plugin, TFile, addIcon } from "obsidian";
-import { BedrockClient } from "./bedrock-client";
+import { GeminiClient } from "./gemini-client";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
-import { BedrockSettingTab } from "./settings-tab";
+import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
-import { DEFAULT_SETTINGS, type BedrockAssistantSettings, type ChatMessage, type ChatSession } from "./types";
+import { DEFAULT_SETTINGS, type GeminiAssistantSettings, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import { encryptSettings, decryptSettings } from "./safe-storage";
@@ -16,9 +16,9 @@ const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
 const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
 
-export default class BedrockAssistantPlugin extends Plugin {
-  settings!: BedrockAssistantSettings;
-  bedrockClient!: BedrockClient;
+export default class GeminiAssistantPlugin extends Plugin {
+  settings!: GeminiAssistantSettings;
+  geminiClient!: GeminiClient;
   indexer!: VaultIndexer;
   toolExecutor!: ToolExecutor;
   mcpManager!: McpManager;
@@ -33,11 +33,11 @@ export default class BedrockAssistantPlugin extends Plugin {
       addIcon(BRANDING.icon.id, BRANDING.icon.svg);
     }
 
-    // Bedrock 클라이언트 초기화
-    this.bedrockClient = new BedrockClient(this.settings);
+    // Gemini 클라이언트 초기화
+    this.geminiClient = new GeminiClient(this.settings);
 
     // 볼트 인덱서 초기화
-    this.indexer = new VaultIndexer(this.app, this.bedrockClient);
+    this.indexer = new VaultIndexer(this.app, this.geminiClient);
 
     // 도구 실행기 초기화
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
@@ -74,7 +74,7 @@ export default class BedrockAssistantPlugin extends Plugin {
     });
 
     // 설정 탭 추가
-    this.addSettingTab(new BedrockSettingTab(this.app, this));
+    this.addSettingTab(new GeminiSettingTab(this.app, this));
 
     // 인덱싱 진행률 표시용 상태바 아이템 등록
     this.statusBarItem = this.addStatusBarItem();
@@ -161,7 +161,7 @@ export default class BedrockAssistantPlugin extends Plugin {
     // 민감 필드를 암호화하여 디스크에 저장 (메모리의 settings는 평문 유지)
     const encrypted = encryptSettings(this.settings);
     await this.saveData(encrypted);
-    this.bedrockClient?.updateSettings(this.settings);
+    this.geminiClient?.updateSettings(this.settings);
   }
 
   // 인덱스 로드/저장

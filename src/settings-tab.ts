@@ -1,5 +1,5 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
-import type BedrockAssistantPlugin from "./main";
+import type GeminiAssistantPlugin from "./main";
 import { SKILLS } from "./skills";
 import { BRANDING } from "./branding";
 
@@ -7,33 +7,19 @@ import { BRANDING } from "./branding";
 const I18N = {
   en: {
     title: BRANDING.settingsTitle.en,
-    pluginDesc: "An AI assistant sidebar for Obsidian powered by AWS Bedrock. Chat with Claude models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
+    pluginDesc: "An AI assistant sidebar for Obsidian powered by Google Gemini. Chat with Gemini models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
     languageDesc: "UI language for settings",
-    awsAuth: "AWS Authentication",
-    awsRegion: "AWS Region",
-    awsRegionDesc: "AWS region for Bedrock",
-    credSource: "Credential Source",
-    credSourceDesc: "manual: enter keys directly (stored in plaintext), env: use environment variables/AWS profile (recommended)",
-    credManual: "Manual",
-    credEnv: "Env / Profile",
-    credApiKey: "Bedrock API Key",
-    accessKey: "AWS Access Key ID",
-    accessKeyDesc: "IAM user Access Key ID",
-    secretKey: "AWS Secret Access Key",
-    secretKeyDesc: "IAM user Secret Access Key",
-    secretKeyPlaceholder: "Enter secret key",
-    apiKey: "Bedrock API Key",
-    apiKeyDesc: "Bedrock API Key (Bearer token authentication)",
-    apiKeyPlaceholder: "Enter API key",
-    awsProfile: "AWS Profile",
-    awsProfileDesc: "Profile from ~/.aws/credentials (leave empty for default chain)",
+    awsAuth: "Gemini API",
+    apiKey: "Gemini API Key",
+    apiKeyDesc: "Your Gemini API key from Google AI Studio",
+    apiKeyPlaceholder: "Enter Gemini API key",
     modelSettings: "Model Settings",
     chatModel: "Chat Model",
-    chatModelDesc: "Bedrock Claude model ID",
+    chatModelDesc: "Gemini model ID",
     embeddingModel: "Embedding Model",
-    embeddingModelDesc: "Bedrock embedding model ID (used for vault document indexing)",
+    embeddingModelDesc: "Gemini embedding model ID (used for vault document indexing)",
     genSettings: "Generation Settings",
     maxTokens: "Max Tokens",
     maxTokensDesc: "Maximum response tokens",
@@ -116,33 +102,19 @@ const I18N = {
   },
   ko: {
     title: BRANDING.settingsTitle.ko,
-    pluginDesc: "AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바입니다. Claude 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
+    pluginDesc: "Google Gemini 기반 Obsidian AI 어시스턴트 사이드바입니다. Gemini 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
     languageDesc: "설정 UI 언어",
-    awsAuth: "AWS 인증",
-    awsRegion: "AWS 리전",
-    awsRegionDesc: "Bedrock을 사용할 AWS 리전",
-    credSource: "자격증명 소스",
-    credSourceDesc: "manual: 키 직접 입력 (설정 파일에 평문 저장됨), env: 환경변수/AWS 프로파일 사용 (권장)",
-    credManual: "직접 입력 (Manual)",
-    credEnv: "환경변수/프로파일 (Env)",
-    credApiKey: "Bedrock API Key",
-    accessKey: "AWS Access Key ID",
-    accessKeyDesc: "IAM 사용자의 Access Key ID",
-    secretKey: "AWS Secret Access Key",
-    secretKeyDesc: "IAM 사용자의 Secret Access Key",
-    secretKeyPlaceholder: "시크릿 키 입력",
-    apiKey: "Bedrock API Key",
-    apiKeyDesc: "Bedrock API Key (Bearer 토큰 인증)",
-    apiKeyPlaceholder: "API 키 입력",
-    awsProfile: "AWS 프로파일",
-    awsProfileDesc: "~/.aws/credentials 에서 사용할 프로파일 (비워두면 기본 체인 사용)",
+    awsAuth: "Gemini API",
+    apiKey: "Gemini API Key",
+    apiKeyDesc: "Google AI Studio에서 발급받은 Gemini API 키",
+    apiKeyPlaceholder: "Gemini API 키 입력",
     modelSettings: "모델 설정",
     chatModel: "채팅 모델",
-    chatModelDesc: "Bedrock Claude 모델 ID",
+    chatModelDesc: "Gemini 모델 ID",
     embeddingModel: "임베딩 모델",
-    embeddingModelDesc: "Bedrock 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
+    embeddingModelDesc: "Gemini 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
     genSettings: "생성 설정",
     maxTokens: "최대 토큰",
     maxTokensDesc: "응답 최대 토큰 수",
@@ -225,33 +197,19 @@ const I18N = {
   },
   ja: {
     title: BRANDING.settingsTitle.ja,
-    pluginDesc: "AWS Bedrock搭載のObsidian AIアシスタントサイドバーです。Claudeモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
+    pluginDesc: "Google Gemini搭載のObsidian AIアシスタントサイドバーです。Geminiモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
     language: "言語",
     languageDesc: "設定UIの言語",
-    awsAuth: "AWS認証",
-    awsRegion: "AWSリージョン",
-    awsRegionDesc: "Bedrockを使用するAWSリージョン",
-    credSource: "認証情報ソース",
-    credSourceDesc: "manual: キーを直接入力（平文で保存）、env: 環境変数/AWSプロファイルを使用（推奨）",
-    credManual: "直接入力 (Manual)",
-    credEnv: "環境変数 / プロファイル",
-    credApiKey: "Bedrock APIキー",
-    accessKey: "AWSアクセスキーID",
-    accessKeyDesc: "IAMユーザーのアクセスキーID",
-    secretKey: "AWSシークレットアクセスキー",
-    secretKeyDesc: "IAMユーザーのシークレットアクセスキー",
-    secretKeyPlaceholder: "シークレットキーを入力",
-    apiKey: "Bedrock APIキー",
-    apiKeyDesc: "Bedrock APIキー（Bearerトークン認証）",
-    apiKeyPlaceholder: "APIキーを入力",
-    awsProfile: "AWSプロファイル",
-    awsProfileDesc: "~/.aws/credentialsのプロファイル（空欄でデフォルトチェーン）",
+    awsAuth: "Gemini API",
+    apiKey: "Gemini APIキー",
+    apiKeyDesc: "Google AI Studioから取得したGemini APIキー",
+    apiKeyPlaceholder: "Gemini APIキーを入力",
     modelSettings: "モデル設定",
     chatModel: "チャットモデル",
-    chatModelDesc: "Bedrock ClaudeモデルID",
+    chatModelDesc: "GeminiモデルID",
     embeddingModel: "埋め込みモデル",
-    embeddingModelDesc: "Bedrock埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
+    embeddingModelDesc: "Gemini埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
     genSettings: "生成設定",
     maxTokens: "最大トークン数",
     maxTokensDesc: "応答の最大トークン数",
@@ -335,10 +293,10 @@ const I18N = {
 } as const;
 
 // 설정 탭
-export class BedrockSettingTab extends PluginSettingTab {
-  plugin: BedrockAssistantPlugin;
+export class GeminiSettingTab extends PluginSettingTab {
+  plugin: GeminiAssistantPlugin;
 
-  constructor(app: App, plugin: BedrockAssistantPlugin) {
+  constructor(app: App, plugin: GeminiAssistantPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -390,124 +348,25 @@ export class BedrockSettingTab extends PluginSettingTab {
           })
       );
 
-    // AWS 인증 설정
+    // Gemini API 설정
     containerEl.createEl("h3", { text: t.awsAuth });
 
-    new Setting(containerEl)
-      .setName(t.awsRegion)
-      .setDesc(t.awsRegionDesc)
-      .addDropdown((dropdown) => {
-        const regions = [
-          "us-east-1",
-          "us-east-2",
-          "us-west-1",
-          "us-west-2",
-          "ap-south-1",
-          "ap-northeast-1",
-          "ap-northeast-2",
-          "ap-northeast-3",
-          "ap-southeast-1",
-          "ap-southeast-2",
-          "ca-central-1",
-          "eu-central-1",
-          "eu-west-1",
-          "eu-west-2",
-          "eu-west-3",
-          "eu-north-1",
-          "sa-east-1",
-        ];
-        for (const r of regions) {
-          dropdown.addOption(r, r);
-        }
-        // 현재 값이 목록에 없으면 추가
-        if (!regions.includes(this.plugin.settings.awsRegion)) {
-          dropdown.addOption(this.plugin.settings.awsRegion, this.plugin.settings.awsRegion);
-        }
-        dropdown
-          .setValue(this.plugin.settings.awsRegion)
+    const apiKeySetting = new Setting(containerEl)
+      .setName(t.apiKey)
+      .setDesc(t.apiKeyDesc)
+      .addText((text) => {
+        text
+          .setPlaceholder(t.apiKeyPlaceholder)
+          .setValue(this.plugin.settings.geminiApiKey)
           .onChange(async (value) => {
-            this.plugin.settings.awsRegion = value;
+            this.plugin.settings.geminiApiKey = value.trim();
             await this.plugin.saveSettings();
           });
+        text.inputEl.type = "password";
+        text.inputEl.addClass("ba-secret-input");
       });
-
-    new Setting(containerEl)
-      .setName(t.credSource)
-      .setDesc(t.credSourceDesc)
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("manual", t.credManual)
-          .addOption("env", t.credEnv)
-          .addOption("apikey", t.credApiKey)
-          .setValue(this.plugin.settings.awsCredentialSource)
-          .onChange(async (value) => {
-            this.plugin.settings.awsCredentialSource = value as "manual" | "env" | "apikey";
-            await this.plugin.saveSettings();
-            this.display();
-          })
-      );
-
-    if (this.plugin.settings.awsCredentialSource === "manual") {
-      new Setting(containerEl)
-        .setName(t.accessKey)
-        .setDesc(t.accessKeyDesc)
-        .addText((text) =>
-          text
-            .setPlaceholder("AKIA...")
-            .setValue(this.plugin.settings.awsAccessKeyId)
-            .onChange(async (value) => {
-              this.plugin.settings.awsAccessKeyId = value.trim();
-              await this.plugin.saveSettings();
-            })
-        );
-
-      const secretSetting = new Setting(containerEl)
-        .setName(t.secretKey)
-        .setDesc(t.secretKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.secretKeyPlaceholder)
-            .setValue(this.plugin.settings.awsSecretAccessKey)
-            .onChange(async (value) => {
-              this.plugin.settings.awsSecretAccessKey = value.trim();
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      // 눈 버튼 추가
-      this.addToggleVisibilityButton(secretSetting.controlEl);
-    } else if (this.plugin.settings.awsCredentialSource === "apikey") {
-      const apiKeySetting = new Setting(containerEl)
-        .setName(t.apiKey)
-        .setDesc(t.apiKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.apiKeyPlaceholder)
-            .setValue(this.plugin.settings.bedrockApiKey)
-            .onChange(async (value) => {
-              this.plugin.settings.bedrockApiKey = value.trim();
-              await this.plugin.saveSettings();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      // 눈 버튼 추가
-      this.addToggleVisibilityButton(apiKeySetting.controlEl);
-    } else {
-      new Setting(containerEl)
-        .setName(t.awsProfile)
-        .setDesc(t.awsProfileDesc)
-        .addText((text) =>
-          text
-            .setPlaceholder("default")
-            .setValue(this.plugin.settings.awsProfile)
-            .onChange(async (value) => {
-              this.plugin.settings.awsProfile = value.trim();
-              await this.plugin.saveSettings();
-            })
-        );
-    }
+    // 눈 버튼 추가
+    this.addToggleVisibilityButton(apiKeySetting.controlEl);
 
     // 모델 설정
     containerEl.createEl("h3", { text: t.modelSettings });
@@ -517,7 +376,7 @@ export class BedrockSettingTab extends PluginSettingTab {
       .setDesc(t.embeddingModelDesc)
       .addText((text) =>
         text
-          .setPlaceholder("amazon.titan-embed-text-v2:0")
+          .setPlaceholder("text-embedding-004")
           .setValue(this.plugin.settings.embeddingModel)
           .onChange(async (value) => {
             this.plugin.settings.embeddingModel = value;
@@ -862,8 +721,8 @@ export class BedrockSettingTab extends PluginSettingTab {
         // 비동기로 모델 목록 로드 후 드롭다운 갱신
         (async () => {
           try {
-            const { BedrockClient } = await import("./bedrock-client");
-            const client = new BedrockClient(this.plugin.settings);
+            const { GeminiClient } = await import("./gemini-client");
+            const client = new GeminiClient(this.plugin.settings);
             const models = await client.listModels();
             // 기존 옵션 제거 후 재구성
             dropdown.selectEl.empty();
@@ -988,11 +847,11 @@ export class BedrockSettingTab extends PluginSettingTab {
 // 시스템 프롬프트 편집 모달
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 class SystemPromptModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private t: Record<string, any>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+  constructor(app: App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
     super(app);
     this.plugin = plugin;
     this.t = t;
@@ -1036,12 +895,12 @@ class SystemPromptModal extends Modal {
 
 // MCP 설정 편집 모달
 class McpConfigModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private onSaved: () => void;
   private textArea!: HTMLTextAreaElement;
   private statusEl!: HTMLElement;
 
-  constructor(app: App, plugin: BedrockAssistantPlugin, onSaved: () => void) {
+  constructor(app: App, plugin: GeminiAssistantPlugin, onSaved: () => void) {
     super(app);
     this.plugin = plugin;
     this.onSaved = onSaved;

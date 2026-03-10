@@ -13,9 +13,7 @@ const ENCRYPTED_PREFIX = "enc:";
 
 /** 암호화할 설정 필드 목록 */
 export const SENSITIVE_FIELDS = [
-  "awsAccessKeyId",
-  "awsSecretAccessKey",
-  "bedrockApiKey",
+  "geminiApiKey",
 ] as const;
 
 /**

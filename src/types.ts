@@ -1,13 +1,8 @@
 // 플러그인 설정 타입
-export interface BedrockAssistantSettings {
+export interface GeminiAssistantSettings {
   language: "en" | "ko" | "ja";
-  awsRegion: string;
-  // 자격증명 소스: "manual" = 직접 입력, "env" = 환경변수/프로파일, "apikey" = Bedrock API Key
-  awsCredentialSource: "manual" | "env" | "apikey";
-  awsAccessKeyId: string;
-  awsSecretAccessKey: string;
-  awsProfile: string; // env 모드에서 사용할 AWS 프로파일명
-  bedrockApiKey: string; // Bedrock API Key (Bearer 토큰)
+  // Gemini API Key
+  geminiApiKey: string;
   chatModel: string;
   embeddingModel: string;
   maxTokens: number;
@@ -44,16 +39,11 @@ export interface BedrockAssistantSettings {
   archiveCleanFolder: string;
 }
 
-export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
+export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   language: "en",
-  awsRegion: "us-east-1",
-  awsCredentialSource: "manual",
-  awsAccessKeyId: "",
-  awsSecretAccessKey: "",
-  awsProfile: "default",
-  bedrockApiKey: "",
-  chatModel: "global.anthropic.claude-opus-4-6-v1",
-  embeddingModel: "amazon.titan-embed-text-v2:0",
+  geminiApiKey: "",
+  chatModel: "gemini-3.1-flash-lite",
+  embeddingModel: "text-embedding-004",
   maxTokens: 32000,
   temperature: 0.1,
   systemPrompt:
@@ -71,7 +61,7 @@ export const DEFAULT_SETTINGS: BedrockAssistantSettings = {
   confirmToolExecution: false,
   mcpTimeout: 30,
   webClipFolder: "WebClips",
-  webClipModel: "global.anthropic.claude-sonnet-4-6-v1",
+  webClipModel: "gemini-3.1-flash-lite",
   archiveCleanDays: 90,
   archiveCleanFolder: "ToDo/Archive",
 };

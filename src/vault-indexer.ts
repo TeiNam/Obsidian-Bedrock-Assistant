@@ -1,18 +1,18 @@
 import { App, TFile, Notice } from "obsidian";
-import type { BedrockClient } from "./bedrock-client";
+import type { GeminiClient } from "./gemini-client";
 import type { VaultIndexEntry, IndexResult, IndexFailure } from "./types";
 
 // 볼트 인덱싱 및 검색
 export class VaultIndexer {
   private app: App;
-  private client: BedrockClient;
+  private client: GeminiClient;
   private index: Map<string, VaultIndexEntry> = new Map();
   private indexing = false;
   private useEmbeddings = true;
   // 인덱싱 중 발생한 파일 변경을 큐잉하기 위한 대기열
   private pendingFiles: Set<string> = new Set();
 
-  constructor(app: App, client: BedrockClient) {
+  constructor(app: App, client: GeminiClient) {
     this.app = app;
     this.client = client;
   }

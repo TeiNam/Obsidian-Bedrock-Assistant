@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-bedrock-assistant",
+  "name": "obsidian-gemini-assistant",
   "version": "0.1.0",
-  "description": "Obsidian sidebar AI assistant powered by AWS Bedrock (Claude + Titan Embedding)",
+  "description": "Obsidian sidebar AI assistant powered by Google Gemini (Flash + Text Embedding)",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -20,8 +20,5 @@
     "typescript": "5.4.5",
     "vitest": "^4.0.18"
   },
-  "dependencies": {
-    "@aws-sdk/client-bedrock": "^3.997.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.997.0"
-  }
+  "dependencies": {}
 }

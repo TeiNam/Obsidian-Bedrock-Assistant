@@ -6,34 +6,34 @@
 
 export const BRANDING = {
   /** 플러그인 ID (폴더명, MCP clientInfo 등) */
-  pluginId: "assistant-kiro",
+  pluginId: "assistant-gemini",
 
   /** UI에 표시되는 플러그인 이름 */
-  displayName: "Assistant Kiro",
+  displayName: "Gemini Assistant",
 
   /** 옵시디언 뷰 타입 식별자 */
-  viewType: "assistant-kiro-view",
+  viewType: "assistant-gemini-view",
 
   /** 볼트 내 데이터 파일 경로 */
   files: {
-    index: ".assistant-kiro-index.json",
-    chatHistory: ".assistant-kiro-chat.json",
-    sessions: ".assistant-kiro-sessions.json",
-    sessionsBackup: ".assistant-kiro-sessions.json.bak",
+    index: ".assistant-gemini-index.json",
+    chatHistory: ".assistant-gemini-chat.json",
+    sessions: ".assistant-gemini-sessions.json",
+    sessionsBackup: ".assistant-gemini-sessions.json.bak",
   },
 
   /** 아이콘 설정 */
   icon: {
     /** 아이콘 등록 ID */
-    id: "kiro-assistant",
-    /** 커스텀 SVG (null이면 옵시디언 내장 아이콘 사용) */
-    svg: `<svg viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="m" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#m)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="currentColor"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="currentColor"/></g></svg>`,
+    id: "gemini-assistant",
+    /** 커스텀 SVG (null이면 옵시디언 내장 아이콘 사용) — Gemini 스파크 아이콘 */
+    svg: `<svg viewBox="0 0 65 65" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M32.447 0c.68 0 1.273.465 1.439 1.125a38.904 38.904 0 001.999 5.905c2.152 5 5.105 9.376 8.854 13.125 3.751 3.75 8.126 6.703 13.125 8.855a38.98 38.98 0 005.906 1.999c.66.166 1.124.758 1.124 1.438 0 .68-.464 1.273-1.125 1.439a38.902 38.902 0 00-5.905 1.999c-5 2.152-9.375 5.105-13.125 8.854-3.749 3.751-6.702 8.126-8.854 13.125a38.973 38.973 0 00-2 5.906 1.485 1.485 0 01-1.438 1.124c-.68 0-1.272-.464-1.438-1.125a38.913 38.913 0 00-2-5.905c-2.151-5-5.103-9.375-8.854-13.125-3.75-3.749-8.125-6.702-13.125-8.854a38.973 38.973 0 00-5.905-2A1.485 1.485 0 010 32.448c0-.68.465-1.272 1.125-1.438a38.903 38.903 0 005.905-2c5-2.151 9.376-5.104 13.125-8.854 3.75-3.749 6.703-8.125 8.855-13.125a38.972 38.972 0 001.999-5.905A1.485 1.485 0 0132.447 0z" fill="currentColor"/></svg>`,
   },
 
   /** 설정 탭 타이틀 (I18N) */
   settingsTitle: {
-    en: "Assistant Kiro Settings",
-    ko: "Assistant Kiro 설정",
-    ja: "Assistant Kiro 設定",
+    en: "Gemini Assistant Settings",
+    ko: "Gemini Assistant 설정",
+    ja: "Gemini Assistant 設定",
   },
 } as const;

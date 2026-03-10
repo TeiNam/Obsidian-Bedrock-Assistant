@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
-import type BedrockAssistantPlugin from "./main";
+import type GeminiAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 import { BRANDING } from "./branding";
@@ -301,7 +301,7 @@ type ViewLang = Record<string, any>;
 
 // Claudian 스타일 사이드바 채팅 뷰
 export class ChatView extends ItemView {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private messages: ChatMessage[] = [];
 
   // DOM 요소 (onOpen()에서 초기화)
@@ -338,7 +338,7 @@ export class ChatView extends ItemView {
   private webSearchEnabled = false;
   private webSearchBtn: HTMLElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, plugin: BedrockAssistantPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: GeminiAssistantPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
@@ -361,32 +361,32 @@ export class ChatView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-        const container = this.contentEl ?? (this.containerEl.children[1] as HTMLElement);
-        if (!container) return;
+    const container = this.contentEl ?? (this.containerEl.children[1] as HTMLElement);
+    if (!container) return;
 
-        this.viewContainerEl = container;
-        this.viewContainerEl.empty();
-        this.viewContainerEl.addClass("ba-container");
+    this.viewContainerEl = container;
+    this.viewContainerEl.empty();
+    this.viewContainerEl.addClass("ba-container");
 
-        // 헤더
-        this.buildHeader();
+    // 헤더
+    this.buildHeader();
 
-        // 메시지 영역
-        const messagesWrapper = this.viewContainerEl.createDiv({ cls: "ba-messages-wrapper" });
-        this.messagesEl = messagesWrapper.createDiv({ cls: "ba-messages" });
+    // 메시지 영역
+    const messagesWrapper = this.viewContainerEl.createDiv({ cls: "ba-messages-wrapper" });
+    this.messagesEl = messagesWrapper.createDiv({ cls: "ba-messages" });
 
-        // 채팅 폰트 크기 적용
-        this.applyFontSize();
+    // 채팅 폰트 크기 적용
+    this.applyFontSize();
 
-        // 입력 영역
-        this.buildInputArea();
+    // 입력 영역
+    this.buildInputArea();
 
-        // 저장된 대화 히스토리 복원
-        await this.restoreChatHistory();
+    // 저장된 대화 히스토리 복원
+    await this.restoreChatHistory();
 
-        // 컨텍스트 링 초기화
-        this.updateContextRing();
-      }
+    // 컨텍스트 링 초기화
+    this.updateContextRing();
+  }
 
 
   // ============================================
@@ -728,226 +728,228 @@ export class ChatView extends ItemView {
   // ============================================
 
   private async generateResponse(contextPrefix?: string): Promise<void> {
-      this.setGenerating(true);
-      this.abortController = new AbortController();
-      const startTime = Date.now();
+    this.setGenerating(true);
+    this.abortController = new AbortController();
+    const startTime = Date.now();
 
-      // 어시스턴트 메시지 컨테이너
-      const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-      this.addAssistantLabel(msgEl);
-      const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-      const thinkingEl = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
-      this.scrollToBottom();
+    // 어시스턴트 메시지 컨테이너
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+    const thinkingEl = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
+    this.scrollToBottom();
 
-      // Converse API용 메시지 히스토리 구성
-      // 원본 this.messages는 변경하지 않고, API 호출용 복사본에만 컨텍스트 접두사 적용
-      const converseMessages: ConverseMessage[] = this.messages.map((m, i) => ({
-        role: m.role,
-        content: [{ text: (contextPrefix && i === this.messages.length - 1 && m.role === "user")
+    // Converse API용 메시지 히스토리 구성
+    // 원본 this.messages는 변경하지 않고, API 호출용 복사본에만 컨텍스트 접두사 적용
+    const converseMessages: ConverseMessage[] = this.messages.map((m, i) => ({
+      role: m.role,
+      content: [{
+        text: (contextPrefix && i === this.messages.length - 1 && m.role === "user")
           ? contextPrefix + m.content
-          : m.content }],
-      }));
+          : m.content
+      }],
+    }));
 
-      // 바이너리 첨부 파일을 마지막 user 메시지에 추가
-      if (this.attachedBinaryFiles.size > 0 && converseMessages.length > 0) {
-        const lastUserIdx = converseMessages.length - 1;
-        if (converseMessages[lastUserIdx].role === "user") {
-          for (const [path, data] of this.attachedBinaryFiles) {
-            const ext = path.split(".").pop()?.toLowerCase() || "";
-            const block = this.buildBinaryContentBlock(path, ext, data);
-            if (block) {
-              (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
-            }
+    // 바이너리 첨부 파일을 마지막 user 메시지에 추가
+    if (this.attachedBinaryFiles.size > 0 && converseMessages.length > 0) {
+      const lastUserIdx = converseMessages.length - 1;
+      if (converseMessages[lastUserIdx].role === "user") {
+        for (const [path, data] of this.attachedBinaryFiles) {
+          const ext = path.split(".").pop()?.toLowerCase() || "";
+          const block = this.buildBinaryContentBlock(path, ext, data);
+          if (block) {
+            (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
           }
         }
       }
+    }
 
-      const MAX_TOOL_ROUNDS = 10; // 무한 루프 방지
-      const MAX_CONSECUTIVE_FAILURES = 3; // 연속 실패 허용 횟수
-      let consecutiveFailures = 0; // 연속 실패 카운터
-      let fullText = "";
+    const MAX_TOOL_ROUNDS = 10; // 무한 루프 방지
+    const MAX_CONSECUTIVE_FAILURES = 3; // 연속 실패 허용 횟수
+    let consecutiveFailures = 0; // 연속 실패 카운터
+    let fullText = "";
 
-      // 옵시디언 내장 도구 + MCP 도구 합치기
-      const allTools = [...TOOLS, ...this.plugin.mcpManager.getAllTools()];
+    // 옵시디언 내장 도구 + MCP 도구 합치기
+    const allTools = [...TOOLS, ...this.plugin.mcpManager.getAllTools()];
 
-      // ── 대화 히스토리 토큰 트리밍 (REQ-3) ──
-      // 컨텍스트 윈도우 초과 방지를 위해 오래된 메시지부터 제거
-      this.trimMessages(converseMessages, allTools);
+    // ── 대화 히스토리 토큰 트리밍 (REQ-3) ──
+    // 컨텍스트 윈도우 초과 방지를 위해 오래된 메시지부터 제거
+    this.trimMessages(converseMessages, allTools);
 
-      try {
-        for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          if (this.abortController?.signal.aborted) break;
+    try {
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        if (this.abortController?.signal.aborted) break;
 
-          // 텍스트 스트리밍 렌더링용
-          let roundText = "";
+        // 텍스트 스트리밍 렌더링용
+        let roundText = "";
 
-          // requestAnimationFrame 기반 디바운싱 변수
-          let renderPending = false;
-          let streamingPreEl: HTMLPreElement | null = null;
-          // 스트리밍 텍스트를 감싸는 wrapper (도구 호출 UI 보존을 위해 별도 div 사용)
-          const streamingState = { wrapper: null as HTMLElement | null };
+        // requestAnimationFrame 기반 디바운싱 변수
+        let renderPending = false;
+        let streamingPreEl: HTMLPreElement | null = null;
+        // 스트리밍 텍스트를 감싸는 wrapper (도구 호출 UI 보존을 위해 별도 div 사용)
+        const streamingState = { wrapper: null as HTMLElement | null };
 
-          const result = await this.plugin.bedrockClient.converse(
-            converseMessages,
-            allTools,
-            (delta) => {
-              // 텍스트 델타: 누적만 하고 렌더링은 다음 프레임에서 한 번만 수행
+        const result = await this.plugin.geminiClient.converse(
+          converseMessages,
+          allTools,
+          (delta) => {
+            // 텍스트 델타: 누적만 하고 렌더링은 다음 프레임에서 한 번만 수행
+            if (this.abortController?.signal.aborted) return;
+            if (thinkingEl.parentElement) thinkingEl.remove();
+            // 다음 라운드 "생각 중..." 표시도 제거
+            const pendingThinking = contentEl.querySelector(".ba-thinking");
+            if (pendingThinking) pendingThinking.remove();
+            roundText += delta;
+            fullText += delta;
+
+            // 렌더링이 이미 예약되어 있으면 누적만 하고 리턴
+            if (renderPending) return;
+            renderPending = true;
+
+            requestAnimationFrame(() => {
+              renderPending = false;
               if (this.abortController?.signal.aborted) return;
-              if (thinkingEl.parentElement) thinkingEl.remove();
-              // 다음 라운드 "생각 중..." 표시도 제거
-              const pendingThinking = contentEl.querySelector(".ba-thinking");
-              if (pendingThinking) pendingThinking.remove();
-              roundText += delta;
-              fullText += delta;
 
-              // 렌더링이 이미 예약되어 있으면 누적만 하고 리턴
-              if (renderPending) return;
-              renderPending = true;
-
-              requestAnimationFrame(() => {
-                renderPending = false;
-                if (this.abortController?.signal.aborted) return;
-
-                // 스트리밍 중에는 별도 div 안의 <pre> 태그로 빠르게 표시
-                // Dataview 등 다른 플러그인 간섭을 방지하기 위해 MarkdownRenderer는 완료 후에만 호출
-                if (!streamingPreEl) {
-                  streamingState.wrapper = contentEl.createDiv({ cls: "ba-streaming-wrapper" });
-                  streamingPreEl = streamingState.wrapper.createEl("pre", { cls: "ba-streaming-text" });
-                }
-                streamingPreEl.textContent = roundText;
-                this.scrollToBottom();
-              });
-            },
-            this.abortController.signal
-          );
-
-          // 스트리밍 완료 후 마크다운으로 최종 렌더링 (스트리밍 wrapper만 교체)
-          if (streamingState.wrapper && roundText) {
-            streamingState.wrapper.empty();
-            streamingPreEl = null;
-            await MarkdownRenderer.render(this.app, roundText, streamingState.wrapper, "", this);
-            streamingState.wrapper = null;
-            this.scrollToBottom();
-          }
-
-          // 어시스턴트 응답을 히스토리에 추가 (Converse API 형식)
-          const assistantContent: unknown[] = [];
-          for (const block of result.contentBlocks) {
-            if (block.type === "text") {
-              assistantContent.push({ text: block.text });
-            } else if (block.type === "tool_use") {
-              assistantContent.push({
-                toolUse: {
-                  toolUseId: block.toolUseId,
-                  name: block.name,
-                  input: block.input,
-                },
-              });
-            }
-          }
-          converseMessages.push({ role: "assistant", content: assistantContent });
-
-          // 도구 호출이 없으면 종료
-          if (result.stopReason !== "tool_use") break;
-
-          // 도구 호출 블록 수집 및 실행
-          const toolBlocks = result.contentBlocks.filter(
-            (b): b is ContentBlockToolUse => b.type === "tool_use"
-          );
-
-          if (toolBlocks.length === 0) break;
-
-          // 각 도구 실행 및 UI 표시
-          const toolResultContents: unknown[] = [];
-
-          for (const toolBlock of toolBlocks) {
-            if (this.abortController?.signal.aborted) break;
-
-            const toolResult = await this.executeAndRenderTool(toolBlock, contentEl);
-
-            // 연속 실패 카운터 관리: 에러 문자열 접두사로 실패 여부 판별
-            if (isToolError(toolResult)) {
-              consecutiveFailures++;
-            } else {
-              // 성공 시 카운터 리셋
-              consecutiveFailures = 0;
-            }
-
-            toolResultContents.push({
-              toolResult: {
-                toolUseId: toolBlock.toolUseId,
-                content: [{ text: toolResult }],
-              },
+              // 스트리밍 중에는 별도 div 안의 <pre> 태그로 빠르게 표시
+              // Dataview 등 다른 플러그인 간섭을 방지하기 위해 MarkdownRenderer는 완료 후에만 호출
+              if (!streamingPreEl) {
+                streamingState.wrapper = contentEl.createDiv({ cls: "ba-streaming-wrapper" });
+                streamingPreEl = streamingState.wrapper.createEl("pre", { cls: "ba-streaming-text" });
+              }
+              streamingPreEl.textContent = roundText;
+              this.scrollToBottom();
             });
+          },
+          this.abortController.signal
+        );
 
-            // 연속 실패 횟수 초과 시 루프 조기 중단
-            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-              break;
-            }
-          }
-
-          // 연속 실패 횟수 초과 시 전체 도구 루프 중단 + 사용자 안내
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            contentEl.createDiv({
-              cls: "ba-error",
-              text: this.t.toolConsecutiveFailures,
-            });
-            this.scrollToBottom();
-            break;
-          }
-
-          // 도구 결과를 user 메시지로 추가 (Converse API 규약)
-          converseMessages.push({ role: "user", content: toolResultContents });
-
-          // 다음 라운드 전 "생각 중..." 표시
-          const nextThinking = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
+        // 스트리밍 완료 후 마크다운으로 최종 렌더링 (스트리밍 wrapper만 교체)
+        if (streamingState.wrapper && roundText) {
+          streamingState.wrapper.empty();
+          streamingPreEl = null;
+          await MarkdownRenderer.render(this.app, roundText, streamingState.wrapper, "", this);
+          streamingState.wrapper = null;
           this.scrollToBottom();
         }
 
-        // 응답 시간 표시
-        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-        const footer = msgEl.createDiv({ cls: "ba-response-footer" });
-        footer.createSpan({ cls: "ba-duration", text: `${duration}s` });
-
-        // 재생성 버튼 추가 (REQ-8)
-        const regenBtn = footer.createEl("button", {
-          cls: "ba-regenerate-btn",
-          attr: { "aria-label": this.t.regenerate },
-        });
-        setIcon(regenBtn, "refresh-cw");
-        regenBtn.createSpan({ text: this.t.regenerate });
-        regenBtn.addEventListener("click", () => {
-          if (!this.isGenerating) {
-            this.regenerateLastResponse();
+        // 어시스턴트 응답을 히스토리에 추가 (Converse API 형식)
+        const assistantContent: unknown[] = [];
+        for (const block of result.contentBlocks) {
+          if (block.type === "text") {
+            assistantContent.push({ text: block.text });
+          } else if (block.type === "tool_use") {
+            assistantContent.push({
+              toolUse: {
+                toolUseId: block.toolUseId,
+                name: block.name,
+                input: block.input,
+              },
+            });
           }
-        });
+        }
+        converseMessages.push({ role: "assistant", content: assistantContent });
 
-        // 최종 텍스트를 ChatMessage 히스토리에 저장
-        if (fullText) {
-          this.messages.push({
-            role: "assistant",
-            content: fullText,
-            timestamp: Date.now(),
+        // 도구 호출이 없으면 종료
+        if (result.stopReason !== "tool_use") break;
+
+        // 도구 호출 블록 수집 및 실행
+        const toolBlocks = result.contentBlocks.filter(
+          (b): b is ContentBlockToolUse => b.type === "tool_use"
+        );
+
+        if (toolBlocks.length === 0) break;
+
+        // 각 도구 실행 및 UI 표시
+        const toolResultContents: unknown[] = [];
+
+        for (const toolBlock of toolBlocks) {
+          if (this.abortController?.signal.aborted) break;
+
+          const toolResult = await this.executeAndRenderTool(toolBlock, contentEl);
+
+          // 연속 실패 카운터 관리: 에러 문자열 접두사로 실패 여부 판별
+          if (isToolError(toolResult)) {
+            consecutiveFailures++;
+          } else {
+            // 성공 시 카운터 리셋
+            consecutiveFailures = 0;
+          }
+
+          toolResultContents.push({
+            toolResult: {
+              toolUseId: toolBlock.toolUseId,
+              content: [{ text: toolResult }],
+            },
           });
+
+          // 연속 실패 횟수 초과 시 루프 조기 중단
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            break;
+          }
         }
 
-        // 대화 히스토리 영속화
-        this.persistHistory();
-      } catch (error) {
-        if (thinkingEl.parentElement) thinkingEl.remove();
-        // 사용자가 중단한 경우 에러 표시 안 함
-        if (this.abortController?.signal.aborted) {
-          // 중단 시점까지의 텍스트는 유지
-        } else {
+        // 연속 실패 횟수 초과 시 전체 도구 루프 중단 + 사용자 안내
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           contentEl.createDiv({
             cls: "ba-error",
-            text: this.t.error((error as Error).message),
+            text: this.t.toolConsecutiveFailures,
           });
+          this.scrollToBottom();
+          break;
         }
+
+        // 도구 결과를 user 메시지로 추가 (Converse API 규약)
+        converseMessages.push({ role: "user", content: toolResultContents });
+
+        // 다음 라운드 전 "생각 중..." 표시
+        const nextThinking = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
+        this.scrollToBottom();
       }
 
-      this.setGenerating(false);
+      // 응답 시간 표시
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      const footer = msgEl.createDiv({ cls: "ba-response-footer" });
+      footer.createSpan({ cls: "ba-duration", text: `${duration}s` });
+
+      // 재생성 버튼 추가 (REQ-8)
+      const regenBtn = footer.createEl("button", {
+        cls: "ba-regenerate-btn",
+        attr: { "aria-label": this.t.regenerate },
+      });
+      setIcon(regenBtn, "refresh-cw");
+      regenBtn.createSpan({ text: this.t.regenerate });
+      regenBtn.addEventListener("click", () => {
+        if (!this.isGenerating) {
+          this.regenerateLastResponse();
+        }
+      });
+
+      // 최종 텍스트를 ChatMessage 히스토리에 저장
+      if (fullText) {
+        this.messages.push({
+          role: "assistant",
+          content: fullText,
+          timestamp: Date.now(),
+        });
+      }
+
+      // 대화 히스토리 영속화
+      this.persistHistory();
+    } catch (error) {
+      if (thinkingEl.parentElement) thinkingEl.remove();
+      // 사용자가 중단한 경우 에러 표시 안 함
+      if (this.abortController?.signal.aborted) {
+        // 중단 시점까지의 텍스트는 유지
+      } else {
+        contentEl.createDiv({
+          cls: "ba-error",
+          text: this.t.error((error as Error).message),
+        });
+      }
     }
+
+    this.setGenerating(false);
+  }
 
 
   // ============================================
@@ -955,99 +957,99 @@ export class ChatView extends ItemView {
   // ============================================
 
   // 도구 실행 + UI 렌더링, 결과 문자열 반환
-    private async executeAndRenderTool(
-          toolBlock: ContentBlockToolUse,
-          contentEl: HTMLElement
-        ): Promise<string> {
-          const toolEl = contentEl.createDiv({ cls: "ba-tool-call" });
-          const toolHeader = toolEl.createDiv({ cls: "ba-tool-header" });
+  private async executeAndRenderTool(
+    toolBlock: ContentBlockToolUse,
+    contentEl: HTMLElement
+  ): Promise<string> {
+    const toolEl = contentEl.createDiv({ cls: "ba-tool-call" });
+    const toolHeader = toolEl.createDiv({ cls: "ba-tool-header" });
 
-          const iconEl = toolHeader.createDiv({ cls: "ba-tool-icon" });
-          setIcon(iconEl, "wrench");
+    const iconEl = toolHeader.createDiv({ cls: "ba-tool-icon" });
+    setIcon(iconEl, "wrench");
 
-          toolHeader.createSpan({ cls: "ba-tool-name", text: toolBlock.name });
+    toolHeader.createSpan({ cls: "ba-tool-name", text: toolBlock.name });
 
-          const statusEl = toolHeader.createDiv({ cls: "ba-tool-status status-running" });
-          setIcon(statusEl, "loader");
+    const statusEl = toolHeader.createDiv({ cls: "ba-tool-status status-running" });
+    setIcon(statusEl, "loader");
 
-          // 도구 헤더 아래에 "실행 중..." 표시 (별도 div로 확실히 표시)
-          const runningLabel = toolEl.createDiv({ cls: "ba-tool-running", text: this.t.toolRunning });
+    // 도구 헤더 아래에 "실행 중..." 표시 (별도 div로 확실히 표시)
+    const runningLabel = toolEl.createDiv({ cls: "ba-tool-running", text: this.t.toolRunning });
 
-          this.scrollToBottom();
+    this.scrollToBottom();
 
-          // 파괴적 도구 실행 전 사용자 확인 모달 표시
-          if (needsToolConfirmation(toolBlock.name, this.plugin.settings.confirmToolExecution)) {
-            const approved = await new Promise<boolean>((resolve) => {
-              new ToolConfirmModal(
-                this.app,
-                toolBlock.name,
-                toolBlock.input as Record<string, unknown>,
-                this.t,
-                this.plugin,
-                resolve
-              ).open();
-            });
+    // 파괴적 도구 실행 전 사용자 확인 모달 표시
+    if (needsToolConfirmation(toolBlock.name, this.plugin.settings.confirmToolExecution)) {
+      const approved = await new Promise<boolean>((resolve) => {
+        new ToolConfirmModal(
+          this.app,
+          toolBlock.name,
+          toolBlock.input as Record<string, unknown>,
+          this.t,
+          this.plugin,
+          resolve
+        ).open();
+      });
 
-            if (!approved) {
-              statusEl.removeClass("status-running");
-              statusEl.addClass("status-error");
-              statusEl.empty();
-              setIcon(statusEl, "x");
-              runningLabel.remove();
+      if (!approved) {
+        statusEl.removeClass("status-running");
+        statusEl.addClass("status-error");
+        statusEl.empty();
+        setIcon(statusEl, "x");
+        runningLabel.remove();
 
-              const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
-              resultEl.setText(this.t.toolDenied);
+        const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
+        resultEl.setText(this.t.toolDenied);
 
-              this.scrollToBottom();
-              return this.t.toolDenied;
-            }
-          }
+        this.scrollToBottom();
+        return this.t.toolDenied;
+      }
+    }
 
-          try {
-            // MCP 도구인지 확인하여 라우팅
-            let result: string;
-            if (this.plugin.mcpManager.isMcpTool(toolBlock.name)) {
-              result = await this.plugin.mcpManager.executeTool(
-                toolBlock.name,
-                toolBlock.input
-              );
-            } else {
-              result = await this.plugin.toolExecutor.execute(
-                toolBlock.name,
-                toolBlock.input
-              );
-            }
+    try {
+      // MCP 도구인지 확인하여 라우팅
+      let result: string;
+      if (this.plugin.mcpManager.isMcpTool(toolBlock.name)) {
+        result = await this.plugin.mcpManager.executeTool(
+          toolBlock.name,
+          toolBlock.input
+        );
+      } else {
+        result = await this.plugin.toolExecutor.execute(
+          toolBlock.name,
+          toolBlock.input
+        );
+      }
 
-            // 성공 UI
-            statusEl.removeClass("status-running");
-            statusEl.addClass("status-completed");
-            statusEl.empty();
-            setIcon(statusEl, "check");
-            runningLabel.remove();
+      // 성공 UI
+      statusEl.removeClass("status-running");
+      statusEl.addClass("status-completed");
+      statusEl.empty();
+      setIcon(statusEl, "check");
+      runningLabel.remove();
 
-            const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
-            resultEl.setText(result.slice(0, 500) + (result.length > 500 ? "..." : ""));
+      const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
+      resultEl.setText(result.slice(0, 500) + (result.length > 500 ? "..." : ""));
 
-            toolHeader.createSpan({
-              cls: "ba-tool-summary",
-              text: result.slice(0, 80).replace(/\n/g, " "),
-            });
+      toolHeader.createSpan({
+        cls: "ba-tool-summary",
+        text: result.slice(0, 80).replace(/\n/g, " "),
+      });
 
-            this.scrollToBottom();
-            return result;
-          } catch (error) {
-            // 실패 UI
-            statusEl.removeClass("status-running");
-            statusEl.addClass("status-error");
-            statusEl.empty();
-            setIcon(statusEl, "x");
-            runningLabel.remove();
+      this.scrollToBottom();
+      return result;
+    } catch (error) {
+      // 실패 UI
+      statusEl.removeClass("status-running");
+      statusEl.addClass("status-error");
+      statusEl.empty();
+      setIcon(statusEl, "x");
+      runningLabel.remove();
 
-            this.scrollToBottom();
-            const errMsg = this.t.toolError((error as Error).message);
-            return errMsg;
-          }
-        }
+      this.scrollToBottom();
+      const errMsg = this.t.toolError((error as Error).message);
+      return errMsg;
+    }
+  }
 
 
 
@@ -1085,156 +1087,156 @@ export class ChatView extends ItemView {
   // ============================================
 
   private async autoAttachFile(path: string): Promise<void> {
-      // 이전 자동 첨부 파일만 제거 (수동 첨부는 유지)
-      if (this.autoAttachedPath && this.autoAttachedPath !== path) {
-        // 수동 첨부에도 포함된 경우 제거하지 않음
-        if (!this.manuallyAttachedPaths.has(this.autoAttachedPath)) {
-          this.attachedFiles.delete(this.autoAttachedPath);
-        }
+    // 이전 자동 첨부 파일만 제거 (수동 첨부는 유지)
+    if (this.autoAttachedPath && this.autoAttachedPath !== path) {
+      // 수동 첨부에도 포함된 경우 제거하지 않음
+      if (!this.manuallyAttachedPaths.has(this.autoAttachedPath)) {
+        this.attachedFiles.delete(this.autoAttachedPath);
       }
-      this.autoAttachedPath = path;
-      await this.addFileContext(path, false);
     }
+    this.autoAttachedPath = path;
+    await this.addFileContext(path, false);
+  }
 
   private async addFileContext(path: string, manual = true): Promise<void> {
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (!file || !(file instanceof TFile)) return;
-      if (!isAllowedTextExtension(file.extension)) return;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file || !(file instanceof TFile)) return;
+    if (!isAllowedTextExtension(file.extension)) return;
 
-      const content = await this.app.vault.cachedRead(file as any);
-      this.attachedFiles.set(path, content);
-      if (manual) {
-        this.manuallyAttachedPaths.add(path);
-      }
-      this.renderFileChips();
+    const content = await this.app.vault.cachedRead(file as any);
+    this.attachedFiles.set(path, content);
+    if (manual) {
+      this.manuallyAttachedPaths.add(path);
     }
+    this.renderFileChips();
+  }
 
   private removeFileContext(path: string): void {
-      this.attachedFiles.delete(path);
-      this.attachedBinaryFiles.delete(path);
-      this.manuallyAttachedPaths.delete(path);
-      if (this.autoAttachedPath === path) {
-        this.autoAttachedPath = null;
-      }
-      this.renderFileChips();
+    this.attachedFiles.delete(path);
+    this.attachedBinaryFiles.delete(path);
+    this.manuallyAttachedPaths.delete(path);
+    if (this.autoAttachedPath === path) {
+      this.autoAttachedPath = null;
     }
+    this.renderFileChips();
+  }
 
   private renderFileChips(): void {
-      this.fileChipContainer.empty();
+    this.fileChipContainer.empty();
 
-      const allPaths = new Set([
-        ...this.attachedFiles.keys(),
-        ...this.attachedBinaryFiles.keys(),
-      ]);
+    const allPaths = new Set([
+      ...this.attachedFiles.keys(),
+      ...this.attachedBinaryFiles.keys(),
+    ]);
 
-      if (allPaths.size === 0) {
-        this.contextRow.removeClass("has-content");
-        this.updateContextRing();
-        return;
-      }
-
-      this.contextRow.addClass("has-content");
-
-      for (const path of allPaths) {
-        const chip = this.fileChipContainer.createDiv({ cls: "ba-file-chip" });
-
-        const iconEl = chip.createDiv({ cls: "ba-file-chip-icon" });
-        const ext = path.split(".").pop()?.toLowerCase() || "";
-        // 파일 타입별 아이콘
-        const iconName = this.getFileIcon(ext);
-        setIcon(iconEl, iconName);
-
-        const basename = path.split("/").pop() || path;
-        chip.createSpan({ cls: "ba-file-chip-name", text: basename });
-
-        const removeBtn = chip.createDiv({ cls: "ba-file-chip-remove", text: "×" });
-        removeBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.removeFileContext(path);
-        });
-
-        chip.addEventListener("click", () => {
-          const f = this.app.vault.getAbstractFileByPath(path);
-          if (f) this.app.workspace.getLeaf(false).openFile(f as any);
-        });
-      }
-
+    if (allPaths.size === 0) {
+      this.contextRow.removeClass("has-content");
       this.updateContextRing();
+      return;
     }
 
-    // 파일 확장자에 따른 아이콘 반환
-    private getFileIcon(ext: string): string {
-      const imageExts = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"];
-      if (imageExts.includes(ext)) return "image";
-      if (ext === "pdf") return "file-text";
-      if (["xls", "xlsx", "csv"].includes(ext)) return "table";
-      if (["doc", "docx"].includes(ext)) return "file-text";
-      if (ext === "md") return "file-text";
-      return "file";
+    this.contextRow.addClass("has-content");
+
+    for (const path of allPaths) {
+      const chip = this.fileChipContainer.createDiv({ cls: "ba-file-chip" });
+
+      const iconEl = chip.createDiv({ cls: "ba-file-chip-icon" });
+      const ext = path.split(".").pop()?.toLowerCase() || "";
+      // 파일 타입별 아이콘
+      const iconName = this.getFileIcon(ext);
+      setIcon(iconEl, iconName);
+
+      const basename = path.split("/").pop() || path;
+      chip.createSpan({ cls: "ba-file-chip-name", text: basename });
+
+      const removeBtn = chip.createDiv({ cls: "ba-file-chip-remove", text: "×" });
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.removeFileContext(path);
+      });
+
+      chip.addEventListener("click", () => {
+        const f = this.app.vault.getAbstractFileByPath(path);
+        if (f) this.app.workspace.getLeaf(false).openFile(f as any);
+      });
     }
 
-    // 바이너리 파일을 Converse API 콘텐츠 블록으로 변환
-    private buildBinaryContentBlock(
-      path: string,
-      ext: string,
-      data: ArrayBuffer
-    ): unknown | null {
-      const bytes = new Uint8Array(data);
+    this.updateContextRing();
+  }
 
-      // 이미지 파일
-      const imageFormats: Record<string, string> = {
-        png: "png",
-        jpg: "jpeg",
-        jpeg: "jpeg",
-        gif: "gif",
-        webp: "webp",
+  // 파일 확장자에 따른 아이콘 반환
+  private getFileIcon(ext: string): string {
+    const imageExts = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"];
+    if (imageExts.includes(ext)) return "image";
+    if (ext === "pdf") return "file-text";
+    if (["xls", "xlsx", "csv"].includes(ext)) return "table";
+    if (["doc", "docx"].includes(ext)) return "file-text";
+    if (ext === "md") return "file-text";
+    return "file";
+  }
+
+  // 바이너리 파일을 Converse API 콘텐츠 블록으로 변환
+  private buildBinaryContentBlock(
+    path: string,
+    ext: string,
+    data: ArrayBuffer
+  ): unknown | null {
+    const bytes = new Uint8Array(data);
+
+    // 이미지 파일
+    const imageFormats: Record<string, string> = {
+      png: "png",
+      jpg: "jpeg",
+      jpeg: "jpeg",
+      gif: "gif",
+      webp: "webp",
+    };
+    if (imageFormats[ext]) {
+      return {
+        image: {
+          format: imageFormats[ext],
+          source: { bytes },
+        },
       };
-      if (imageFormats[ext]) {
-        return {
-          image: {
-            format: imageFormats[ext],
-            source: { bytes },
-          },
-        };
-      }
-
-      // 문서 파일
-      const docFormats: Record<string, string> = {
-        pdf: "pdf",
-        doc: "doc",
-        docx: "docx",
-        xls: "xls",
-        xlsx: "xlsx",
-      };
-      if (docFormats[ext]) {
-        const name = path.split("/").pop()?.replace(/\.[^.]+$/, "") || "document";
-        return {
-          document: {
-            format: docFormats[ext],
-            name: name.replace(/[^a-zA-Z0-9가-힣_\-\s]/g, "_").substring(0, 200),
-            source: { bytes },
-          },
-        };
-      }
-
-      return null;
     }
+
+    // 문서 파일
+    const docFormats: Record<string, string> = {
+      pdf: "pdf",
+      doc: "doc",
+      docx: "docx",
+      xls: "xls",
+      xlsx: "xlsx",
+    };
+    if (docFormats[ext]) {
+      const name = path.split("/").pop()?.replace(/\.[^.]+$/, "") || "document";
+      return {
+        document: {
+          format: docFormats[ext],
+          name: name.replace(/[^a-zA-Z0-9가-힣_\-\s]/g, "_").substring(0, 200),
+          source: { bytes },
+        },
+      };
+    }
+
+    return null;
+  }
 
   private attachCurrentNote(): void {
-      // 사이드바에서 버튼 클릭 시 active view가 채팅 뷰로 바뀌므로,
-      // 모든 leaf에서 마크다운 뷰를 찾아야 함
-      const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
-      // 가장 최근 활성화된 마크다운 leaf 찾기
-      const sorted = markdownLeaves.sort(
-        (a, b) => ((b as any).activeTime ?? 0) - ((a as any).activeTime ?? 0)
-      );
-      const leaf = sorted[0];
-      if (!leaf) return;
+    // 사이드바에서 버튼 클릭 시 active view가 채팅 뷰로 바뀌므로,
+    // 모든 leaf에서 마크다운 뷰를 찾아야 함
+    const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
+    // 가장 최근 활성화된 마크다운 leaf 찾기
+    const sorted = markdownLeaves.sort(
+      (a, b) => ((b as any).activeTime ?? 0) - ((a as any).activeTime ?? 0)
+    );
+    const leaf = sorted[0];
+    if (!leaf) return;
 
-      const view = leaf.view as MarkdownView;
-      if (!view?.file) return;
-      this.addFileContext(view.file.path);
-    }
+    const view = leaf.view as MarkdownView;
+    if (!view?.file) return;
+    this.addFileContext(view.file.path);
+  }
 
 
   // 파일 검색 모달 열기
@@ -1309,112 +1311,112 @@ export class ChatView extends ItemView {
 
   // 모델 선택 팝업 열기
   private async openModelPicker(): Promise<void> {
-      // 이미 열려 있으면 닫기
-      if (this.modelDropdownEl) {
-        this.closeModelDropdown();
-        return;
-      }
+    // 이미 열려 있으면 닫기
+    if (this.modelDropdownEl) {
+      this.closeModelDropdown();
+      return;
+    }
 
-      // 모델 목록이 없으면 API에서 로드
-      if (this.cachedModels.length === 0) {
-        this.modelLabelEl.setText(this.t.modelLoading);
-        try {
-          this.cachedModels = await this.plugin.bedrockClient.listModels();
-        } catch (e) {
-          console.error("모델 목록 조회 실패:", e);
-        }
+    // 모델 목록이 없으면 API에서 로드
+    if (this.cachedModels.length === 0) {
+      this.modelLabelEl.setText(this.t.modelLoading);
+      try {
+        this.cachedModels = await this.plugin.geminiClient.listModels();
+      } catch (e) {
+        console.error("모델 목록 조회 실패:", e);
+      }
+      this.updateModelLabel();
+    }
+
+    if (this.cachedModels.length === 0) {
+      this.modelLabelEl.setText(this.t.modelFailed);
+      return;
+    }
+
+    // 인라인 드롭다운 생성 (위로 열림)
+    this.modelDropdownEl = this.modelSelectorEl.createDiv({ cls: "ba-model-dropdown" });
+
+    const currentModelId = this.plugin.settings.chatModel;
+    for (const model of this.cachedModels) {
+      const item = this.modelDropdownEl.createDiv({ cls: "ba-model-dropdown-item" });
+      if (model.modelId === currentModelId) {
+        item.addClass("is-active");
+      }
+      const prefix = model.isProfile ? "⚡ " : "";
+      item.createSpan({ cls: "ba-model-dropdown-name", text: `${prefix}${model.modelName}` });
+      if (model.modelId === currentModelId) {
+        item.createSpan({ cls: "ba-model-dropdown-check", text: "✓" });
+      }
+      item.addEventListener("click", async () => {
+        this.plugin.settings.chatModel = model.modelId;
+        await this.plugin.saveSettings();
         this.updateModelLabel();
-      }
-
-      if (this.cachedModels.length === 0) {
-        this.modelLabelEl.setText(this.t.modelFailed);
-        return;
-      }
-
-      // 인라인 드롭다운 생성 (위로 열림)
-      this.modelDropdownEl = this.modelSelectorEl.createDiv({ cls: "ba-model-dropdown" });
-
-      const currentModelId = this.plugin.settings.chatModel;
-      for (const model of this.cachedModels) {
-        const item = this.modelDropdownEl.createDiv({ cls: "ba-model-dropdown-item" });
-        if (model.modelId === currentModelId) {
-          item.addClass("is-active");
-        }
-        const prefix = model.isProfile ? "⚡ " : "";
-        item.createSpan({ cls: "ba-model-dropdown-name", text: `${prefix}${model.modelName}` });
-        if (model.modelId === currentModelId) {
-          item.createSpan({ cls: "ba-model-dropdown-check", text: "✓" });
-        }
-        item.addEventListener("click", async () => {
-          this.plugin.settings.chatModel = model.modelId;
-          await this.plugin.saveSettings();
-          this.updateModelLabel();
-          this.closeModelDropdown();
-        });
-      }
-
-      // 외부 클릭 시 닫기
-      setTimeout(() => {
-        document.addEventListener("click", this.handleDropdownOutsideClick);
-      }, 0);
-    }
-
-    private handleDropdownOutsideClick = (e: MouseEvent) => {
-      if (this.modelDropdownEl && !this.modelSelectorEl.contains(e.target as Node)) {
         this.closeModelDropdown();
-      }
-    };
-
-    private closeModelDropdown(): void {
-      if (this.modelDropdownEl) {
-        this.modelDropdownEl.remove();
-        this.modelDropdownEl = null;
-      }
-      document.removeEventListener("click", this.handleDropdownOutsideClick);
+      });
     }
+
+    // 외부 클릭 시 닫기
+    setTimeout(() => {
+      document.addEventListener("click", this.handleDropdownOutsideClick);
+    }, 0);
+  }
+
+  private handleDropdownOutsideClick = (e: MouseEvent) => {
+    if (this.modelDropdownEl && !this.modelSelectorEl.contains(e.target as Node)) {
+      this.closeModelDropdown();
+    }
+  };
+
+  private closeModelDropdown(): void {
+    if (this.modelDropdownEl) {
+      this.modelDropdownEl.remove();
+      this.modelDropdownEl = null;
+    }
+    document.removeEventListener("click", this.handleDropdownOutsideClick);
+  }
 
   // 모델 목록 캐시 새로고침
   // 바이너리 파일 첨부 (이미지, PDF, XLSX 등)
   // 로컬 디바이스에서 파일 첨부 (네이티브 파일 선택)
-    private openBinaryFileAttach(): void {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".png,.jpg,.jpeg,.gif,.webp,.pdf,.csv,.doc,.docx,.xls,.xlsx,.html,.txt";
-      input.multiple = true;
-      input.addEventListener("change", async () => {
-        if (!input.files) return;
-        for (const file of Array.from(input.files)) {
-          await this.addLocalFile(file);
-        }
-      });
-      input.click();
+  private openBinaryFileAttach(): void {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".png,.jpg,.jpeg,.gif,.webp,.pdf,.csv,.doc,.docx,.xls,.xlsx,.html,.txt";
+    input.multiple = true;
+    input.addEventListener("change", async () => {
+      if (!input.files) return;
+      for (const file of Array.from(input.files)) {
+        await this.addLocalFile(file);
+      }
+    });
+    input.click();
+  }
+
+  // 로컬 File 객체를 컨텍스트에 추가
+  private async addLocalFile(file: File): Promise<void> {
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    const supportedExts = [
+      "png", "jpg", "jpeg", "gif", "webp",
+      "pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt",
+    ];
+
+    if (!supportedExts.includes(ext)) {
+      new Notice(this.t.unsupportedExt(ext));
+      return;
     }
 
-    // 로컬 File 객체를 컨텍스트에 추가
-    private async addLocalFile(file: File): Promise<void> {
-      const ext = file.name.split(".").pop()?.toLowerCase() || "";
-      const supportedExts = [
-        "png", "jpg", "jpeg", "gif", "webp",
-        "pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt",
-      ];
-
-      if (!supportedExts.includes(ext)) {
-        new Notice(this.t.unsupportedExt(ext));
-        return;
-      }
-
-      const textExts = ["txt", "csv", "html"];
-      if (textExts.includes(ext)) {
-        const text = await file.text();
-        this.attachedFiles.set(file.name, text);
-      } else {
-        const buffer = await file.arrayBuffer();
-        this.attachedBinaryFiles.set(file.name, buffer);
-      }
-
-      this.manuallyAttachedPaths.add(file.name);
-      this.renderFileChips();
+    const textExts = ["txt", "csv", "html"];
+    if (textExts.includes(ext)) {
+      const text = await file.text();
+      this.attachedFiles.set(file.name, text);
+    } else {
+      const buffer = await file.arrayBuffer();
+      this.attachedBinaryFiles.set(file.name, buffer);
     }
+
+    this.manuallyAttachedPaths.add(file.name);
+    this.renderFileChips();
+  }
 
 
   // 오늘 날짜로 To-Do 노트 생성
@@ -1545,68 +1547,68 @@ export class ChatView extends ItemView {
 
   // 미완료 항목을 템플릿 콘텐츠에 주입
   private injectCarryOverTasks(content: string, tasks: string[]): string {
-      const taskBlock = tasks.join("\n");
+    const taskBlock = tasks.join("\n");
 
-      // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
-      // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
-      const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
-      const match = content.match(sectionPattern);
+    // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
+    // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
+    const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
+    const match = content.match(sectionPattern);
 
-      if (match && match.index !== undefined) {
-        // 섹션 헤더 다음 줄에 삽입
-        const insertPos = match.index + match[0].length;
-        const after = content.substring(insertPos);
-        // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
-        const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
-        if (nextContentMatch && nextContentMatch.index !== undefined) {
-          const pos = insertPos + nextContentMatch.index;
-          return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
-        }
-        // 섹션 끝에 추가
-        return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
+    if (match && match.index !== undefined) {
+      // 섹션 헤더 다음 줄에 삽입
+      const insertPos = match.index + match[0].length;
+      const after = content.substring(insertPos);
+      // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
+      const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
+      if (nextContentMatch && nextContentMatch.index !== undefined) {
+        const pos = insertPos + nextContentMatch.index;
+        return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
       }
-
-      // 섹션을 못 찾으면 문서 끝에 추가
-      return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
+      // 섹션 끝에 추가
+      return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
     }
 
-    /**
-     * 템플릿의 "오늘의 할 일" / "To-Do" 섹션 내 ### 서브섹션 이름 추출
-     */
-    private extractTodoSubSections(content: string): string[] {
-      const lines = content.split("\n");
-      const subSections: string[] = [];
-      let inTodoSection = false;
+    // 섹션을 못 찾으면 문서 끝에 추가
+    return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
+  }
 
-      for (const line of lines) {
-        // ## 오늘의 할 일 / To-Do 섹션 시작 감지
-        if (/^##\s+.*(?:오늘의 할 일|할 일|to.?do|tasks)/i.test(line)) {
-          inTodoSection = true;
-          continue;
-        }
-        // 다음 ## 섹션이 나오면 종료 (### 제외)
-        if (inTodoSection && /^##\s+/.test(line) && !/^###/.test(line)) {
-          break;
-        }
-        // ### 서브섹션 수집
-        if (inTodoSection) {
-          const m = line.match(/^###\s+(.+)/);
-          if (m) subSections.push(m[1].trim());
-        }
+  /**
+   * 템플릿의 "오늘의 할 일" / "To-Do" 섹션 내 ### 서브섹션 이름 추출
+   */
+  private extractTodoSubSections(content: string): string[] {
+    const lines = content.split("\n");
+    const subSections: string[] = [];
+    let inTodoSection = false;
+
+    for (const line of lines) {
+      // ## 오늘의 할 일 / To-Do 섹션 시작 감지
+      if (/^##\s+.*(?:오늘의 할 일|할 일|to.?do|tasks)/i.test(line)) {
+        inTodoSection = true;
+        continue;
       }
-      return subSections;
+      // 다음 ## 섹션이 나오면 종료 (### 제외)
+      if (inTodoSection && /^##\s+/.test(line) && !/^###/.test(line)) {
+        break;
+      }
+      // ### 서브섹션 수집
+      if (inTodoSection) {
+        const m = line.match(/^###\s+(.+)/);
+        if (m) subSections.push(m[1].trim());
+      }
     }
+    return subSections;
+  }
 
-    /**
-     * AI를 사용해 미완료 태스크를 지정된 서브섹션별로 분류
-     */
-    private async classifyTasksForSections(
-      sections: string[],
-      tasks: string[]
-    ): Promise<Map<string, string[]>> {
-      const lang = this.plugin.settings.language === "ko" ? "ko" : "en";
-      const prompt = lang === "ko"
-        ? `다음은 미완료 To-Do 항목들과 분류할 카테고리입니다.
+  /**
+   * AI를 사용해 미완료 태스크를 지정된 서브섹션별로 분류
+   */
+  private async classifyTasksForSections(
+    sections: string[],
+    tasks: string[]
+  ): Promise<Map<string, string[]>> {
+    const lang = this.plugin.settings.language === "ko" ? "ko" : "en";
+    const prompt = lang === "ko"
+      ? `다음은 미완료 To-Do 항목들과 분류할 카테고리입니다.
 각 항목을 가장 적절한 카테고리에 분류해주세요.
 
 카테고리:
@@ -1618,7 +1620,7 @@ ${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*-\s*\[ \]\s*/, "").replace(/^\
 JSON 형식으로만 응답하세요. 키는 카테고리 이름(위 목록과 정확히 동일), 값은 항목 번호 배열입니다.
 예시: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
 모든 항목을 반드시 분류하세요.`
-        : `Classify these unfinished To-Do items into the given categories.
+      : `Classify these unfinished To-Do items into the given categories.
 
 Categories:
 ${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
@@ -1630,289 +1632,289 @@ Respond ONLY in JSON. Keys must exactly match category names above, values are a
 Example: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
 Classify ALL items.`;
 
-      try {
-        const result = await this.plugin.bedrockClient.converseLight(
-          prompt,
-          "You are a task classifier. Respond only in JSON."
-        );
+    try {
+      const result = await this.plugin.geminiClient.converseLight(
+        prompt,
+        "You are a task classifier. Respond only in JSON."
+      );
 
-        let jsonStr = result.text.trim();
-        const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
+      let jsonStr = result.text.trim();
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
 
-        const classification = JSON.parse(jsonStr) as Record<string, number[]>;
-        const classified = new Map<string, string[]>();
+      const classification = JSON.parse(jsonStr) as Record<string, number[]>;
+      const classified = new Map<string, string[]>();
 
-        for (const [section, indices] of Object.entries(classification)) {
-          const sectionTasks: string[] = [];
-          for (const idx of indices) {
-            if (idx >= 1 && idx <= tasks.length) {
-              sectionTasks.push(tasks[idx - 1]);
-            }
-          }
-          if (sectionTasks.length > 0) {
-            classified.set(section, sectionTasks);
+      for (const [section, indices] of Object.entries(classification)) {
+        const sectionTasks: string[] = [];
+        for (const idx of indices) {
+          if (idx >= 1 && idx <= tasks.length) {
+            sectionTasks.push(tasks[idx - 1]);
           }
         }
-
-        // 분류되지 않은 항목은 첫 번째 섹션에 추가
-        const classifiedIndices = new Set(Object.values(classification).flat());
-        const unclassified: string[] = [];
-        for (let i = 0; i < tasks.length; i++) {
-          if (!classifiedIndices.has(i + 1)) {
-            unclassified.push(tasks[i]);
-          }
+        if (sectionTasks.length > 0) {
+          classified.set(section, sectionTasks);
         }
-        if (unclassified.length > 0) {
-          const firstSection = sections[0];
-          const existing = classified.get(firstSection) || [];
-          classified.set(firstSection, [...existing, ...unclassified]);
-        }
-
-        return classified;
-      } catch (e) {
-        console.warn("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
-        const result = new Map<string, string[]>();
-        result.set(sections[0], tasks);
-        return result;
       }
+
+      // 분류되지 않은 항목은 첫 번째 섹션에 추가
+      const classifiedIndices = new Set(Object.values(classification).flat());
+      const unclassified: string[] = [];
+      for (let i = 0; i < tasks.length; i++) {
+        if (!classifiedIndices.has(i + 1)) {
+          unclassified.push(tasks[i]);
+        }
+      }
+      if (unclassified.length > 0) {
+        const firstSection = sections[0];
+        const existing = classified.get(firstSection) || [];
+        classified.set(firstSection, [...existing, ...unclassified]);
+      }
+
+      return classified;
+    } catch (e) {
+      console.warn("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
+      const result = new Map<string, string[]>();
+      result.set(sections[0], tasks);
+      return result;
     }
+  }
 
-    /**
-     * 템플릿의 특정 ### 서브섹션 내 빈 체크박스(- [ ] ) 자리에 태스크 주입
-     */
-    private injectTasksIntoSubSection(
-      content: string,
-      sectionName: string,
-      tasks: string[]
-    ): string {
-      const lines = content.split("\n");
-      const result: string[] = [];
-      let found = false;
-      let injected = false;
+  /**
+   * 템플릿의 특정 ### 서브섹션 내 빈 체크박스(- [ ] ) 자리에 태스크 주입
+   */
+  private injectTasksIntoSubSection(
+    content: string,
+    sectionName: string,
+    tasks: string[]
+  ): string {
+    const lines = content.split("\n");
+    const result: string[] = [];
+    let found = false;
+    let injected = false;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // ### 서브섹션 헤더 매칭
-        if (!injected && line.match(new RegExp("^###\\s+" + sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))) {
-          found = true;
-          result.push(line);
-          continue;
-        }
-        // 해당 섹션 내 빈 체크박스를 찾으면 태스크로 교체
-        if (found && !injected && /^\s*- \[ \]\s*$/.test(line)) {
-          // 들여쓰기 레벨 유지
-          for (const task of tasks) {
-            result.push(task);
-          }
-          injected = true;
-          continue;
-        }
-        // 다음 ### 또는 ## 섹션이 나오면 해당 섹션 종료
-        if (found && !injected && /^#{2,3}\s+/.test(line)) {
-          // 섹션 끝까지 빈 체크박스를 못 찾았으면 헤더 앞에 삽입
-          for (const task of tasks) {
-            result.push(task);
-          }
-          injected = true;
-        }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // ### 서브섹션 헤더 매칭
+      if (!injected && line.match(new RegExp("^###\\s+" + sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))) {
+        found = true;
         result.push(line);
+        continue;
       }
-
-      // 끝까지 못 찾았으면 마지막에 추가
-      if (found && !injected) {
+      // 해당 섹션 내 빈 체크박스를 찾으면 태스크로 교체
+      if (found && !injected && /^\s*- \[ \]\s*$/.test(line)) {
+        // 들여쓰기 레벨 유지
         for (const task of tasks) {
           result.push(task);
         }
+        injected = true;
+        continue;
       }
-
-      return result.join("\n");
+      // 다음 ### 또는 ## 섹션이 나오면 해당 섹션 종료
+      if (found && !injected && /^#{2,3}\s+/.test(line)) {
+        // 섹션 끝까지 빈 체크박스를 못 찾았으면 헤더 앞에 삽입
+        for (const task of tasks) {
+          result.push(task);
+        }
+        injected = true;
+      }
+      result.push(line);
     }
 
-    /**
-     * 이전 투두의 메모 섹션에서 날짜가 포함된 항목 추출
-     * 날짜가 오늘 이후(오늘 포함)인 항목만 반환
-     */
-    private async getDatedNotesFromPrevTodo(
-      todoFolder: string,
-      today: Date
-    ): Promise<Array<{ date: string; text: string; time: string | null; raw: string }>> {
-      const folder = this.app.vault.getAbstractFileByPath(todoFolder);
-      if (!folder) return [];
-
-      const children = (folder as any).children || [];
-      const dated: { file: TFile; date: Date }[] = [];
-      for (const child of children) {
-        if (!(child instanceof TFile) || child.extension !== "md") continue;
-        const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (!match) continue;
-        const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-        if (d < today) dated.push({ file: child, date: d });
+    // 끝까지 못 찾았으면 마지막에 추가
+    if (found && !injected) {
+      for (const task of tasks) {
+        result.push(task);
       }
-      if (dated.length === 0) return [];
+    }
 
-      dated.sort((a, b) => b.date.getTime() - a.date.getTime());
-      const latest = dated[0].file;
-      const content = await this.app.vault.cachedRead(latest);
+    return result.join("\n");
+  }
 
-      const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      console.log("[ToDo] 메모 승계 - 이전 파일:", latest.basename, "오늘:", todayStr);
+  /**
+   * 이전 투두의 메모 섹션에서 날짜가 포함된 항목 추출
+   * 날짜가 오늘 이후(오늘 포함)인 항목만 반환
+   */
+  private async getDatedNotesFromPrevTodo(
+    todoFolder: string,
+    today: Date
+  ): Promise<Array<{ date: string; text: string; time: string | null; raw: string }>> {
+    const folder = this.app.vault.getAbstractFileByPath(todoFolder);
+    if (!folder) return [];
 
-      const lines = content.split("\n");
-      let inMemo = false;
+    const children = (folder as any).children || [];
+    const dated: { file: TFile; date: Date }[] = [];
+    for (const child of children) {
+      if (!(child instanceof TFile) || child.extension !== "md") continue;
+      const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) continue;
+      const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      if (d < today) dated.push({ file: child, date: d });
+    }
+    if (dated.length === 0) return [];
 
-      for (const line of lines) {
-        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
-          inMemo = true;
-          continue;
-        }
-        if (inMemo && /^##\s+/.test(line) && !/^###/.test(line)) break;
+    dated.sort((a, b) => b.date.getTime() - a.date.getTime());
+    const latest = dated[0].file;
+    const content = await this.app.vault.cachedRead(latest);
 
-        if (inMemo) {
-          const parsed = this.parseDateFromNoteLine(line, today);
-          if (parsed) {
-            // 오늘 이후(오늘 포함)만 승계
-            if (parsed.dateStr >= todayStr) {
-              results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
-            } else {
-              console.log("[ToDo] 메모 스킵 (과거):", parsed.dateStr, "<", todayStr);
-            }
+    const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    console.log("[ToDo] 메모 승계 - 이전 파일:", latest.basename, "오늘:", todayStr);
+
+    const lines = content.split("\n");
+    let inMemo = false;
+
+    for (const line of lines) {
+      if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
+        inMemo = true;
+        continue;
+      }
+      if (inMemo && /^##\s+/.test(line) && !/^###/.test(line)) break;
+
+      if (inMemo) {
+        const parsed = this.parseDateFromNoteLine(line, today);
+        if (parsed) {
+          // 오늘 이후(오늘 포함)만 승계
+          if (parsed.dateStr >= todayStr) {
+            results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
+          } else {
+            console.log("[ToDo] 메모 스킵 (과거):", parsed.dateStr, "<", todayStr);
           }
         }
       }
-      return results;
+    }
+    return results;
+  }
+
+  /**
+   * 메모 줄에서 다양한 날짜 형식을 파싱
+   * 지원 형식: 2026-03-01, 03/01, 3/1, 3월 1일, 3/3(화)
+   */
+  private parseDateFromNoteLine(
+    line: string,
+    refDate: Date
+  ): { dateStr: string; text: string; time: string | null } | null {
+    // 리스트 항목이 아니면 스킵
+    if (!/^-\s+/.test(line)) return null;
+    const content = line.replace(/^-\s+/, "");
+
+    const year = refDate.getFullYear();
+
+    // 줄 전체에서 날짜 패턴을 탐색 (이모지, 볼드, 기호 등 무시)
+    // 마크다운 서식 제거: **, *, 📌 등
+    const cleaned = content.replace(/\*\*/g, "").replace(/\*/g, "").trim();
+
+    let month = 0;
+    let day = 0;
+    let dateYear = year;
+    let timeStr: string | null = null;
+    let textPart = "";
+
+    // 1) YYYY-MM-DD
+    const m1 = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    // 2) M/D 또는 MM/DD (요일 옵션)
+    const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^\)]*\))?/) : null;
+    // 3) N월 N일
+    const m3 = (!m1 && !m2) ? cleaned.match(/(\d{1,2})월\s*(\d{1,2})일/) : null;
+
+    if (m1) {
+      dateYear = Number(m1[1]);
+      month = Number(m1[2]);
+      day = Number(m1[3]);
+    } else if (m2) {
+      month = Number(m2[1]);
+      day = Number(m2[2]);
+    } else if (m3) {
+      month = Number(m3[1]);
+      day = Number(m3[2]);
+    } else {
+      return null;
     }
 
-    /**
-     * 메모 줄에서 다양한 날짜 형식을 파싱
-     * 지원 형식: 2026-03-01, 03/01, 3/1, 3월 1일, 3/3(화)
-     */
-    private parseDateFromNoteLine(
-      line: string,
-      refDate: Date
-    ): { dateStr: string; text: string; time: string | null } | null {
-      // 리스트 항목이 아니면 스킵
-      if (!/^-\s+/.test(line)) return null;
-      const content = line.replace(/^-\s+/, "");
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
 
-      const year = refDate.getFullYear();
+    const dateStr = `${dateYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-      // 줄 전체에서 날짜 패턴을 탐색 (이모지, 볼드, 기호 등 무시)
-      // 마크다운 서식 제거: **, *, 📌 등
-      const cleaned = content.replace(/\*\*/g, "").replace(/\*/g, "").trim();
-
-      let month = 0;
-      let day = 0;
-      let dateYear = year;
-      let timeStr: string | null = null;
-      let textPart = "";
-
-      // 1) YYYY-MM-DD
-      const m1 = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
-      // 2) M/D 또는 MM/DD (요일 옵션)
-      const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^\)]*\))?/) : null;
-      // 3) N월 N일
-      const m3 = (!m1 && !m2) ? cleaned.match(/(\d{1,2})월\s*(\d{1,2})일/) : null;
-
-      if (m1) {
-        dateYear = Number(m1[1]);
-        month = Number(m1[2]);
-        day = Number(m1[3]);
-      } else if (m2) {
-        month = Number(m2[1]);
-        day = Number(m2[2]);
-      } else if (m3) {
-        month = Number(m3[1]);
-        day = Number(m3[2]);
-      } else {
-        return null;
-      }
-
-      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-
-      const dateStr = `${dateYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
-      // 시간 추출: HH:MM 패턴 (날짜 매치 이후 부분에서만)
-      const datePattern = m1 || m2 || m3;
-      let afterDateRaw = "";
-      if (datePattern && datePattern.index !== undefined) {
-        afterDateRaw = cleaned.substring(datePattern.index + datePattern[0].length).trim();
-        // 요일 괄호 제거: (화), (월) 등
-        afterDateRaw = afterDateRaw.replace(/^\([^\)]*\)\s*/, "").trim();
-      }
-
-      const timeMatchInAfter = afterDateRaw.match(/^(\d{1,2}:\d{2})/);
-      if (timeMatchInAfter) {
-        timeStr = timeMatchInAfter[1].replace(/^(\d):/, "0$1:");
-      } else {
-        const timeMatch2 = afterDateRaw.match(/^(\d{1,2})시/);
-        if (timeMatch2) {
-          timeStr = `${timeMatch2[1].padStart(2, "0")}:00`;
-        }
-      }
-
-      // 텍스트 추출: 날짜/시간/부가설명 이후의 의미 있는 텍스트
-      if (datePattern && datePattern.index !== undefined) {
-        let afterDate = afterDateRaw;
-        // 시간 패턴 제거 (HH:MM)
-        afterDate = afterDate.replace(/^\d{1,2}:\d{2}/, "").trim();
-        // N시 패턴 제거
-        afterDate = afterDate.replace(/^\d{1,2}시/, "").trim();
-        // "예정" 같은 부가 설명 제거
-        afterDate = afterDate.replace(/^예정\s*/, "").trim();
-        // 구분자 콜론/대시 제거
-        afterDate = afterDate.replace(/^[:\-–—]\s*/, "").trim();
-        textPart = afterDate;
-      }
-
-      if (!textPart) return null;
-
-      return { dateStr, text: textPart, time: timeStr };
+    // 시간 추출: HH:MM 패턴 (날짜 매치 이후 부분에서만)
+    const datePattern = m1 || m2 || m3;
+    let afterDateRaw = "";
+    if (datePattern && datePattern.index !== undefined) {
+      afterDateRaw = cleaned.substring(datePattern.index + datePattern[0].length).trim();
+      // 요일 괄호 제거: (화), (월) 등
+      afterDateRaw = afterDateRaw.replace(/^\([^\)]*\)\s*/, "").trim();
     }
 
-    /**
-     * 메모 섹션에 항목 주입
-     */
-    private injectNotesIntoMemoSection(content: string, notes: string[]): string {
-      const lines = content.split("\n");
-      const result: string[] = [];
-      let inMemo = false;
-      let injected = false;
+    const timeMatchInAfter = afterDateRaw.match(/^(\d{1,2}:\d{2})/);
+    if (timeMatchInAfter) {
+      timeStr = timeMatchInAfter[1].replace(/^(\d):/, "0$1:");
+    } else {
+      const timeMatch2 = afterDateRaw.match(/^(\d{1,2})시/);
+      if (timeMatch2) {
+        timeStr = `${timeMatch2[1].padStart(2, "0")}:00`;
+      }
+    }
 
-      for (const line of lines) {
-        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
-          inMemo = true;
-          result.push(line);
-          continue;
-        }
-        // 메모 섹션 내 빈 항목(- ) 또는 첫 번째 빈 줄에 주입
-        if (inMemo && !injected && /^-\s*$/.test(line)) {
-          for (const note of notes) {
-            result.push(note);
-          }
-          injected = true;
-          continue;
-        }
-        // 다음 ## 섹션이면 메모 종료, 아직 주입 안 했으면 여기서
-        if (inMemo && !injected && /^##\s+/.test(line) && !/^###/.test(line)) {
-          for (const note of notes) {
-            result.push(note);
-          }
-          result.push("");
-          injected = true;
-        }
+    // 텍스트 추출: 날짜/시간/부가설명 이후의 의미 있는 텍스트
+    if (datePattern && datePattern.index !== undefined) {
+      let afterDate = afterDateRaw;
+      // 시간 패턴 제거 (HH:MM)
+      afterDate = afterDate.replace(/^\d{1,2}:\d{2}/, "").trim();
+      // N시 패턴 제거
+      afterDate = afterDate.replace(/^\d{1,2}시/, "").trim();
+      // "예정" 같은 부가 설명 제거
+      afterDate = afterDate.replace(/^예정\s*/, "").trim();
+      // 구분자 콜론/대시 제거
+      afterDate = afterDate.replace(/^[:\-–—]\s*/, "").trim();
+      textPart = afterDate;
+    }
+
+    if (!textPart) return null;
+
+    return { dateStr, text: textPart, time: timeStr };
+  }
+
+  /**
+   * 메모 섹션에 항목 주입
+   */
+  private injectNotesIntoMemoSection(content: string, notes: string[]): string {
+    const lines = content.split("\n");
+    const result: string[] = [];
+    let inMemo = false;
+    let injected = false;
+
+    for (const line of lines) {
+      if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
+        inMemo = true;
         result.push(line);
+        continue;
       }
-
-      if (!injected) {
+      // 메모 섹션 내 빈 항목(- ) 또는 첫 번째 빈 줄에 주입
+      if (inMemo && !injected && /^-\s*$/.test(line)) {
         for (const note of notes) {
           result.push(note);
         }
+        injected = true;
+        continue;
       }
-
-      return result.join("\n");
+      // 다음 ## 섹션이면 메모 종료, 아직 주입 안 했으면 여기서
+      if (inMemo && !injected && /^##\s+/.test(line) && !/^###/.test(line)) {
+        for (const note of notes) {
+          result.push(note);
+        }
+        result.push("");
+        injected = true;
+      }
+      result.push(line);
     }
+
+    if (!injected) {
+      for (const note of notes) {
+        result.push(note);
+      }
+    }
+
+    return result.join("\n");
+  }
 
 
 
@@ -2022,7 +2024,7 @@ Classify ALL items.`;
         },
       ];
 
-      const result = await this.plugin.bedrockClient.converse(tagMessages);
+      const result = await this.plugin.geminiClient.converse(tagMessages);
       const textBlock = result.contentBlocks.find((b) => b.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         new Notice(this.t.tagsFailed);
@@ -2070,72 +2072,72 @@ Classify ALL items.`;
 
   // 컨텍스트 사용량 링 업데이트
   private updateContextRing(): void {
-      if (!this.contextRingEl || !this.contextLabelEl) return;
+    if (!this.contextRingEl || !this.contextLabelEl) return;
 
-      // 모델별 컨텍스트 윈도우 크기 (토큰)
-      const modelId = this.plugin.settings.chatModel;
-      const contextWindow = 200000; // Claude 모델 기본 200K
+    // 모델별 컨텍스트 윈도우 크기 (토큰)
+    const modelId = this.plugin.settings.chatModel;
+    const contextWindow = 200000; // Claude 모델 기본 200K
 
-      // 현재 사용 중인 토큰 추정
-      let totalChars = 0;
+    // 현재 사용 중인 토큰 추정
+    let totalChars = 0;
 
-      // 대화 히스토리
-      for (const msg of this.messages) {
-        totalChars += msg.content.length;
-      }
-
-      // 텍스트 첨부 파일
-      for (const content of this.attachedFiles.values()) {
-        totalChars += Math.min(content.length, 8000);
-      }
-
-      // 바이너리 첨부 파일 (이미지: ~765토큰, 문서: 바이트/3 추정)
-      for (const [path, data] of this.attachedBinaryFiles) {
-        const ext = path.split(".").pop()?.toLowerCase() || "";
-        const imageExts = ["png", "jpg", "jpeg", "gif", "webp"];
-        if (imageExts.includes(ext)) {
-          totalChars += 765 * CHARS_PER_TOKEN; // 이미지 토큰을 문자 수로 환산
-        } else {
-          totalChars += data.byteLength / 3; // 문서 바이트 기반 추정
-        }
-      }
-
-      // 현재 입력
-      totalChars += this.inputEl.value.length;
-
-      // 시스템 프롬프트
-      totalChars += this.plugin.settings.systemPrompt.length;
-
-      // 대략적 토큰 추정 (CHARS_PER_TOKEN 상수 사용)
-      const estimatedTokens = Math.ceil(totalChars / CHARS_PER_TOKEN);
-      const ratio = Math.min(estimatedTokens / contextWindow, 1);
-
-      // SVG 링 업데이트 (선형 비율 사용 — 라벨 수치와 일치)
-      const ringSize = 22;
-      const strokeWidth = 2.5;
-      const radius = (ringSize - strokeWidth) / 2;
-      const circumference = 2 * Math.PI * radius;
-      const offset = circumference * (1 - ratio);
-      this.contextRingEl.setAttribute("stroke-dashoffset", String(offset));
-
-      // 색상 변경 (실제 비율 기준)
-      if (ratio > 0.9) {
-        this.contextRingEl.setAttribute("stroke", "var(--text-error)");
-      } else if (ratio > 0.7) {
-        this.contextRingEl.setAttribute("stroke", "var(--color-yellow)");
-      } else {
-        this.contextRingEl.setAttribute("stroke", "var(--ba-brand)");
-      }
-
-      // 라벨: 실제 토큰 수 (K 단위)
-      const usedK = (estimatedTokens / 1000).toFixed(1);
-      const totalK = (contextWindow / 1000).toFixed(0);
-      this.contextLabelEl.setText(`${usedK}K`);
-      this.contextLabelEl.parentElement?.setAttribute(
-        "aria-label",
-        this.t.contextLabel(usedK, totalK)
-      );
+    // 대화 히스토리
+    for (const msg of this.messages) {
+      totalChars += msg.content.length;
     }
+
+    // 텍스트 첨부 파일
+    for (const content of this.attachedFiles.values()) {
+      totalChars += Math.min(content.length, 8000);
+    }
+
+    // 바이너리 첨부 파일 (이미지: ~765토큰, 문서: 바이트/3 추정)
+    for (const [path, data] of this.attachedBinaryFiles) {
+      const ext = path.split(".").pop()?.toLowerCase() || "";
+      const imageExts = ["png", "jpg", "jpeg", "gif", "webp"];
+      if (imageExts.includes(ext)) {
+        totalChars += 765 * CHARS_PER_TOKEN; // 이미지 토큰을 문자 수로 환산
+      } else {
+        totalChars += data.byteLength / 3; // 문서 바이트 기반 추정
+      }
+    }
+
+    // 현재 입력
+    totalChars += this.inputEl.value.length;
+
+    // 시스템 프롬프트
+    totalChars += this.plugin.settings.systemPrompt.length;
+
+    // 대략적 토큰 추정 (CHARS_PER_TOKEN 상수 사용)
+    const estimatedTokens = Math.ceil(totalChars / CHARS_PER_TOKEN);
+    const ratio = Math.min(estimatedTokens / contextWindow, 1);
+
+    // SVG 링 업데이트 (선형 비율 사용 — 라벨 수치와 일치)
+    const ringSize = 22;
+    const strokeWidth = 2.5;
+    const radius = (ringSize - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - ratio);
+    this.contextRingEl.setAttribute("stroke-dashoffset", String(offset));
+
+    // 색상 변경 (실제 비율 기준)
+    if (ratio > 0.9) {
+      this.contextRingEl.setAttribute("stroke", "var(--text-error)");
+    } else if (ratio > 0.7) {
+      this.contextRingEl.setAttribute("stroke", "var(--color-yellow)");
+    } else {
+      this.contextRingEl.setAttribute("stroke", "var(--ba-brand)");
+    }
+
+    // 라벨: 실제 토큰 수 (K 단위)
+    const usedK = (estimatedTokens / 1000).toFixed(1);
+    const totalK = (contextWindow / 1000).toFixed(0);
+    this.contextLabelEl.setText(`${usedK}K`);
+    this.contextLabelEl.parentElement?.setAttribute(
+      "aria-label",
+      this.t.contextLabel(usedK, totalK)
+    );
+  }
 
   refreshModelList(): void {
     this.cachedModels = [];
@@ -2170,83 +2172,83 @@ Classify ALL items.`;
   // ============================================
 
   private async handleIndexVault(): Promise<void> {
-        if (!this.plugin.indexer || this.plugin.indexer.isIndexing) return;
+    if (!this.plugin.indexer || this.plugin.indexer.isIndexing) return;
 
-        const welcome = this.messagesEl.querySelector(".ba-welcome");
-        if (welcome) welcome.remove();
+    const welcome = this.messagesEl.querySelector(".ba-welcome");
+    if (welcome) welcome.remove();
 
-        const progressEl = this.messagesEl.createDiv({ cls: "ba-index-progress" });
-        const progressLabel = progressEl.createDiv({ cls: "ba-index-label" });
-        const labelIcon = progressLabel.createSpan({ cls: "ba-index-label-icon" });
-        setIcon(labelIcon, BRANDING.icon.id);
-        const labelText = progressLabel.createSpan({ text: this.t.checkingChanges });
-        const progressBarOuter = progressEl.createDiv({ cls: "ba-progress-bar-outer" });
-        const progressBarInner = progressBarOuter.createDiv({ cls: "ba-progress-bar-inner" });
-        const progressDetail = progressEl.createDiv({ cls: "ba-index-detail" });
+    const progressEl = this.messagesEl.createDiv({ cls: "ba-index-progress" });
+    const progressLabel = progressEl.createDiv({ cls: "ba-index-label" });
+    const labelIcon = progressLabel.createSpan({ cls: "ba-index-label-icon" });
+    setIcon(labelIcon, BRANDING.icon.id);
+    const labelText = progressLabel.createSpan({ text: this.t.checkingChanges });
+    const progressBarOuter = progressEl.createDiv({ cls: "ba-progress-bar-outer" });
+    const progressBarInner = progressBarOuter.createDiv({ cls: "ba-progress-bar-inner" });
+    const progressDetail = progressEl.createDiv({ cls: "ba-index-detail" });
 
-        this.scrollToBottom();
+    this.scrollToBottom();
 
-        const result = await this.plugin.indexer.indexVault((current: number, total: number) => {
-          const pct = Math.round((current / total) * 100);
-          progressBarInner.style.width = `${pct}%`;
-          labelText.setText(this.t.indexing(pct));
-          progressDetail.setText(this.t.filesProgress(current, total));
-          this.scrollToBottom();
-        });
+    const result = await this.plugin.indexer.indexVault((current: number, total: number) => {
+      const pct = Math.round((current / total) * 100);
+      progressBarInner.style.width = `${pct}%`;
+      labelText.setText(this.t.indexing(pct));
+      progressDetail.setText(this.t.filesProgress(current, total));
+      this.scrollToBottom();
+    });
 
-        // 결과에 따라 메시지 분기
-        if (result.processed === 0 && result.errors.length === 0) {
-          // 변경 파일 없음
-          labelText.setText(this.t.allUpToDate);
-          progressDetail.setText(this.t.totalIndexed(this.plugin.indexer.size));
-          progressBarInner.style.width = "100%";
-          progressBarInner.addClass("ba-progress-done");
-        } else {
-          // 변경 파일 처리됨
-          labelText.setText(this.t.indexDone);
-          const parts: string[] = [];
-          if (result.processed > 0) parts.push(this.t.updated(result.processed));
-          if (result.errors.length > 0) parts.push(this.t.failed(result.errors.length));
-          parts.push(this.t.totalIndexedShort(this.plugin.indexer.size));
-          progressDetail.setText(parts.join(" · "));
-          progressBarInner.style.width = "100%";
-          progressBarInner.addClass("ba-progress-done");
-        }
+    // 결과에 따라 메시지 분기
+    if (result.processed === 0 && result.errors.length === 0) {
+      // 변경 파일 없음
+      labelText.setText(this.t.allUpToDate);
+      progressDetail.setText(this.t.totalIndexed(this.plugin.indexer.size));
+      progressBarInner.style.width = "100%";
+      progressBarInner.addClass("ba-progress-done");
+    } else {
+      // 변경 파일 처리됨
+      labelText.setText(this.t.indexDone);
+      const parts: string[] = [];
+      if (result.processed > 0) parts.push(this.t.updated(result.processed));
+      if (result.errors.length > 0) parts.push(this.t.failed(result.errors.length));
+      parts.push(this.t.totalIndexedShort(this.plugin.indexer.size));
+      progressDetail.setText(parts.join(" · "));
+      progressBarInner.style.width = "100%";
+      progressBarInner.addClass("ba-progress-done");
+    }
 
-        // 실패한 파일이 있으면 접을 수 있는 상세 목록 표시
-        if (result && result.errors.length > 0) {
-          const failSection = progressEl.createDiv({ cls: "ba-index-failures" });
+    // 실패한 파일이 있으면 접을 수 있는 상세 목록 표시
+    if (result && result.errors.length > 0) {
+      const failSection = progressEl.createDiv({ cls: "ba-index-failures" });
 
-          const failHeader = failSection.createDiv({ cls: "ba-fail-header" });
-          const toggleIcon = failHeader.createSpan({ cls: "ba-fail-toggle-icon", text: "▶" });
-          failHeader.createSpan({
-            cls: "ba-fail-header-text",
-            text: this.t.failHeader(result.errors.length),
-          });
+      const failHeader = failSection.createDiv({ cls: "ba-fail-header" });
+      const toggleIcon = failHeader.createSpan({ cls: "ba-fail-toggle-icon", text: "▶" });
+      failHeader.createSpan({
+        cls: "ba-fail-header-text",
+        text: this.t.failHeader(result.errors.length),
+      });
 
-          const failList = failSection.createDiv({ cls: "ba-fail-list collapsed" });
+      const failList = failSection.createDiv({ cls: "ba-fail-list collapsed" });
 
-          for (const failure of result.errors) {
-            const item = failList.createDiv({ cls: "ba-fail-item" });
-            item.createSpan({ cls: "ba-fail-path", text: failure.path });
-            item.createSpan({ cls: "ba-fail-reason", text: failure.reason });
-          }
-
-          failHeader.addEventListener("click", () => {
-            const isCollapsed = failList.hasClass("collapsed");
-            if (isCollapsed) {
-              failList.removeClass("collapsed");
-              toggleIcon.setText("▼");
-            } else {
-              failList.addClass("collapsed");
-              toggleIcon.setText("▶");
-            }
-            this.scrollToBottom();
-          });
-        }
-
-        await this.plugin.saveIndex();
+      for (const failure of result.errors) {
+        const item = failList.createDiv({ cls: "ba-fail-item" });
+        item.createSpan({ cls: "ba-fail-path", text: failure.path });
+        item.createSpan({ cls: "ba-fail-reason", text: failure.reason });
       }
+
+      failHeader.addEventListener("click", () => {
+        const isCollapsed = failList.hasClass("collapsed");
+        if (isCollapsed) {
+          failList.removeClass("collapsed");
+          toggleIcon.setText("▼");
+        } else {
+          failList.addClass("collapsed");
+          toggleIcon.setText("▶");
+        }
+        this.scrollToBottom();
+      });
+    }
+
+    await this.plugin.saveIndex();
+  }
 
   // ============================================
   // 유틸리티
@@ -2319,18 +2321,18 @@ Classify ALL items.`;
   }
 
   private clearChat(): void {
-          this.messages = [];
-          this.messagesEl.empty();
-          this.renderWelcome();
-          // 저장된 히스토리도 삭제
-          this.plugin.saveChatHistory([]);
-          // 모든 첨부 파일 상태 초기화
-          this.attachedFiles.clear();
-          this.manuallyAttachedPaths.clear();
-          this.autoAttachedPath = null;
-          this.attachedBinaryFiles.clear();
-          this.updateContextRing();
-        }
+    this.messages = [];
+    this.messagesEl.empty();
+    this.renderWelcome();
+    // 저장된 히스토리도 삭제
+    this.plugin.saveChatHistory([]);
+    // 모든 첨부 파일 상태 초기화
+    this.attachedFiles.clear();
+    this.manuallyAttachedPaths.clear();
+    this.autoAttachedPath = null;
+    this.attachedBinaryFiles.clear();
+    this.updateContextRing();
+  }
 
   // 새 대화 시작 (현재 대화를 세션으로 저장 후 초기화)
   private async startNewChat(): Promise<void> {
@@ -2388,65 +2390,65 @@ Classify ALL items.`;
   }
 
   // 저장된 대화 히스토리 복원
-    private async restoreChatHistory(): Promise<void> {
-      const history = await this.plugin.loadChatHistory();
-      if (history.length > 0) {
-        this.messages = history;
-        // 마지막 어시스턴트 메시지 인덱스를 찾아 재생성 버튼 추가 대상 결정
-        let lastAssistantIdx = -1;
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (history[i].role === "assistant") {
-            lastAssistantIdx = i;
-            break;
-          }
+  private async restoreChatHistory(): Promise<void> {
+    const history = await this.plugin.loadChatHistory();
+    if (history.length > 0) {
+      this.messages = history;
+      // 마지막 어시스턴트 메시지 인덱스를 찾아 재생성 버튼 추가 대상 결정
+      let lastAssistantIdx = -1;
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role === "assistant") {
+          lastAssistantIdx = i;
+          break;
         }
-
-        for (let i = 0; i < history.length; i++) {
-          const msg = history[i];
-          if (msg.role === "user") {
-            this.renderUserMessage(msg);
-          } else {
-            // 어시스턴트 메시지는 마크다운 렌더링
-            const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-            this.addAssistantLabel(msgEl);
-            const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-            await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
-
-            // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
-            if (i === lastAssistantIdx) {
-              const footer = msgEl.createDiv({ cls: "ba-response-footer" });
-              const regenBtn = footer.createEl("button", {
-                cls: "ba-regenerate-btn",
-                attr: { "aria-label": this.t.regenerate },
-              });
-              setIcon(regenBtn, "refresh-cw");
-              regenBtn.createSpan({ text: this.t.regenerate });
-              regenBtn.addEventListener("click", () => {
-                if (!this.isGenerating) {
-                  this.regenerateLastResponse();
-                }
-              });
-            }
-          }
-        }
-        this.scrollToBottom();
-      } else {
-        this.renderWelcome();
       }
-    }
 
-    // 대화 히스토리 저장
-    private persistHistory(): void {
-          this.plugin.saveChatHistory(this.messages);
-          this.updateContextRing();
+      for (let i = 0; i < history.length; i++) {
+        const msg = history[i];
+        if (msg.role === "user") {
+          this.renderUserMessage(msg);
+        } else {
+          // 어시스턴트 메시지는 마크다운 렌더링
+          const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+          this.addAssistantLabel(msgEl);
+          const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+          await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
+
+          // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
+          if (i === lastAssistantIdx) {
+            const footer = msgEl.createDiv({ cls: "ba-response-footer" });
+            const regenBtn = footer.createEl("button", {
+              cls: "ba-regenerate-btn",
+              attr: { "aria-label": this.t.regenerate },
+            });
+            setIcon(regenBtn, "refresh-cw");
+            regenBtn.createSpan({ text: this.t.regenerate });
+            regenBtn.addEventListener("click", () => {
+              if (!this.isGenerating) {
+                this.regenerateLastResponse();
+              }
+            });
+          }
         }
-
-    async onClose(): Promise<void> {
-      this.handleStop();
-      this.persistHistory();
-      // 드롭다운 이벤트 리스너 정리 (document 레벨 리스너 누수 방지)
-      this.closeModelDropdown();
+      }
+      this.scrollToBottom();
+    } else {
+      this.renderWelcome();
     }
+  }
+
+  // 대화 히스토리 저장
+  private persistHistory(): void {
+    this.plugin.saveChatHistory(this.messages);
+    this.updateContextRing();
+  }
+
+  async onClose(): Promise<void> {
+    this.handleStop();
+    this.persistHistory();
+    // 드롭다운 이벤트 리스너 정리 (document 레벨 리스너 누수 방지)
+    this.closeModelDropdown();
+  }
 
 }
 
@@ -2454,7 +2456,7 @@ Classify ALL items.`;
 
 // 지난 대화 세션 목록 모달
 class SessionListModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private sessions: ChatSession[];
   private t: ViewLang;
   private onSelect: (session: ChatSession) => void;
@@ -2462,7 +2464,7 @@ class SessionListModal extends Modal {
 
   constructor(
     app: import("obsidian").App,
-    plugin: BedrockAssistantPlugin,
+    plugin: GeminiAssistantPlugin,
     sessions: ChatSession[],
     t: ViewLang,
     onSelect: (session: ChatSession) => void
@@ -2599,7 +2601,7 @@ class ToolConfirmModal extends Modal {
   private toolInput: Record<string, unknown>;
   private t: ViewLang;
   private resolvePromise: (approved: boolean) => void;
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private resolved = false;
 
   constructor(
@@ -2607,7 +2609,7 @@ class ToolConfirmModal extends Modal {
     toolName: string,
     toolInput: Record<string, unknown>,
     t: ViewLang,
-    plugin: BedrockAssistantPlugin,
+    plugin: GeminiAssistantPlugin,
     resolvePromise: (approved: boolean) => void
   ) {
     super(app);
@@ -2703,11 +2705,11 @@ class ToolConfirmModal extends Modal {
 // 아카이브 비우기 모달
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 class CleanArchiveModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private t: Record<string, any>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+  constructor(app: import("obsidian").App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
     super(app);
     this.plugin = plugin;
     this.t = t;
@@ -2824,11 +2826,11 @@ class CleanArchiveModal extends Modal {
 // 회고 모달
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 class RetrospectiveModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private t: Record<string, any>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+  constructor(app: import("obsidian").App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
     super(app);
     this.plugin = plugin;
     this.t = t;
@@ -2941,8 +2943,8 @@ ${filesContext}
 - Use markdown format with a ## heading
 - The heading should be "${lang === "ko" ? "📝 오늘의 회고" : lang === "ja" ? "📝 今日の振り返り" : "📝 Daily Retrospective"}"`;
 
-    const { BedrockClient } = await import("./bedrock-client");
-    const client = new BedrockClient(this.plugin.settings);
+    const { GeminiClient } = await import("./gemini-client");
+    const client = new GeminiClient(this.plugin.settings);
     const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
 
     // To-Do 문서 끝에 회고 추가
