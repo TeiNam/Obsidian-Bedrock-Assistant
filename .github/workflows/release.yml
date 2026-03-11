@@ -2,47 +2,106 @@ name: Release Obsidian Plugin
 
 on:
   push:
-    tags:
-      - "*"
+    branches:
+      - main
+      - kiro-edition
+      - gemini-edition
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          node-version: "20"
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       - name: Build
         run: npm run build
 
-      - name: Get tag version
-        id: tag
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Validate tag matches manifest
+      - name: Determine edition prefix
+        id: edition
         run: |
-          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
-          if [ "${{ steps.tag.outputs.version }}" != "$MANIFEST_VERSION" ]; then
-            echo "Tag ${{ steps.tag.outputs.version }} does not match manifest version $MANIFEST_VERSION"
-            exit 1
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          case "$BRANCH" in
+            kiro-edition)  PREFIX="kiro" ;;
+            gemini-edition) PREFIX="gemini" ;;
+            *)             PREFIX="bedrock-assistant" ;;
+          esac
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "에디션: $PREFIX (브랜치: $BRANCH)"
+
+      - name: Bump version
+        id: version
+        run: |
+          CURRENT=$(node -p "require('./manifest.json').version")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          # patch 버전 증가
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+          # manifest.json 업데이트
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('manifest.json','utf8'));
+            m.version = '$NEW_VERSION';
+            fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2) + '\n');
+          "
+
+          # package.json 업데이트
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.version = '$NEW_VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          # versions.json 업데이트 (파일이 있는 경우만)
+          if [ -f versions.json ]; then
+            node -e "
+              const fs = require('fs');
+              const v = JSON.parse(fs.readFileSync('versions.json','utf8'));
+              const manifest = JSON.parse(fs.readFileSync('manifest.json','utf8'));
+              v[manifest.version] = manifest.minAppVersion;
+              fs.writeFileSync('versions.json', JSON.stringify(v, null, 2) + '\n');
+            "
           fi
 
-      - name: Create release
+          echo "버전 업데이트: $CURRENT → $NEW_VERSION"
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json package.json versions.json 2>/dev/null || true
+          git diff --cached --quiet && echo "No changes to commit" || (git commit -m "chore: bump version to ${{ steps.version.outputs.new }}" && git push)
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ steps.tag.outputs.version }}
+          tag_name: ${{ steps.edition.outputs.prefix }}-${{ steps.version.outputs.new }}
+          name: "${{ steps.edition.outputs.prefix }} v${{ steps.version.outputs.new }}"
+          generate_release_notes: true
           files: |
             main.js
-            styles.css
             manifest.json
-          draft: false
-          prerelease: false
+            styles.css
