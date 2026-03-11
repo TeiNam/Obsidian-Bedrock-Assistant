@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gemini-assistant",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Obsidian sidebar AI assistant powered by Google Gemini (Flash + Text Embedding)",
   "main": "main.js",
   "scripts": {

@@ -1,7 +1,7 @@
 {
   "id": "assistant-gemini",
   "name": "Gemini Assistant",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minAppVersion": "1.4.0",
   "description": "Google Gemini 기반 AI 어시스턴트. Gemini 채팅, 임베딩을 활용한 볼트 인덱싱 및 Obsidian 제어.",
   "author": "teinam",
