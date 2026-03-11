@@ -1,6 +1,6 @@
 {
   "name": "obsidian-bedrock-assistant",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Obsidian sidebar AI assistant powered by AWS Bedrock (Claude + Titan Embedding)",
   "main": "main.js",
   "scripts": {
