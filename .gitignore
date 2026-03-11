@@ -17,3 +17,6 @@ Thumbs.db
 
 # 소스맵
 *.map
+
+# Kiro 스펙 (로컬 전용)
+.kiro/specs/
