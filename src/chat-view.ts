@@ -1147,14 +1147,13 @@ export class ChatView extends ItemView {
 
       this.contextRow.addClass("has-content");
 
-      // 전체 해제 버튼 (파일 칩 목록 앞에 표시)
+      // 전체 해제 버튼 (파일 칩 목록 앞에 아이콘만 표시)
       const removeAllBtn = this.fileChipContainer.createDiv({
         cls: "ba-file-chip ba-remove-all-chip",
         attr: { "aria-label": this.t.removeAllFiles },
       });
       const removeAllIcon = removeAllBtn.createDiv({ cls: "ba-file-chip-icon" });
-      setIcon(removeAllIcon, "x-circle");
-      removeAllBtn.createSpan({ cls: "ba-file-chip-name", text: this.t.removeAllFiles });
+      setIcon(removeAllIcon, "file-x");
       removeAllBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this.removeAllFileContexts();

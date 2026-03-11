@@ -1741,6 +1741,7 @@ body.theme-light .ba-message-content pre {
   border: 1px dashed var(--background-modifier-border);
   color: var(--text-muted);
   cursor: pointer;
+  padding: 4px 6px;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
