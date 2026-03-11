@@ -91,6 +91,7 @@ const VIEW_I18N = {
     toolDenied: "Tool execution denied by user.",
     toolConsecutiveFailures: "Tool execution failed 3 times in a row. Stopping the tool loop to prevent further errors.",
     attachedFileLabel: (path: string) => `[Attached file: ${path}]`,
+    removeAllFiles: "Remove all files",
     webClip: "Summarize web page",
     exportChat: "Export chat",
     exportSuccess: (path: string) => `Chat exported: ${path}`,
@@ -184,6 +185,7 @@ ${content}`,
     toolDenied: "사용자가 도구 실행을 거부했습니다.",
     toolConsecutiveFailures: "도구 실행이 3회 연속 실패하여 루프를 중단합니다. 추가 오류를 방지하기 위해 중단되었습니다.",
     attachedFileLabel: (path: string) => `[첨부 파일: ${path}]`,
+    removeAllFiles: "전체 문서 해제",
     webClip: "웹 페이지 요약",
     exportChat: "대화 내보내기",
     exportSuccess: (path: string) => `대화 내보내기 완료: ${path}`,
@@ -277,6 +279,7 @@ ${content}`,
     toolDenied: "ユーザーがツール実行を拒否しました。",
     toolConsecutiveFailures: "ツール実行が3回連続で失敗したため、ループを停止します。",
     attachedFileLabel: (path: string) => `[添付ファイル: ${path}]`,
+    removeAllFiles: "すべてのファイルを解除",
     webClip: "Webページ要約",
     exportChat: "チャットをエクスポート",
     exportSuccess: (path: string) => `チャットエクスポート完了: ${path}`,
@@ -1119,6 +1122,15 @@ export class ChatView extends ItemView {
       this.renderFileChips();
     }
 
+    // 모든 첨부 파일 해제
+    private removeAllFileContexts(): void {
+      this.attachedFiles.clear();
+      this.attachedBinaryFiles.clear();
+      this.manuallyAttachedPaths.clear();
+      this.autoAttachedPath = null;
+      this.renderFileChips();
+    }
+
   private renderFileChips(): void {
       this.fileChipContainer.empty();
 
@@ -1134,6 +1146,19 @@ export class ChatView extends ItemView {
       }
 
       this.contextRow.addClass("has-content");
+
+      // 전체 해제 버튼 (파일 칩 목록 앞에 표시)
+      const removeAllBtn = this.fileChipContainer.createDiv({
+        cls: "ba-file-chip ba-remove-all-chip",
+        attr: { "aria-label": this.t.removeAllFiles },
+      });
+      const removeAllIcon = removeAllBtn.createDiv({ cls: "ba-file-chip-icon" });
+      setIcon(removeAllIcon, "x-circle");
+      removeAllBtn.createSpan({ cls: "ba-file-chip-name", text: this.t.removeAllFiles });
+      removeAllBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.removeAllFileContexts();
+      });
 
       for (const path of allPaths) {
         const chip = this.fileChipContainer.createDiv({ cls: "ba-file-chip" });
