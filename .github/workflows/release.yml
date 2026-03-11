@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -93,7 +94,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add manifest.json package.json versions.json 2>/dev/null || true
-          git diff --cached --quiet && echo "No changes to commit" || (git commit -m "chore: bump version to ${{ steps.version.outputs.new }}" && git push)
+          git diff --cached --quiet && echo "No changes to commit" || (git commit -m "chore: bump version to ${{ steps.version.outputs.new }}" && git push origin HEAD:${{ steps.edition.outputs.branch }})
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
