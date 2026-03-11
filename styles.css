@@ -1732,3 +1732,24 @@ body.theme-light .ba-message-content pre {
   background: var(--interactive-accent-hover) !important;
   border-color: var(--interactive-accent-hover) !important;
 }
+
+/* ============================================
+   전체 문서 해제 버튼
+   ============================================ */
+.ba-remove-all-chip {
+  background: transparent;
+  border: 1px dashed var(--background-modifier-border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.ba-remove-all-chip:hover {
+  background: rgba(220, 53, 69, 0.08);
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.ba-remove-all-chip .ba-file-chip-icon {
+  color: inherit;
+}
