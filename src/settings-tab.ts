@@ -418,6 +418,12 @@ export class GeminiSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.aiBackend)
           .onChange(async (value) => {
             this.plugin.settings.aiBackend = value as "bedrock" | "gemini";
+            // 임베딩 모델이 비어있으면 백엔드별 기본값 자동 설정
+            if (value === "gemini" && !this.plugin.settings.embeddingModel) {
+              this.plugin.settings.embeddingModel = "text-embedding-004";
+            } else if (value === "bedrock" && !this.plugin.settings.bedrockEmbeddingModel) {
+              this.plugin.settings.bedrockEmbeddingModel = "amazon.titan-embed-text-v2:0";
+            }
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
