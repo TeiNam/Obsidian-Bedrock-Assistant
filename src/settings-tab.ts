@@ -361,10 +361,23 @@ const I18N = {
 // 설정 탭
 export class GeminiSettingTab extends PluginSettingTab {
   plugin: GeminiAssistantPlugin;
+  // 자격증명 변경 시 모델 목록 재로드 디바운스 타이머
+  private credentialDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, plugin: GeminiAssistantPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  // 자격증명 변경 후 모델 목록 재로드 (디바운스 1.5초)
+  private scheduleModelReload(): void {
+    if (this.credentialDebounceTimer) {
+      clearTimeout(this.credentialDebounceTimer);
+    }
+    this.credentialDebounceTimer = setTimeout(() => {
+      this.credentialDebounceTimer = null;
+      this.display();
+    }, 1500);
   }
 
   display(): void {
@@ -489,6 +502,8 @@ export class GeminiSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               this.plugin.settings.geminiApiKey = value.trim();
               await this.plugin.saveSettings();
+              // API 키 변경 시 모델 목록 재로드 예약
+              this.scheduleModelReload();
             });
           text.inputEl.type = "password";
           text.inputEl.addClass("ba-secret-input");
@@ -509,6 +524,8 @@ export class GeminiSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               this.plugin.settings.awsAccessKeyId = value.trim();
               await this.plugin.saveSettings();
+              // 자격증명 변경 시 모델 목록 재로드 예약
+              this.scheduleModelReload();
             });
           text.inputEl.type = "password";
           text.inputEl.addClass("ba-secret-input");
@@ -525,6 +542,8 @@ export class GeminiSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               this.plugin.settings.awsSecretAccessKey = value.trim();
               await this.plugin.saveSettings();
+              // 자격증명 변경 시 모델 목록 재로드 예약
+              this.scheduleModelReload();
             });
           text.inputEl.type = "password";
           text.inputEl.addClass("ba-secret-input");
@@ -541,6 +560,8 @@ export class GeminiSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               this.plugin.settings.awsRegion = value.trim() || "us-east-1";
               await this.plugin.saveSettings();
+              // 리전 변경 시 모델 목록 재로드 예약
+              this.scheduleModelReload();
             })
         );
     }

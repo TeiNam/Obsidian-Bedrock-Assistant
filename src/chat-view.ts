@@ -108,6 +108,9 @@ export class ChatView extends ItemView {
 
         // 컨텍스트 링 초기화
         this.updateContextRing();
+
+        // 모델 목록 백그라운드 프리로드 (라벨에 올바른 모델명 표시)
+        this.preloadModels();
       }
 
 
@@ -1375,6 +1378,16 @@ export class ChatView extends ItemView {
   refreshModelList(): void {
     this.cachedModels = [];
     this.updateModelLabel();
+  }
+
+  // 모델 목록 백그라운드 프리로드 (채팅 뷰 열릴 때 호출)
+  private async preloadModels(): Promise<void> {
+    try {
+      this.cachedModels = await this.plugin.aiClient.listModels();
+      this.updateModelLabel();
+    } catch {
+      // 프리로드 실패 시 무시 (사용자가 모델 피커 열 때 재시도)
+    }
   }
 
   // 채팅 폰트 크기 적용
