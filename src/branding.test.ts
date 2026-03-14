@@ -21,12 +21,12 @@ describe("getBranding", () => {
   it("'gemini' 전달 시 Gemini 브랜딩을 반환한다", () => {
     const brand = getBranding("gemini");
 
-    expect(brand.displayName).toBe("Assistant Kiro (Gemini)");
+    expect(brand.displayName).toBe("Assistant Gemini");
     expect(brand.icon.id).toBe("gemini-assistant");
     expect(brand.icon.svg).toBeTruthy();
-    expect(brand.settingsTitle.en).toBe("Assistant Kiro Settings (Gemini)");
-    expect(brand.settingsTitle.ko).toBe("Assistant Kiro 설정 (Gemini)");
-    expect(brand.settingsTitle.ja).toBe("Assistant Kiro 設定 (Gemini)");
+    expect(brand.settingsTitle.en).toBe("Assistant Gemini Settings");
+    expect(brand.settingsTitle.ko).toBe("Assistant Gemini 설정");
+    expect(brand.settingsTitle.ja).toBe("Assistant Gemini 設定");
   });
 });
 
@@ -49,7 +49,7 @@ describe("updateBranding", () => {
 
     updateBranding("gemini");
 
-    expect(BRANDING.displayName).toBe("Assistant Kiro (Gemini)");
+    expect(BRANDING.displayName).toBe("Assistant Gemini");
   });
 
   it("updateBranding 후 pluginId가 변경되지 않는다", () => {
