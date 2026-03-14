@@ -792,7 +792,7 @@ export class ChatView extends ItemView {
         // 스트리밍 텍스트를 감싸는 wrapper (도구 호출 UI 보존을 위해 별도 div 사용)
         const streamingState = { wrapper: null as HTMLElement | null };
 
-        const result = await this.plugin.geminiClient.converse(
+        const result = await this.plugin.aiClient.converse(
           converseMessages,
           allTools,
           (delta) => {
@@ -1345,7 +1345,7 @@ export class ChatView extends ItemView {
     if (this.cachedModels.length === 0) {
       this.modelLabelEl.setText(this.t.modelLoading);
       try {
-        this.cachedModels = await this.plugin.geminiClient.listModels();
+        this.cachedModels = await this.plugin.aiClient.listModels();
       } catch (e) {
         console.error("모델 목록 조회 실패:", e);
       }
@@ -1657,7 +1657,7 @@ Example: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
 Classify ALL items.`;
 
     try {
-      const result = await this.plugin.geminiClient.converseLight(
+      const result = await this.plugin.aiClient.converseLight(
         prompt,
         "You are a task classifier. Respond only in JSON."
       );
@@ -2048,7 +2048,7 @@ Classify ALL items.`;
         },
       ];
 
-      const result = await this.plugin.geminiClient.converse(tagMessages);
+      const result = await this.plugin.aiClient.converse(tagMessages);
       const textBlock = result.contentBlocks.find((b) => b.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         new Notice(this.t.tagsFailed);
@@ -2967,9 +2967,7 @@ ${filesContext}
 - Use markdown format with a ## heading
 - The heading should be "${lang === "ko" ? "📝 오늘의 회고" : lang === "ja" ? "📝 今日の振り返り" : "📝 Daily Retrospective"}"`;
 
-    const { GeminiClient } = await import("./gemini-client");
-    const client = new GeminiClient(this.plugin.settings);
-    const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
+    const result = await this.plugin.aiClient.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
 
     // To-Do 문서 끝에 회고 추가
     const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";

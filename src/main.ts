@@ -1,14 +1,14 @@
 import { Notice, Plugin, TFile, addIcon } from "obsidian";
-import { GeminiClient } from "./gemini-client";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
-import { DEFAULT_SETTINGS, type GeminiAssistantSettings, type ChatMessage, type ChatSession } from "./types";
-import { BRANDING } from "./branding";
+import { DEFAULT_SETTINGS, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
+import { BRANDING, updateBranding } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import { encryptSettings, decryptSettings } from "./safe-storage";
+import { createAiClient } from "./ai-client-factory";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -18,7 +18,7 @@ const MCP_CONFIG_FILE = "mcp.json";
 
 export default class GeminiAssistantPlugin extends Plugin {
   settings!: GeminiAssistantSettings;
-  geminiClient!: GeminiClient;
+  aiClient!: IAiClient;
   indexer!: VaultIndexer;
   toolExecutor!: ToolExecutor;
   mcpManager!: McpManager;
@@ -28,16 +28,19 @@ export default class GeminiAssistantPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    // 초기 브랜딩 설정 (로드된 설정의 aiBackend에 맞게 갱신)
+    updateBranding(this.settings.aiBackend);
+
     // 커스텀 아이콘 등록 (SVG가 있는 경우에만)
     if (BRANDING.icon.svg) {
       addIcon(BRANDING.icon.id, BRANDING.icon.svg);
     }
 
-    // Gemini 클라이언트 초기화
-    this.geminiClient = new GeminiClient(this.settings);
+    // AI 클라이언트 초기화 (팩토리 패턴으로 백엔드에 따라 적절한 클라이언트 생성)
+    this.aiClient = createAiClient(this.settings);
 
     // 볼트 인덱서 초기화
-    this.indexer = new VaultIndexer(this.app, this.geminiClient);
+    this.indexer = new VaultIndexer(this.app, this.aiClient);
 
     // 도구 실행기 초기화
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
@@ -161,7 +164,14 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 민감 필드를 암호화하여 디스크에 저장 (메모리의 settings는 평문 유지)
     const encrypted = encryptSettings(this.settings);
     await this.saveData(encrypted);
-    this.geminiClient?.updateSettings(this.settings);
+    this.aiClient?.updateSettings(this.settings);
+    // 브랜딩을 현재 백엔드에 맞게 갱신
+    updateBranding(this.settings.aiBackend);
+  }
+
+  /** 백엔드 전환 시 기존 클라이언트를 폐기하고 새 클라이언트를 생성한다 */
+  recreateAiClient(): void {
+    this.aiClient = createAiClient(this.settings);
   }
 
   // 인덱스 로드/저장

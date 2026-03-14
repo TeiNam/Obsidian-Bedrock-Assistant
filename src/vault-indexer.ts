@@ -1,18 +1,17 @@
 import { App, TFile, Notice } from "obsidian";
-import type { GeminiClient } from "./gemini-client";
-import type { VaultIndexEntry, IndexResult, IndexFailure } from "./types";
+import type { IAiClient, VaultIndexEntry, IndexResult, IndexFailure } from "./types";
 
 // 볼트 인덱싱 및 검색
 export class VaultIndexer {
   private app: App;
-  private client: GeminiClient;
+  private client: IAiClient;
   private index: Map<string, VaultIndexEntry> = new Map();
   private indexing = false;
   private useEmbeddings = true;
   // 인덱싱 중 발생한 파일 변경을 큐잉하기 위한 대기열
   private pendingFiles: Set<string> = new Set();
 
-  constructor(app: App, client: GeminiClient) {
+  constructor(app: App, client: IAiClient) {
     this.app = app;
     this.client = client;
   }

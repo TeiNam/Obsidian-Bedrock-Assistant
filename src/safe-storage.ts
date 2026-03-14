@@ -11,9 +11,11 @@
 // 암호화된 값 식별 접두사
 const ENCRYPTED_PREFIX = "enc:";
 
-/** 암호화할 설정 필드 목록 */
+/** 암호화할 설정 필드 목록 (Gemini + Bedrock 자격증명) */
 export const SENSITIVE_FIELDS = [
   "geminiApiKey",
+  "awsAccessKeyId",
+  "awsSecretAccessKey",
 ] as const;
 
 /**

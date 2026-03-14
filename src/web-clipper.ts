@@ -1,6 +1,6 @@
 import { Modal, App, Notice, setIcon, requestUrl } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import { GeminiClient } from "./gemini-client";
+import { createAiClient } from "./ai-client-factory";
 
 // 웹 클리퍼 다국어 레이블
 const CLIPPER_I18N = {
@@ -216,7 +216,7 @@ export class WebClipperModal extends Modal {
       ...this.plugin.settings,
       chatModel: this.plugin.settings.webClipModel || this.plugin.settings.chatModel,
     };
-    const client = new GeminiClient(overriddenSettings);
+    const client = createAiClient(overriddenSettings);
     const lang = this.plugin.settings.language;
     const langName = lang === "ko" ? "Korean (한국어)" : lang === "ja" ? "Japanese (日本語)" : "English";
 

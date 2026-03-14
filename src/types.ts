@@ -37,6 +37,43 @@ export interface GeminiAssistantSettings {
   archiveCleanDays: number;
   // 아카이브 비우기 대상 폴더
   archiveCleanFolder: string;
+
+  // === AI 백엔드 통합 필드 ===
+  /** AI 백엔드 선택 ("bedrock" 또는 "gemini") */
+  aiBackend: "bedrock" | "gemini";
+  /** AWS Access Key ID (Bedrock 자격증명) */
+  awsAccessKeyId: string;
+  /** AWS Secret Access Key (Bedrock 자격증명) */
+  awsSecretAccessKey: string;
+  /** AWS 리전 (Bedrock) */
+  awsRegion: string;
+  /** Bedrock 채팅 모델 ID */
+  bedrockChatModel: string;
+  /** Bedrock 임베딩 모델 ID */
+  bedrockEmbeddingModel: string;
+}
+
+// AI 클라이언트 공통 인터페이스 (GeminiClient, BedrockClient가 구현)
+export interface IAiClient {
+  /** 설정 변경 시 클라이언트 내부 설정 업데이트 */
+  updateSettings(settings: GeminiAssistantSettings): void;
+  /** 사용 가능한 모델 목록 반환 */
+  listModels(): Promise<ModelInfo[]>;
+  /** 스트리밍 채팅 호출 */
+  converse(
+    messages: ConverseMessage[],
+    tools: ToolDefinition[],
+    onTextDelta?: (delta: string) => void,
+    abortSignal?: AbortSignal
+  ): Promise<ConverseResult>;
+  /** 텍스트 임베딩 생성 */
+  getEmbedding(text: string): Promise<number[]>;
+  /** 경량 converse 호출 (분류, 요약 등 간단한 작업용) */
+  converseLight(
+    prompt: string,
+    systemPrompt: string,
+    maxTokens?: number
+  ): Promise<{ text: string }>;
 }
 
 export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
@@ -64,6 +101,13 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   webClipModel: "gemini-3.1-flash-lite",
   archiveCleanDays: 90,
   archiveCleanFolder: "ToDo/Archive",
+  // AI 백엔드 통합 기본값
+  aiBackend: "bedrock",
+  awsAccessKeyId: "",
+  awsSecretAccessKey: "",
+  awsRegion: "us-east-1",
+  bedrockChatModel: "",
+  bedrockEmbeddingModel: "",
 };
 
 // 채팅 메시지 타입
