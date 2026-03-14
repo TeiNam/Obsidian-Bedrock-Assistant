@@ -41,7 +41,7 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     name: "edit_note",
-    description: "기존 노트의 내용을 수정합니다. find/replace를 사용하면 해당 부분만 교체하고, content만 사용하면 전체를 덮어씁니다.",
+    description: "기존 노트의 내용을 수정합니다. find/replace를 사용하면 find에 해당하는 모든 텍스트를 replace로 교체하고, content만 사용하면 전체를 덮어씁니다.",
     input_schema: {
       type: "object",
       properties: {
@@ -262,7 +262,8 @@ export class ToolExecutor {
       if (!current.includes(find)) {
         return `교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`;
       }
-      const updated = current.replace(find, replace);
+      // find에 해당하는 모든 텍스트를 교체 (정규식 이스케이프 없이 안전)
+      const updated = current.split(find).join(replace);
       await this.app.vault.modify(file, updated);
       new Notice(`노트 부분 수정됨: ${path}`);
       return `노트가 부분 수정되었습니다: ${path}`;

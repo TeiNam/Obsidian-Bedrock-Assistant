@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice, Modal } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
 import type BedrockAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
@@ -6,301 +6,17 @@ import { BRANDING } from "./branding";
 import { trimConversationHistory, CHARS_PER_TOKEN } from "./token-trimmer";
 import { isToolError } from "./tool-failure-tracker";
 import { prepareRegeneration } from "./regenerate-helper";
-import { filterSessions } from "./session-search";
-import { DESTRUCTIVE_TOOLS, needsToolConfirmation } from "./tool-confirm-utils";
+import { needsToolConfirmation } from "./tool-confirm-utils";
 import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
+import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
+import { createTodoNote } from "./todo-manager";
+import { SessionListModal } from "./modals/session-list-modal";
+import { ToolConfirmModal } from "./modals/tool-confirm-modal";
+import { CleanArchiveModal } from "./modals/clean-archive-modal";
+import { RetrospectiveModal } from "./modals/retrospective-modal";
 
 export const VIEW_TYPE = BRANDING.viewType;
-
-// 채팅 뷰 다국어 레이블
-const VIEW_I18N = {
-  en: {
-    indexVault: "Index vault",
-    newChat: "New chat",
-    generateTags: "Generate tags",
-    placeholder: "Type a message...",
-    attachNote: "Attach current note",
-    searchFile: "Search & attach file",
-    attachFile: "Attach file",
-    webSearch: "Web search",
-    contextUsage: "Context usage",
-    copy: "Copy",
-    thinking: "Thinking...",
-    defaultGreeting: "How can I help you?",
-    indexedNotes: (n: number) => `📊 Indexed notes: ${n}`,
-    indexHint: "💡 Index your vault using the icon above",
-    noOpenNote: "No open note found.",
-    tagsExist: "Tags already exist.",
-    generatingTags: "Generating tags...",
-    tagsFailed: "Tag generation failed",
-    tagsExtractFail: "Could not extract tags.",
-    tagsAdded: (t: string) => `Tags added: ${t}`,
-    tagsError: (e: string) => `Tag generation failed: ${e}`,
-    modelLoading: "Loading models...",
-    modelFailed: "Model loading failed",
-    error: (e: string) => `Error: ${e}`,
-    checkingChanges: " Checking for changes...",
-    indexing: (pct: number) => ` Indexing... ${pct}%`,
-    filesProgress: (c: number, t: number) => `${c} / ${t} files`,
-    allUpToDate: " All files are up to date",
-    totalIndexed: (n: number) => `Total ${n} notes indexed`,
-    indexDone: " Indexing complete",
-    updated: (n: number) => `${n} updated`,
-    failed: (n: number) => `${n} failed`,
-    totalIndexedShort: (n: number) => `${n} total indexed`,
-    failHeader: (n: number) => `⚠️ ${n} files failed to index`,
-    createTodo: "Create To-Do",
-    chatHistory: "Chat history",
-    noSessions: "No saved sessions.",
-    deleteSession: "Delete",
-    sessionDate: (d: string) => `${d}`,
-    todoCreated: (path: string) => `To-Do created: ${path}`,
-    todoExists: (path: string) => `To-Do already exists: ${path}`,
-    todoError: (e: string) => `To-Do creation failed: ${e}`,
-    todoArchived: (n: number) => `${n} old to-do(s) archived`,
-    cleanArchive: "Clean archive",
-    cleanArchiveTitle: "Clean Archive",
-    cleanArchiveEmpty: "No old files to delete.",
-    cleanArchiveSelectAll: "Select all",
-    cleanArchiveDelete: "Delete selected",
-    cleanArchiveCancel: "Cancel",
-    cleanArchiveDeleted: (n: number) => `${n} file(s) deleted`,
-    retrospective: "Retrospective",
-    retroConfirmTitle: "Daily Retrospective",
-    retroConfirmMessage: "Have you finished all tasks for today?",
-    retroNotYet: "Not yet",
-    retroDone: "Done",
-    retroNoTodo: "No To-Do found for today. Please create today's To-Do first.",
-    retroOk: "OK",
-    retroGenerating: "Generating retrospective...",
-    retroComplete: "Retrospective added to today's To-Do.",
-    retroFailed: (e: string) => `Retrospective failed: ${e}`,
-    searchPlaceholder: "Search for a note to attach...",
-    unsupportedExt: (ext: string) => `Unsupported file format: .${ext}`,
-    webSearchHint: "[Web search enabled: Search the web for up-to-date information when needed. Include source URLs.]",
-    contextLabel: (used: string, total: string) => `Context: ~${used}K / ${total}K tokens`,
-    toolError: (e: string) => `Tool execution error: ${e}`,
-    toolConfirmTitle: "Confirm Tool Execution",
-    toolConfirmMessage: (name: string) => `The AI wants to execute a destructive tool: "${name}"`,
-    toolConfirmParams: "Parameters:",
-    toolConfirmApprove: "Execute",
-    toolConfirmDeny: "Deny",
-    toolConfirmDontAsk: "Don't ask again",
-    toolRunning: "Running...",
-    toolDenied: "Tool execution denied by user.",
-    toolConsecutiveFailures: "Tool execution failed 3 times in a row. Stopping the tool loop to prevent further errors.",
-    attachedFileLabel: (path: string) => `[Attached file: ${path}]`,
-    removeAllFiles: "Remove all files",
-    webClip: "Summarize web page",
-    exportChat: "Export chat",
-    exportSuccess: (path: string) => `Chat exported: ${path}`,
-    exportEmpty: "No messages to export.",
-    regenerate: "Regenerate",
-    sessionSearch: "Search conversations...",
-    sessionSearchNoResults: "No matching conversations.",
-    tagPrompt: (title: string, content: string) => `Analyze the following note and generate 3 to 5 appropriate tags.
-Output only the tags separated by commas on a single line. No other explanation needed.
-Tags can be in English or the note's language, matching the content.
-Example: project-management, AI, meeting-notes
-
----
-Title: ${title}
-
-${content}`,
-  },
-  ko: {
-    indexVault: "볼트 인덱싱",
-    newChat: "새 대화",
-    generateTags: "태그 생성",
-    placeholder: "메시지를 입력하세요...",
-    attachNote: "현재 노트 첨부",
-    searchFile: "파일 검색 첨부",
-    attachFile: "파일 첨부",
-    webSearch: "웹 서치",
-    contextUsage: "컨텍스트 사용량",
-    copy: "복사",
-    thinking: "생각 중...",
-    defaultGreeting: "무엇을 도와드릴까요?",
-    indexedNotes: (n: number) => `📊 인덱싱된 노트: ${n}개`,
-    indexHint: "💡 상단 DB 아이콘으로 볼트를 인덱싱하세요",
-    noOpenNote: "열려있는 노트가 없습니다.",
-    tagsExist: "이미 태그가 존재합니다.",
-    generatingTags: "태그 생성 중...",
-    tagsFailed: "태그 생성 실패",
-    tagsExtractFail: "태그를 추출할 수 없습니다.",
-    tagsAdded: (t: string) => `태그 추가됨: ${t}`,
-    tagsError: (e: string) => `태그 생성 실패: ${e}`,
-    modelLoading: "모델 목록 로딩 중...",
-    modelFailed: "모델 조회 실패",
-    error: (e: string) => `오류: ${e}`,
-    checkingChanges: " 변경 사항 확인 중...",
-    indexing: (pct: number) => ` 인덱싱 중... ${pct}%`,
-    filesProgress: (c: number, t: number) => `${c} / ${t} 파일`,
-    allUpToDate: " 모든 파일이 최신 상태입니다",
-    totalIndexed: (n: number) => `총 ${n}개 노트 인덱싱 완료`,
-    indexDone: " 인덱싱 완료",
-    updated: (n: number) => `${n}개 업데이트`,
-    failed: (n: number) => `${n}개 실패`,
-    totalIndexedShort: (n: number) => `총 ${n}개 인덱싱됨`,
-    failHeader: (n: number) => `⚠️ ${n}개 파일 인덱싱 실패`,
-    createTodo: "To-Do 생성",
-    chatHistory: "지난 대화",
-    noSessions: "저장된 대화가 없습니다.",
-    deleteSession: "삭제",
-    sessionDate: (d: string) => `${d}`,
-    todoCreated: (path: string) => `To-Do 생성됨: ${path}`,
-    todoExists: (path: string) => `이미 존재합니다: ${path}`,
-    todoError: (e: string) => `To-Do 생성 실패: ${e}`,
-    todoArchived: (n: number) => `${n}개의 오래된 To-Do가 아카이브됨`,
-    cleanArchive: "아카이브 비우기",
-    cleanArchiveTitle: "아카이브 비우기",
-    cleanArchiveEmpty: "삭제할 오래된 파일이 없습니다.",
-    cleanArchiveSelectAll: "전체 선택",
-    cleanArchiveDelete: "선택 항목 삭제",
-    cleanArchiveCancel: "취소",
-    cleanArchiveDeleted: (n: number) => `${n}개 파일 삭제됨`,
-    retrospective: "회고",
-    retroConfirmTitle: "오늘의 회고",
-    retroConfirmMessage: "오늘 할 일을 모두 끝마쳤나요?",
-    retroNotYet: "아직",
-    retroDone: "했음",
-    retroNoTodo: "오늘자 To-Do 문서가 없습니다. 먼저 오늘 문서를 작성해주세요.",
-    retroOk: "확인",
-    retroGenerating: "회고 작성 중...",
-    retroComplete: "오늘자 To-Do에 회고가 추가되었습니다.",
-    retroFailed: (e: string) => `회고 작성 실패: ${e}`,
-    searchPlaceholder: "첨부할 노트를 검색하세요...",
-    unsupportedExt: (ext: string) => `지원하지 않는 파일 형식입니다: .${ext}`,
-    webSearchHint: "[웹 서치 활성화됨: 필요한 경우 최신 정보를 웹에서 검색하여 답변에 포함하세요. 출처 URL을 함께 제공하세요.]",
-    contextLabel: (used: string, total: string) => `컨텍스트: ~${used}K / ${total}K 토큰`,
-    toolError: (e: string) => `도구 실행 오류: ${e}`,
-    toolConfirmTitle: "도구 실행 확인",
-    toolConfirmMessage: (name: string) => `AI가 파괴적 도구를 실행하려 합니다: "${name}"`,
-    toolConfirmParams: "파라미터:",
-    toolConfirmApprove: "실행",
-    toolConfirmDeny: "거부",
-    toolConfirmDontAsk: "다음부터 묻지 않기",
-    toolRunning: "실행 중...",
-    toolDenied: "사용자가 도구 실행을 거부했습니다.",
-    toolConsecutiveFailures: "도구 실행이 3회 연속 실패하여 루프를 중단합니다. 추가 오류를 방지하기 위해 중단되었습니다.",
-    attachedFileLabel: (path: string) => `[첨부 파일: ${path}]`,
-    removeAllFiles: "전체 문서 해제",
-    webClip: "웹 페이지 요약",
-    exportChat: "대화 내보내기",
-    exportSuccess: (path: string) => `대화 내보내기 완료: ${path}`,
-    exportEmpty: "내보낼 메시지가 없습니다.",
-    regenerate: "재생성",
-    sessionSearch: "대화 검색...",
-    sessionSearchNoResults: "일치하는 대화가 없습니다.",
-    tagPrompt: (title: string, content: string) => `다음 노트의 내용을 분석하여 적절한 태그 3~5개를 생성해주세요.
-태그만 쉼표로 구분하여 한 줄로 출력하세요. 다른 설명은 불필요합니다.
-태그는 한국어 또는 영어로, 노트 내용에 맞게 작성하세요.
-예시: 프로젝트관리, AI, 회의록
-
----
-제목: ${title}
-
-${content}`,
-  },
-  ja: {
-    indexVault: "ボルトインデックス",
-    newChat: "新しいチャット",
-    generateTags: "タグ生成",
-    placeholder: "メッセージを入力...",
-    attachNote: "現在のノートを添付",
-    searchFile: "ファイル検索・添付",
-    attachFile: "ファイル添付",
-    webSearch: "Web検索",
-    contextUsage: "コンテキスト使用量",
-    copy: "コピー",
-    thinking: "考え中...",
-    defaultGreeting: "何かお手伝いできますか？",
-    indexedNotes: (n: number) => `📊 インデックス済みノート: ${n}件`,
-    indexHint: "💡 上部のDBアイコンでボルトをインデックスしてください",
-    noOpenNote: "開いているノートがありません。",
-    tagsExist: "タグは既に存在します。",
-    generatingTags: "タグ生成中...",
-    tagsFailed: "タグ生成失敗",
-    tagsExtractFail: "タグを抽出できません。",
-    tagsAdded: (t: string) => `タグ追加: ${t}`,
-    tagsError: (e: string) => `タグ生成失敗: ${e}`,
-    modelLoading: "モデル一覧を読み込み中...",
-    modelFailed: "モデル取得失敗",
-    error: (e: string) => `エラー: ${e}`,
-    checkingChanges: " 変更を確認中...",
-    indexing: (pct: number) => ` インデックス中... ${pct}%`,
-    filesProgress: (c: number, t: number) => `${c} / ${t} ファイル`,
-    allUpToDate: " すべてのファイルが最新です",
-    totalIndexed: (n: number) => `合計${n}件のノートをインデックス完了`,
-    indexDone: " インデックス完了",
-    updated: (n: number) => `${n}件更新`,
-    failed: (n: number) => `${n}件失敗`,
-    totalIndexedShort: (n: number) => `合計${n}件インデックス済み`,
-    failHeader: (n: number) => `⚠️ ${n}件のファイルのインデックスに失敗`,
-    createTodo: "To-Do作成",
-    chatHistory: "チャット履歴",
-    noSessions: "保存されたセッションがありません。",
-    deleteSession: "削除",
-    sessionDate: (d: string) => `${d}`,
-    todoCreated: (path: string) => `To-Do作成完了: ${path}`,
-    todoExists: (path: string) => `既に存在します: ${path}`,
-    todoError: (e: string) => `To-Do作成失敗: ${e}`,
-    todoArchived: (n: number) => `${n}件の古いTo-Doをアーカイブしました`,
-    cleanArchive: "アーカイブ整理",
-    cleanArchiveTitle: "アーカイブ整理",
-    cleanArchiveEmpty: "削除する古いファイルがありません。",
-    cleanArchiveSelectAll: "すべて選択",
-    cleanArchiveDelete: "選択項目を削除",
-    cleanArchiveCancel: "キャンセル",
-    cleanArchiveDeleted: (n: number) => `${n}件のファイルを削除しました`,
-    retrospective: "振り返り",
-    retroConfirmTitle: "今日の振り返り",
-    retroConfirmMessage: "今日のタスクはすべて完了しましたか？",
-    retroNotYet: "まだ",
-    retroDone: "完了",
-    retroNoTodo: "今日のTo-Doドキュメントがありません。先に今日のドキュメントを作成してください。",
-    retroOk: "OK",
-    retroGenerating: "振り返りを作成中...",
-    retroComplete: "今日のTo-Doに振り返りが追加されました。",
-    retroFailed: (e: string) => `振り返り作成失敗: ${e}`,
-    searchPlaceholder: "添付するノートを検索...",
-    unsupportedExt: (ext: string) => `サポートされていないファイル形式: .${ext}`,
-    webSearchHint: "[Web検索有効: 必要に応じて最新情報をWebで検索して回答に含めてください。出典URLも提供してください。]",
-    contextLabel: (used: string, total: string) => `コンテキスト: ~${used}K / ${total}K トークン`,
-    toolError: (e: string) => `ツール実行エラー: ${e}`,
-    toolConfirmTitle: "ツール実行確認",
-    toolConfirmMessage: (name: string) => `AIが破壊的ツールを実行しようとしています: "${name}"`,
-    toolConfirmParams: "パラメータ:",
-    toolConfirmApprove: "実行",
-    toolConfirmDeny: "拒否",
-    toolConfirmDontAsk: "次回から確認しない",
-    toolRunning: "実行中...",
-    toolDenied: "ユーザーがツール実行を拒否しました。",
-    toolConsecutiveFailures: "ツール実行が3回連続で失敗したため、ループを停止します。",
-    attachedFileLabel: (path: string) => `[添付ファイル: ${path}]`,
-    removeAllFiles: "すべてのファイルを解除",
-    webClip: "Webページ要約",
-    exportChat: "チャットをエクスポート",
-    exportSuccess: (path: string) => `チャットエクスポート完了: ${path}`,
-    exportEmpty: "エクスポートするメッセージがありません。",
-    regenerate: "再生成",
-    sessionSearch: "会話を検索...",
-    sessionSearchNoResults: "一致する会話がありません。",
-    tagPrompt: (title: string, content: string) => `以下のノートの内容を分析して、適切なタグを3〜5つ生成してください。
-タグのみをカンマ区切りで1行で出力してください。他の説明は不要です。
-タグは日本語または英語で、ノートの内容に合わせて作成してください。
-例: プロジェクト管理, AI, 議事録
-
----
-タイトル: ${title}
-
-${content}`,
-  },
-} as const;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ViewLang = Record<string, any>;
 
 // Claudian 스타일 사이드바 채팅 뷰
 export class ChatView extends ItemView {
@@ -340,6 +56,9 @@ export class ChatView extends ItemView {
   // 웹 서치 토글
   private webSearchEnabled = false;
   private webSearchBtn: HTMLElement | null = null;
+
+  // persistHistory 중복 호출 방지 가드 (B2 race condition 수정)
+  private persistPending = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: BedrockAssistantPlugin) {
     super(leaf);
@@ -411,22 +130,22 @@ export class ChatView extends ItemView {
     // 인덱싱 버튼
     const indexBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.indexVault } });
     setIcon(indexBtn, "file-search");
-    indexBtn.addEventListener("click", () => this.handleIndexVault());
+    this.registerDomEvent(indexBtn, "click", () => this.handleIndexVault());
 
     // 새 대화 버튼
     const newBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.newChat } });
     setIcon(newBtn, "square-pen");
-    newBtn.addEventListener("click", () => this.startNewChat());
+    this.registerDomEvent(newBtn, "click", () => this.startNewChat());
 
     // 대화 내보내기 버튼
     const exportBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.exportChat } });
     setIcon(exportBtn, "download");
-    exportBtn.addEventListener("click", () => this.exportChat());
+    this.registerDomEvent(exportBtn, "click", () => this.exportChat());
 
     // 지난 대화 버튼
     const historyBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.chatHistory } });
     setIcon(historyBtn, "history");
-    historyBtn.addEventListener("click", () => this.showSessionList());
+    this.registerDomEvent(historyBtn, "click", () => this.showSessionList());
   }
 
   private buildInputArea(): void {
@@ -438,27 +157,27 @@ export class ChatView extends ItemView {
     // To-Do 생성 버튼
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
-    todoBtn.addEventListener("click", () => this.createTodoNote());
+    this.registerDomEvent(todoBtn, "click", () => this.handleCreateTodoNote());
 
     // 회고 버튼
     const retroBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.retrospective } });
     setIcon(retroBtn, "book-open");
-    retroBtn.addEventListener("click", () => this.openRetrospectiveModal());
+    this.registerDomEvent(retroBtn, "click", () => this.openRetrospectiveModal());
 
     // 태그 생성 버튼
     const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
     setIcon(tagBtn, "tag");
-    tagBtn.addEventListener("click", () => this.generateTags());
+    this.registerDomEvent(tagBtn, "click", () => this.generateTags());
 
     // 웹 페이지 요약 버튼
     const webClipBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.webClip } });
     setIcon(webClipBtn, "globe");
-    webClipBtn.addEventListener("click", () => this.openWebClipper());
+    this.registerDomEvent(webClipBtn, "click", () => this.openWebClipper());
 
     // 아카이브 비우기 버튼
     const cleanBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.cleanArchive } });
     setIcon(cleanBtn, "trash-2");
-    cleanBtn.addEventListener("click", () => this.openCleanArchiveModal());
+    this.registerDomEvent(cleanBtn, "click", () => this.openCleanArchiveModal());
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
 
@@ -479,22 +198,22 @@ export class ChatView extends ItemView {
     // 현재 노트 첨부 버튼
     const attachBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.attachNote } });
     setIcon(attachBtn, "file-plus");
-    attachBtn.addEventListener("click", () => this.attachCurrentNote());
+    this.registerDomEvent(attachBtn, "click", () => this.attachCurrentNote());
 
     // 파일 검색 첨부 버튼
     const searchBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.searchFile } });
     setIcon(searchBtn, "search");
-    searchBtn.addEventListener("click", () => this.openFileSearchModal());
+    this.registerDomEvent(searchBtn, "click", () => this.openFileSearchModal());
 
     // 파일 첨부 버튼 (이미지, PDF, XLSX 등)
     const clipBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.attachFile } });
     setIcon(clipBtn, "paperclip");
-    clipBtn.addEventListener("click", () => this.openBinaryFileAttach());
+    this.registerDomEvent(clipBtn, "click", () => this.openBinaryFileAttach());
 
     // 웹 서치 토글 버튼
     this.webSearchBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn ba-web-search-btn", attr: { "aria-label": this.t.webSearch } });
     setIcon(this.webSearchBtn, "globe");
-    this.webSearchBtn.addEventListener("click", () => this.toggleWebSearch());
+    this.registerDomEvent(this.webSearchBtn, "click", () => this.toggleWebSearch());
 
     // 툴바 오른쪽 (링 + 전송/중지)
     const toolbarRight = toolbar.createDiv({ cls: "ba-toolbar-right" });
@@ -548,10 +267,10 @@ export class ChatView extends ItemView {
     setIcon(this.stopBtn, "square");
 
     // 이벤트
-    this.sendBtn.addEventListener("click", () => this.handleSend());
-    this.stopBtn.addEventListener("click", () => this.handleStop());
+    this.registerDomEvent(this.sendBtn, "click", () => this.handleSend());
+    this.registerDomEvent(this.stopBtn, "click", () => this.handleStop());
 
-    this.inputEl.addEventListener("keydown", (e) => {
+    this.registerDomEvent(this.inputEl, "keydown", (e: KeyboardEvent) => {
       // 한글 등 IME 조합 중에는 Enter 무시
       if (e.isComposing || e.keyCode === 229) return;
       // Enter 단독: 전송, Shift+Enter: 줄바꿈
@@ -563,7 +282,7 @@ export class ChatView extends ItemView {
     });
 
     // 자동 높이 조절
-    this.inputEl.addEventListener("input", () => {
+    this.registerDomEvent(this.inputEl, "input", () => {
       this.inputEl.style.height = "auto";
       this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 200) + "px";
       this.updateContextRing();
@@ -601,17 +320,17 @@ export class ChatView extends ItemView {
     this.updateMcpIndicator();
 
     // 드래그 앤 드롭 파일 첨부
-    inputWrapper.addEventListener("dragover", (e) => {
+    this.registerDomEvent(inputWrapper, "dragover", (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.addClass("ba-drag-over");
     });
-    inputWrapper.addEventListener("dragleave", (e) => {
+    this.registerDomEvent(inputWrapper, "dragleave", (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.removeClass("ba-drag-over");
     });
-    inputWrapper.addEventListener("drop", async (e) => {
+    this.registerDomEvent(inputWrapper, "drop", async (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.removeClass("ba-drag-over");
@@ -623,7 +342,7 @@ export class ChatView extends ItemView {
     });
 
     // 클립보드 붙여넣기 (스크린샷 등)
-    this.inputEl.addEventListener("paste", async (e) => {
+    this.registerDomEvent(this.inputEl, "paste", async (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const item of Array.from(items)) {
@@ -644,7 +363,7 @@ export class ChatView extends ItemView {
     const chevron = modelBtn.createDiv({ cls: "ba-model-chevron" });
     setIcon(chevron, "chevron-down");
 
-    modelBtn.addEventListener("click", () => this.openModelPicker());
+    this.registerDomEvent(modelBtn, "click", () => this.openModelPicker());
 
     // 입력창에도 폰트 크기 적용
     this.applyFontSize();
@@ -716,6 +435,15 @@ export class ChatView extends ItemView {
   // ============================================
 
   /**
+   * 현재 선택된 모델의 컨텍스트 윈도우 크기를 반환합니다.
+   * 향후 모델별 동적 설정 확장 가능. 기본값 200K.
+   */
+  private getModelContextWindow(): number {
+    // 현재는 기본값 200K 반환. 모델별 매핑이 필요하면 여기서 확장
+    return 200_000;
+  }
+
+  /**
    * 컨텍스트 윈도우 초과를 방지하기 위해 오래된 메시지를 제거합니다.
    * 핵심 로직은 token-trimmer.ts에 분리되어 있습니다.
    */
@@ -723,7 +451,9 @@ export class ChatView extends ItemView {
     messages: ConverseMessage[],
     tools: import("./types").ToolDefinition[]
   ): void {
-    trimConversationHistory(messages, tools);
+    // 모델별 컨텍스트 윈도우 크기 전달 (updateContextRing과 동일한 값 사용)
+    const contextWindow = this.getModelContextWindow();
+    trimConversationHistory(messages, tools, contextWindow);
   }
 
   // ============================================
@@ -1441,548 +1171,10 @@ export class ChatView extends ItemView {
     }
 
 
-  // 오늘 날짜로 To-Do 노트 생성
-  private async createTodoNote(): Promise<void> {
-    try {
-      const folder = this.plugin.settings.todoFolder || "ToDo";
-
-      // 폴더가 없으면 생성
-      const folderExists = this.app.vault.getAbstractFileByPath(folder);
-      if (!folderExists) {
-        await this.app.vault.createFolder(folder);
-      }
-
-      // 오늘 날짜 (YYYY-MM-DD)
-      const now = new Date();
-      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      const path = `${folder}/${dateStr}.md`;
-
-      // 이미 존재하면 열기만
-      const existing = this.app.vault.getAbstractFileByPath(path);
-      if (existing && existing instanceof TFile) {
-        await this.app.workspace.getLeaf(false).openFile(existing);
-        new Notice(this.t.todoExists(path));
-        return;
-      }
-
-      // 템플릿 파일에서 내용 읽기
-      const templateFolder = this.plugin.settings.templateFolder || "Templates";
-      const templateName = this.plugin.settings.todoTemplateName || "Daily To-Do";
-      const templatePath = `${templateFolder}/${templateName}.md`;
-      let template = `# 📋 {{date}}\n\n## To-Do\n\n- [ ] \n\n## Notes\n\n`;
-      const templateFile = this.app.vault.getAbstractFileByPath(templatePath);
-      if (templateFile && templateFile instanceof TFile) {
-        template = await this.app.vault.cachedRead(templateFile);
-      }
-
-      // 이전 날짜 계산
-      const prev = new Date(now);
-      prev.setDate(prev.getDate() - 1);
-      const prevDateStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}-${String(prev.getDate()).padStart(2, "0")}`;
-      let content = template
-        .replace(/\{\{date\}\}/g, dateStr)
-        .replace(/\{\{prevDate\}\}/g, prevDateStr);
-
-      // 전일자(또는 가장 최근) To-Do에서 미완료 항목 가져오기
-      const carryOver = await this.getUnfinishedTasks(folder, now);
-      if (carryOver.length > 0) {
-        // 템플릿에서 오늘의 할 일 섹션 내 ### 서브섹션 추출
-        const subSections = this.extractTodoSubSections(content);
-
-        if (subSections.length >= 2) {
-          // AI로 서브섹션별 분류
-          const classified = await this.classifyTasksForSections(subSections, carryOver);
-          // 각 서브섹션의 빈 체크박스 자리에 분류된 항목 주입
-          for (const [section, sectionTasks] of classified) {
-            content = this.injectTasksIntoSubSection(content, section, sectionTasks);
-          }
-        } else {
-          // 서브섹션이 없으면 기존 방식으로 주입
-          content = this.injectCarryOverTasks(content, carryOver);
-        }
-      }
-
-      // 이전 투두의 메모 섹션에서 오늘 이후(오늘 포함) 날짜 항목을 메모에 승계
-      const datedNotes = await this.getDatedNotesFromPrevTodo(folder, now);
-      if (datedNotes.length > 0) {
-        console.log("[ToDo] 메모 승계 항목:", datedNotes.length, datedNotes.map(n => n.date));
-        const noteLines = datedNotes.map((n) => n.raw);
-        content = this.injectNotesIntoMemoSection(content, noteLines);
-      }
-
-      const file = await this.app.vault.create(path, content);
-      await this.app.workspace.getLeaf(false).openFile(file);
-      new Notice(this.t.todoCreated(path));
-
-      // 오래된 To-Do 파일 아카이브
-      await this.archiveOldTodos(folder, now);
-    } catch (error) {
-      new Notice(this.t.todoError((error as Error).message));
-    }
+  // 오늘 날짜로 To-Do 노트 생성 (todo-manager.ts로 분리)
+  private async handleCreateTodoNote(): Promise<void> {
+    await createTodoNote(this.app, this.plugin, this.t);
   }
-
-  // 전일자(또는 가장 최근) To-Do 파일에서 미완료 항목 추출
-  private async getUnfinishedTasks(todoFolder: string, today: Date): Promise<string[]> {
-    const folder = this.app.vault.getAbstractFileByPath(todoFolder);
-    if (!folder) return [];
-
-    const children = (folder as any).children || [];
-    // YYYY-MM-DD.md 형식 파일만 필터링하고 날짜순 정렬 (내림차순)
-    const dated: { file: TFile; date: Date }[] = [];
-    for (const child of children) {
-      if (!(child instanceof TFile) || child.extension !== "md") continue;
-      const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!match) continue;
-      const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-      // 오늘 이전 파일만
-      if (d < today) {
-        dated.push({ file: child, date: d });
-      }
-    }
-
-    if (dated.length === 0) return [];
-
-    // 가장 최근 파일
-    dated.sort((a, b) => b.date.getTime() - a.date.getTime());
-    const latest = dated[0].file;
-
-    const content = await this.app.vault.cachedRead(latest);
-    // 미완료 체크박스 항목 추출 (계층 구조 유지)
-    const lines = content.split("\n");
-    const unfinished: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // 최상위 미완료 항목 (들여쓰기 없음)
-      if (/^- \[ \]\s+.+/.test(line)) {
-        unfinished.push(line);
-        // 하위 들여쓰기 항목도 함께 수집
-        let j = i + 1;
-        while (j < lines.length && /^[\t ]+/.test(lines[j]) && lines[j].trim().length > 0) {
-          unfinished.push(lines[j]);
-          j++;
-        }
-        i = j - 1;
-      }
-    }
-    return unfinished;
-  }
-
-  // 미완료 항목을 템플릿 콘텐츠에 주입
-  private injectCarryOverTasks(content: string, tasks: string[]): string {
-      const taskBlock = tasks.join("\n");
-
-      // "이전 미완료" 관련 섹션 헤더를 찾아서 그 아래에 삽입
-      // 패턴: ## 🔄 또는 ## 이전 미완료 또는 ## Carry 등
-      const sectionPattern = /^(##\s+.*(?:이전 미완료|미완료 업무|carry.?over|unfinished).*)/im;
-      const match = content.match(sectionPattern);
-
-      if (match && match.index !== undefined) {
-        // 섹션 헤더 다음 줄에 삽입
-        const insertPos = match.index + match[0].length;
-        const after = content.substring(insertPos);
-        // 헤더 바로 다음의 빈 줄/설명 블록을 건너뛰고 첫 번째 빈 줄 또는 다음 항목 앞에 삽입
-        const nextContentMatch = after.match(/\n(- \[[ x]\]|\n##)/);
-        if (nextContentMatch && nextContentMatch.index !== undefined) {
-          const pos = insertPos + nextContentMatch.index;
-          return content.substring(0, pos) + "\n" + taskBlock + content.substring(pos);
-        }
-        // 섹션 끝에 추가
-        return content.substring(0, insertPos) + "\n" + taskBlock + "\n" + content.substring(insertPos);
-      }
-
-      // 섹션을 못 찾으면 문서 끝에 추가
-      return content + "\n\n## 🔄 Carry Over\n\n" + taskBlock + "\n";
-    }
-
-    /**
-     * 템플릿의 "오늘의 할 일" / "To-Do" 섹션 내 ### 서브섹션 이름 추출
-     */
-    private extractTodoSubSections(content: string): string[] {
-      const lines = content.split("\n");
-      const subSections: string[] = [];
-      let inTodoSection = false;
-
-      for (const line of lines) {
-        // ## 오늘의 할 일 / To-Do 섹션 시작 감지
-        if (/^##\s+.*(?:오늘의 할 일|할 일|to.?do|tasks)/i.test(line)) {
-          inTodoSection = true;
-          continue;
-        }
-        // 다음 ## 섹션이 나오면 종료 (### 제외)
-        if (inTodoSection && /^##\s+/.test(line) && !/^###/.test(line)) {
-          break;
-        }
-        // ### 서브섹션 수집
-        if (inTodoSection) {
-          const m = line.match(/^###\s+(.+)/);
-          if (m) subSections.push(m[1].trim());
-        }
-      }
-      return subSections;
-    }
-
-    /**
-     * AI를 사용해 미완료 태스크를 지정된 서브섹션별로 분류
-     */
-    private async classifyTasksForSections(
-      sections: string[],
-      tasks: string[]
-    ): Promise<Map<string, string[]>> {
-      const lang = this.plugin.settings.language === "ko" ? "ko" : "en";
-      const prompt = lang === "ko"
-        ? `다음은 미완료 To-Do 항목들과 분류할 카테고리입니다.
-각 항목을 가장 적절한 카테고리에 분류해주세요.
-
-카테고리:
-${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
-
-미완료 항목:
-${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*-\s*\[ \]\s*/, "").replace(/^\t/, "")}`).join("\n")}
-
-JSON 형식으로만 응답하세요. 키는 카테고리 이름(위 목록과 정확히 동일), 값은 항목 번호 배열입니다.
-예시: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
-모든 항목을 반드시 분류하세요.`
-        : `Classify these unfinished To-Do items into the given categories.
-
-Categories:
-${sections.map((s, i) => `${i + 1}. ${s}`).join("\n")}
-
-Items:
-${tasks.map((t, i) => `${i + 1}. ${t.replace(/^\s*-\s*\[ \]\s*/, "").replace(/^\t/, "")}`).join("\n")}
-
-Respond ONLY in JSON. Keys must exactly match category names above, values are arrays of item numbers.
-Example: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
-Classify ALL items.`;
-
-      try {
-        const result = await this.plugin.bedrockClient.converseLight(
-          prompt,
-          "You are a task classifier. Respond only in JSON."
-        );
-
-        let jsonStr = result.text.trim();
-        const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-        if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
-
-        const classification = JSON.parse(jsonStr) as Record<string, number[]>;
-        const classified = new Map<string, string[]>();
-
-        for (const [section, indices] of Object.entries(classification)) {
-          const sectionTasks: string[] = [];
-          for (const idx of indices) {
-            if (idx >= 1 && idx <= tasks.length) {
-              sectionTasks.push(tasks[idx - 1]);
-            }
-          }
-          if (sectionTasks.length > 0) {
-            classified.set(section, sectionTasks);
-          }
-        }
-
-        // 분류되지 않은 항목은 첫 번째 섹션에 추가
-        const classifiedIndices = new Set(Object.values(classification).flat());
-        const unclassified: string[] = [];
-        for (let i = 0; i < tasks.length; i++) {
-          if (!classifiedIndices.has(i + 1)) {
-            unclassified.push(tasks[i]);
-          }
-        }
-        if (unclassified.length > 0) {
-          const firstSection = sections[0];
-          const existing = classified.get(firstSection) || [];
-          classified.set(firstSection, [...existing, ...unclassified]);
-        }
-
-        return classified;
-      } catch (e) {
-        console.warn("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
-        const result = new Map<string, string[]>();
-        result.set(sections[0], tasks);
-        return result;
-      }
-    }
-
-    /**
-     * 템플릿의 특정 ### 서브섹션 내 빈 체크박스(- [ ] ) 자리에 태스크 주입
-     */
-    private injectTasksIntoSubSection(
-      content: string,
-      sectionName: string,
-      tasks: string[]
-    ): string {
-      const lines = content.split("\n");
-      const result: string[] = [];
-      let found = false;
-      let injected = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // ### 서브섹션 헤더 매칭
-        if (!injected && line.match(new RegExp("^###\\s+" + sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))) {
-          found = true;
-          result.push(line);
-          continue;
-        }
-        // 해당 섹션 내 빈 체크박스를 찾으면 태스크로 교체
-        if (found && !injected && /^\s*- \[ \]\s*$/.test(line)) {
-          // 들여쓰기 레벨 유지
-          for (const task of tasks) {
-            result.push(task);
-          }
-          injected = true;
-          continue;
-        }
-        // 다음 ### 또는 ## 섹션이 나오면 해당 섹션 종료
-        if (found && !injected && /^#{2,3}\s+/.test(line)) {
-          // 섹션 끝까지 빈 체크박스를 못 찾았으면 헤더 앞에 삽입
-          for (const task of tasks) {
-            result.push(task);
-          }
-          injected = true;
-        }
-        result.push(line);
-      }
-
-      // 끝까지 못 찾았으면 마지막에 추가
-      if (found && !injected) {
-        for (const task of tasks) {
-          result.push(task);
-        }
-      }
-
-      return result.join("\n");
-    }
-
-    /**
-     * 이전 투두의 메모 섹션에서 날짜가 포함된 항목 추출
-     * 날짜가 오늘 이후(오늘 포함)인 항목만 반환
-     */
-    private async getDatedNotesFromPrevTodo(
-      todoFolder: string,
-      today: Date
-    ): Promise<Array<{ date: string; text: string; time: string | null; raw: string }>> {
-      const folder = this.app.vault.getAbstractFileByPath(todoFolder);
-      if (!folder) return [];
-
-      const children = (folder as any).children || [];
-      const dated: { file: TFile; date: Date }[] = [];
-      for (const child of children) {
-        if (!(child instanceof TFile) || child.extension !== "md") continue;
-        const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (!match) continue;
-        const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-        if (d < today) dated.push({ file: child, date: d });
-      }
-      if (dated.length === 0) return [];
-
-      dated.sort((a, b) => b.date.getTime() - a.date.getTime());
-      const latest = dated[0].file;
-      const content = await this.app.vault.cachedRead(latest);
-
-      const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      console.log("[ToDo] 메모 승계 - 이전 파일:", latest.basename, "오늘:", todayStr);
-
-      const lines = content.split("\n");
-      let inMemo = false;
-
-      for (const line of lines) {
-        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
-          inMemo = true;
-          continue;
-        }
-        if (inMemo && /^##\s+/.test(line) && !/^###/.test(line)) break;
-
-        if (inMemo) {
-          const parsed = this.parseDateFromNoteLine(line, today);
-          if (parsed) {
-            // 오늘 이후(오늘 포함)만 승계
-            if (parsed.dateStr >= todayStr) {
-              results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
-            } else {
-              console.log("[ToDo] 메모 스킵 (과거):", parsed.dateStr, "<", todayStr);
-            }
-          }
-        }
-      }
-      return results;
-    }
-
-    /**
-     * 메모 줄에서 다양한 날짜 형식을 파싱
-     * 지원 형식: 2026-03-01, 03/01, 3/1, 3월 1일, 3/3(화)
-     */
-    private parseDateFromNoteLine(
-      line: string,
-      refDate: Date
-    ): { dateStr: string; text: string; time: string | null } | null {
-      // 리스트 항목이 아니면 스킵
-      if (!/^-\s+/.test(line)) return null;
-      const content = line.replace(/^-\s+/, "");
-
-      const year = refDate.getFullYear();
-
-      // 줄 전체에서 날짜 패턴을 탐색 (이모지, 볼드, 기호 등 무시)
-      // 마크다운 서식 제거: **, *, 📌 등
-      const cleaned = content.replace(/\*\*/g, "").replace(/\*/g, "").trim();
-
-      let month = 0;
-      let day = 0;
-      let dateYear = year;
-      let timeStr: string | null = null;
-      let textPart = "";
-
-      // 1) YYYY-MM-DD
-      const m1 = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
-      // 2) M/D 또는 MM/DD (요일 옵션)
-      const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^\)]*\))?/) : null;
-      // 3) N월 N일
-      const m3 = (!m1 && !m2) ? cleaned.match(/(\d{1,2})월\s*(\d{1,2})일/) : null;
-
-      if (m1) {
-        dateYear = Number(m1[1]);
-        month = Number(m1[2]);
-        day = Number(m1[3]);
-      } else if (m2) {
-        month = Number(m2[1]);
-        day = Number(m2[2]);
-      } else if (m3) {
-        month = Number(m3[1]);
-        day = Number(m3[2]);
-      } else {
-        return null;
-      }
-
-      if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-
-      const dateStr = `${dateYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
-      // 시간 추출: HH:MM 패턴 (날짜 매치 이후 부분에서만)
-      const datePattern = m1 || m2 || m3;
-      let afterDateRaw = "";
-      if (datePattern && datePattern.index !== undefined) {
-        afterDateRaw = cleaned.substring(datePattern.index + datePattern[0].length).trim();
-        // 요일 괄호 제거: (화), (월) 등
-        afterDateRaw = afterDateRaw.replace(/^\([^\)]*\)\s*/, "").trim();
-      }
-
-      const timeMatchInAfter = afterDateRaw.match(/^(\d{1,2}:\d{2})/);
-      if (timeMatchInAfter) {
-        timeStr = timeMatchInAfter[1].replace(/^(\d):/, "0$1:");
-      } else {
-        const timeMatch2 = afterDateRaw.match(/^(\d{1,2})시/);
-        if (timeMatch2) {
-          timeStr = `${timeMatch2[1].padStart(2, "0")}:00`;
-        }
-      }
-
-      // 텍스트 추출: 날짜/시간/부가설명 이후의 의미 있는 텍스트
-      if (datePattern && datePattern.index !== undefined) {
-        let afterDate = afterDateRaw;
-        // 시간 패턴 제거 (HH:MM)
-        afterDate = afterDate.replace(/^\d{1,2}:\d{2}/, "").trim();
-        // N시 패턴 제거
-        afterDate = afterDate.replace(/^\d{1,2}시/, "").trim();
-        // "예정" 같은 부가 설명 제거
-        afterDate = afterDate.replace(/^예정\s*/, "").trim();
-        // 구분자 콜론/대시 제거
-        afterDate = afterDate.replace(/^[:\-–—]\s*/, "").trim();
-        textPart = afterDate;
-      }
-
-      if (!textPart) return null;
-
-      return { dateStr, text: textPart, time: timeStr };
-    }
-
-    /**
-     * 메모 섹션에 항목 주입
-     */
-    private injectNotesIntoMemoSection(content: string, notes: string[]): string {
-      const lines = content.split("\n");
-      const result: string[] = [];
-      let inMemo = false;
-      let injected = false;
-
-      for (const line of lines) {
-        if (/^##\s+.*(?:메모|노트|notes|memo)/i.test(line)) {
-          inMemo = true;
-          result.push(line);
-          continue;
-        }
-        // 메모 섹션 내 빈 항목(- ) 또는 첫 번째 빈 줄에 주입
-        if (inMemo && !injected && /^-\s*$/.test(line)) {
-          for (const note of notes) {
-            result.push(note);
-          }
-          injected = true;
-          continue;
-        }
-        // 다음 ## 섹션이면 메모 종료, 아직 주입 안 했으면 여기서
-        if (inMemo && !injected && /^##\s+/.test(line) && !/^###/.test(line)) {
-          for (const note of notes) {
-            result.push(note);
-          }
-          result.push("");
-          injected = true;
-        }
-        result.push(line);
-      }
-
-      if (!injected) {
-        for (const note of notes) {
-          result.push(note);
-        }
-      }
-
-      return result.join("\n");
-    }
-
-
-
-  // 기준 일수를 초과한 To-Do 파일을 아카이브 폴더로 이동
-  private async archiveOldTodos(todoFolder: string, now: Date): Promise<void> {
-    const archiveFolder = this.plugin.settings.todoArchiveFolder || "ToDo/Archive";
-    const archiveDays = this.plugin.settings.todoArchiveDays || 7;
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() - archiveDays);
-    cutoff.setHours(0, 0, 0, 0);
-
-    // 아카이브 폴더가 없으면 생성
-    if (!this.app.vault.getAbstractFileByPath(archiveFolder)) {
-      await this.app.vault.createFolder(archiveFolder);
-    }
-
-    // To-Do 폴더 내 .md 파일 순회
-    const folder = this.app.vault.getAbstractFileByPath(todoFolder);
-    if (!folder) return;
-
-    const filesToArchive: TFile[] = [];
-    // children 속성으로 직접 접근 (TFolder)
-    const children = (folder as any).children || [];
-    for (const child of children) {
-      if (!(child instanceof TFile) || child.extension !== "md") continue;
-      // 파일명에서 날짜 파싱 (YYYY-MM-DD.md)
-      const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!match) continue;
-      const fileDate = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-      if (fileDate < cutoff) {
-        filesToArchive.push(child);
-      }
-    }
-
-    if (filesToArchive.length === 0) return;
-
-    for (const f of filesToArchive) {
-      const dest = `${archiveFolder}/${f.name}`;
-      // 이동 대상에 이미 같은 이름이 있으면 건너뜀
-      if (this.app.vault.getAbstractFileByPath(dest)) continue;
-      await this.app.vault.rename(f, dest);
-    }
-
-    new Notice(this.t.todoArchived(filesToArchive.length));
-  }
-
   // 현재 노트에 AI 기반 태그 자동 생성
   private async generateTags(): Promise<void> {
     // 현재 열린 마크다운 노트 찾기
@@ -2098,7 +1290,7 @@ Classify ALL items.`;
 
       // 모델별 컨텍스트 윈도우 크기 (토큰)
       const modelId = this.plugin.settings.chatModel;
-      const contextWindow = 200000; // Claude 모델 기본 200K
+      const contextWindow = this.getModelContextWindow();
 
       // 현재 사용 중인 토큰 추정
       let totalChars = 0;
@@ -2459,138 +1651,34 @@ Classify ALL items.`;
       }
     }
 
-    // 대화 히스토리 저장
-    private persistHistory(): void {
-          this.plugin.saveChatHistory(this.messages);
-          this.updateContextRing();
+    // 대화 히스토리 저장 (queueMicrotask 디바운싱으로 같은 틱 내 중복 호출 방지)
+    private persistHistory(forceFlush = false): void {
+          if (!forceFlush && this.persistPending) return;
+          if (forceFlush) {
+            // 뷰 닫힐 때 등 즉시 저장이 필요한 경우 가드 무시
+            this.persistPending = false;
+            this.plugin.saveChatHistory(this.messages);
+            this.updateContextRing();
+            return;
+          }
+          this.persistPending = true;
+          queueMicrotask(() => {
+            this.persistPending = false;
+            this.plugin.saveChatHistory(this.messages);
+            this.updateContextRing();
+          });
         }
 
     async onClose(): Promise<void> {
       this.handleStop();
-      this.persistHistory();
+      // 뷰 닫힐 때 가드 무시하고 즉시 저장 (race condition 방지)
+      this.persistHistory(true);
       // 드롭다운 이벤트 리스너 정리 (document 레벨 리스너 누수 방지)
       this.closeModelDropdown();
     }
 
 }
 
-
-
-// 지난 대화 세션 목록 모달
-class SessionListModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
-  private sessions: ChatSession[];
-  private t: ViewLang;
-  private onSelect: (session: ChatSession) => void;
-  private listEl: HTMLDivElement | null = null;
-
-  constructor(
-    app: import("obsidian").App,
-    plugin: BedrockAssistantPlugin,
-    sessions: ChatSession[],
-    t: ViewLang,
-    onSelect: (session: ChatSession) => void
-  ) {
-    super(app);
-    this.plugin = plugin;
-    this.sessions = sessions;
-    this.t = t;
-    this.onSelect = onSelect;
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h3", { text: this.t.chatHistory });
-
-    // 검색 입력 필드 추가
-    const searchContainer = contentEl.createDiv({ cls: "ba-session-search" });
-    const searchInput = searchContainer.createEl("input", {
-      type: "text",
-      placeholder: this.t.sessionSearch,
-      cls: "ba-session-search-input",
-    });
-
-    // 세션 목록 컨테이너
-    this.listEl = contentEl.createDiv({ cls: "ba-session-list" });
-
-    // 초기 렌더링 (전체 세션)
-    this.renderFilteredSessions("");
-
-    // 실시간 필터링 (keyup 이벤트)
-    searchInput.addEventListener("keyup", () => {
-      this.renderFilteredSessions(searchInput.value);
-    });
-
-    // 모달 열릴 때 검색 입력에 포커스
-    searchInput.focus();
-  }
-
-  /** 검색어로 필터링된 세션 목록을 렌더링 */
-  private renderFilteredSessions(query: string): void {
-    if (!this.listEl) return;
-    this.listEl.empty();
-
-    const results = filterSessions(this.sessions, query);
-
-    if (results.length === 0) {
-      const msg = query.trim()
-        ? this.t.sessionSearchNoResults
-        : this.t.noSessions;
-      this.listEl.createEl("p", { text: msg, cls: "setting-item-description" });
-      return;
-    }
-
-    for (const result of results) {
-      const session = result.session;
-      const row = this.listEl.createDiv({ cls: "ba-session-row" });
-
-      // 세션 정보 (클릭하면 복원)
-      const infoEl = row.createDiv({ cls: "ba-session-info" });
-
-      // 하이라이트된 제목 (innerHTML 사용)
-      const titleEl = infoEl.createDiv({ cls: "ba-session-title" });
-      titleEl.innerHTML = result.highlightedTitle;
-
-      // 날짜 정보
-      const date = new Date(session.updatedAt);
-      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-      infoEl.createDiv({
-        cls: "ba-session-date",
-        text: `${this.t.sessionDate(dateStr)} · ${session.messages.length} messages`,
-      });
-
-      // 검색어가 있고 첫 메시지에서 매칭된 경우 미리보기 표시
-      if (query.trim() && result.highlightedPreview) {
-        const previewEl = infoEl.createDiv({ cls: "ba-session-preview" });
-        previewEl.innerHTML = result.highlightedPreview;
-      }
-
-      infoEl.addEventListener("click", () => {
-        this.onSelect(session);
-        this.close();
-      });
-
-      // 삭제 버튼
-      const delBtn = row.createDiv({ cls: "ba-session-delete", attr: { "aria-label": this.t.deleteSession } });
-      setIcon(delBtn, "trash-2");
-      delBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        this.sessions = this.sessions.filter((s) => s.id !== session.id);
-        await this.plugin.saveSessions(this.sessions);
-        row.remove();
-        if (this.sessions.length === 0) {
-          this.listEl?.empty();
-          this.listEl?.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
-        }
-      });
-    }
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
 
 
 // 볼트 파일 검색 모달
@@ -2613,368 +1701,5 @@ class FileSearchModal extends FuzzySuggestModal<TFile> {
 
   onChooseItem(item: TFile): void {
     this.onChoose(item);
-  }
-}
-
-// 파괴적 도구 실행 전 사용자 확인 모달
-// 파괴적 도구 실행 전 사용자 확인 모달
-class ToolConfirmModal extends Modal {
-  private toolName: string;
-  private toolInput: Record<string, unknown>;
-  private t: ViewLang;
-  private resolvePromise: (approved: boolean) => void;
-  private plugin: BedrockAssistantPlugin;
-  private resolved = false;
-
-  constructor(
-    app: import("obsidian").App,
-    toolName: string,
-    toolInput: Record<string, unknown>,
-    t: ViewLang,
-    plugin: BedrockAssistantPlugin,
-    resolvePromise: (approved: boolean) => void
-  ) {
-    super(app);
-    this.toolName = toolName;
-    this.toolInput = toolInput;
-    this.t = t;
-    this.plugin = plugin;
-    this.resolvePromise = resolvePromise;
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("ba-tool-confirm-modal");
-
-    // 헤더 (아이콘 + 제목)
-    const header = contentEl.createDiv({ cls: "ba-tool-confirm-header" });
-    const headerIcon = header.createDiv({ cls: "ba-tool-confirm-header-icon" });
-    setIcon(headerIcon, "alert-triangle");
-    header.createEl("h3", { text: this.t.toolConfirmTitle });
-
-    // 도구 이름 안내 메시지
-    contentEl.createEl("p", {
-      text: this.t.toolConfirmMessage(this.toolName),
-      cls: "ba-tool-confirm-message",
-    });
-
-    // 파라미터 표시
-    contentEl.createEl("p", {
-      text: this.t.toolConfirmParams,
-      cls: "ba-tool-confirm-params-label",
-    });
-    const paramsEl = contentEl.createEl("pre", { cls: "ba-tool-confirm-params" });
-    paramsEl.setText(JSON.stringify(this.toolInput, null, 2));
-
-    // "다음부터 묻지 않기" 체크박스
-    const checkRow = contentEl.createDiv({ cls: "ba-tool-confirm-check-row" });
-    const checkbox = checkRow.createEl("input", {
-      type: "checkbox",
-      cls: "ba-tool-confirm-checkbox",
-    });
-    checkbox.id = "ba-tool-confirm-dont-ask";
-    checkRow.createEl("label", {
-      text: this.t.toolConfirmDontAsk,
-      attr: { for: "ba-tool-confirm-dont-ask" },
-      cls: "ba-tool-confirm-check-label",
-    });
-
-    // 버튼 행
-    const btnRow = contentEl.createDiv({ cls: "ba-tool-confirm-btn-row" });
-
-    // 거부 버튼 (왼쪽)
-    const denyBtn = btnRow.createEl("button", {
-      text: this.t.toolConfirmDeny,
-    });
-    denyBtn.addEventListener("click", () => {
-      this.handleDontAsk(checkbox.checked);
-      this.resolved = true;
-      this.resolvePromise(false);
-      this.close();
-    });
-
-    // 실행 버튼 (오른쪽, 강조)
-    const approveBtn = btnRow.createEl("button", {
-      text: this.t.toolConfirmApprove,
-      cls: "mod-cta",
-    });
-    approveBtn.addEventListener("click", () => {
-      this.handleDontAsk(checkbox.checked);
-      this.resolved = true;
-      this.resolvePromise(true);
-      this.close();
-    });
-  }
-
-  // "다음부터 묻지 않기" 체크 시 설정 저장
-  private handleDontAsk(checked: boolean): void {
-    if (checked) {
-      this.plugin.settings.confirmToolExecution = false;
-      this.plugin.saveSettings();
-    }
-  }
-
-  onClose(): void {
-    // 모달이 닫힐 때 아직 resolve되지 않았으면 거부로 처리
-    if (!this.resolved) {
-      this.resolvePromise(false);
-    }
-    this.contentEl.empty();
-  }
-}
-
-// 아카이브 비우기 모달
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-class CleanArchiveModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
-  private t: Record<string, any>;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
-    super(app);
-    this.plugin = plugin;
-    this.t = t;
-  }
-
-  async onOpen(): Promise<void> {
-    const { contentEl } = this;
-    contentEl.addClass("ba-clean-archive-modal");
-    contentEl.createEl("h2", { text: this.t.cleanArchiveTitle });
-
-    const archiveFolder = this.plugin.settings.archiveCleanFolder;
-    const archiveDays = this.plugin.settings.archiveCleanDays;
-    const now = Date.now();
-    const cutoff = now - archiveDays * 24 * 60 * 60 * 1000;
-
-    // 아카이브 폴더에서 하위 폴더 포함 재귀 탐색, 생성일(ctime) 기준 n일 이전 파일 수집
-    const folder = this.app.vault.getAbstractFileByPath(archiveFolder);
-    const oldFiles: TFile[] = [];
-    const collectFiles = (parent: any) => {
-      if (!parent || !("children" in parent)) return;
-      for (const child of parent.children) {
-        if (child instanceof TFile && child.stat.ctime < cutoff) {
-          oldFiles.push(child);
-        } else if ("children" in child) {
-          collectFiles(child);
-        }
-      }
-    };
-    collectFiles(folder);
-
-    if (oldFiles.length === 0) {
-      contentEl.createEl("p", { text: this.t.cleanArchiveEmpty, cls: "ba-clean-archive-empty" });
-      const btnRow = contentEl.createDiv({ cls: "ba-clean-archive-btn-row" });
-      const closeBtn = btnRow.createEl("button", { text: this.t.cleanArchiveCancel });
-      closeBtn.addEventListener("click", () => this.close());
-      return;
-    }
-
-    // 체크박스 리스트
-    const checkboxes: { file: TFile; checkbox: HTMLInputElement }[] = [];
-
-    // 전체 선택 토글
-    const selectAllRow = contentEl.createDiv({ cls: "ba-clean-archive-select-all" });
-    const selectAllCb = selectAllRow.createEl("input", { type: "checkbox" }) as HTMLInputElement;
-    selectAllCb.checked = true;
-    selectAllRow.createSpan({ text: this.t.cleanArchiveSelectAll });
-    selectAllCb.addEventListener("change", () => {
-      for (const item of checkboxes) {
-        item.checkbox.checked = selectAllCb.checked;
-      }
-    });
-
-    const listEl = contentEl.createDiv({ cls: "ba-clean-archive-list" });
-    // 생성일 오래된 순으로 정렬
-    oldFiles.sort((a, b) => a.stat.ctime - b.stat.ctime);
-
-    for (const file of oldFiles) {
-      const row = listEl.createDiv({ cls: "ba-clean-archive-item" });
-      const cb = row.createEl("input", { type: "checkbox" }) as HTMLInputElement;
-      cb.checked = true;
-      const dateStr = new Date(file.stat.ctime).toLocaleDateString();
-      row.createSpan({ text: file.path.replace(archiveFolder + "/", ""), cls: "ba-clean-archive-name" });
-      row.createSpan({ text: dateStr, cls: "ba-clean-archive-date" });
-      checkboxes.push({ file, checkbox: cb });
-    }
-
-    // 버튼 영역
-    const btnRow = contentEl.createDiv({ cls: "ba-clean-archive-btn-row" });
-    const cancelBtn = btnRow.createEl("button", { text: this.t.cleanArchiveCancel });
-    cancelBtn.addEventListener("click", () => this.close());
-
-    const deleteBtn = btnRow.createEl("button", {
-      text: this.t.cleanArchiveDelete,
-      cls: "mod-warning",
-    });
-    deleteBtn.addEventListener("click", async () => {
-      const toDelete = checkboxes.filter((c) => c.checkbox.checked).map((c) => c.file);
-      if (toDelete.length === 0) {
-        this.close();
-        return;
-      }
-      // 선택된 파일 삭제
-      for (const file of toDelete) {
-        await this.app.vault.delete(file);
-      }
-      // 빈 하위 폴더 정리 (깊은 폴더부터 삭제)
-      const removeEmptyFolders = (parent: any) => {
-        if (!parent || !("children" in parent)) return;
-        // 하위 폴더 먼저 재귀 처리
-        for (const child of [...parent.children]) {
-          if ("children" in child) {
-            removeEmptyFolders(child);
-          }
-        }
-        // 루트 아카이브 폴더는 유지, 하위 빈 폴더만 삭제
-        if (parent.children.length === 0 && parent.path !== archiveFolder) {
-          this.app.vault.delete(parent);
-        }
-      };
-      const rootFolder = this.app.vault.getAbstractFileByPath(archiveFolder);
-      removeEmptyFolders(rootFolder);
-
-      new Notice(this.t.cleanArchiveDeleted(toDelete.length));
-      this.close();
-    });
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
-
-// 회고 모달
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-class RetrospectiveModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
-  private t: Record<string, any>;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: import("obsidian").App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
-    super(app);
-    this.plugin = plugin;
-    this.t = t;
-  }
-
-  async onOpen(): Promise<void> {
-    const { contentEl } = this;
-    // 모달 컨테이너에 클래스 추가 (사이즈 제어)
-    this.modalEl.addClass("ba-retro-modal");
-    contentEl.addClass("ba-retro-content");
-
-    // 오늘자 To-Do 파일 존재 확인
-    const now = new Date();
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const todoFolder = this.plugin.settings.todoFolder || "ToDo";
-    const todoPath = `${todoFolder}/${dateStr}.md`;
-    const todoFile = this.app.vault.getAbstractFileByPath(todoPath);
-
-    if (!todoFile || !(todoFile instanceof TFile)) {
-      // 오늘자 문서 없음 경고
-      contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
-      contentEl.createEl("p", { text: this.t.retroNoTodo, cls: "ba-retro-warning" });
-      const btnRow = contentEl.createDiv({ cls: "ba-retro-btn-row" });
-      const okBtn = btnRow.createEl("button", { text: this.t.retroOk, cls: "mod-cta" });
-      okBtn.addEventListener("click", () => this.close());
-      return;
-    }
-
-    // 할 일 완료 여부 확인 모달
-    contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
-    contentEl.createEl("p", { text: this.t.retroConfirmMessage, cls: "ba-retro-message" });
-
-    const btnRow = contentEl.createDiv({ cls: "ba-retro-btn-row" });
-    const notYetBtn = btnRow.createEl("button", { text: this.t.retroNotYet });
-    notYetBtn.addEventListener("click", () => this.close());
-
-    const doneBtn = btnRow.createEl("button", { text: this.t.retroDone, cls: "mod-cta" });
-    doneBtn.addEventListener("click", async () => {
-      contentEl.empty();
-      contentEl.createEl("h2", { text: this.t.retroConfirmTitle });
-      contentEl.createEl("p", { text: this.t.retroGenerating, cls: "ba-retro-message" });
-
-      try {
-        await this.generateRetrospective(todoFile as TFile, dateStr);
-        new Notice(this.t.retroComplete);
-      } catch (error) {
-        new Notice(this.t.retroFailed((error as Error).message));
-      }
-      this.close();
-    });
-  }
-
-  // 회고 생성 및 To-Do 문서에 추가
-  private async generateRetrospective(todoFile: TFile, dateStr: string): Promise<void> {
-    const todoContent = await this.app.vault.read(todoFile);
-
-    // 오늘 생성된 파일 수집 (To-Do 파일, 아카이브 비우기 대상 폴더 제외)
-    const todoFolder = this.plugin.settings.todoFolder || "ToDo";
-    const archiveCleanFolder = this.plugin.settings.archiveCleanFolder || "ToDo/Archive";
-    const allFiles = this.app.vault.getFiles();
-    const todayStart = new Date(dateStr + "T00:00:00").getTime();
-    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
-
-    const todayFiles: { path: string; content: string }[] = [];
-    for (const file of allFiles) {
-      // 생성일이 오늘인 파일만
-      if (file.stat.ctime < todayStart || file.stat.ctime >= todayEnd) continue;
-      // To-Do 파일 자체 제외
-      if (file.path === todoFile.path) continue;
-      // 아카이브 비우기 대상 폴더 제외
-      if (file.path.startsWith(archiveCleanFolder + "/")) continue;
-      // 마크다운 파일만
-      if (file.extension !== "md") continue;
-
-      try {
-        const content = await this.app.vault.cachedRead(file);
-        // 너무 긴 파일은 앞부분만
-        todayFiles.push({
-          path: file.path,
-          content: content.length > 2000 ? content.substring(0, 2000) + "..." : content,
-        });
-      } catch {
-        // 읽기 실패 시 건너뜀
-      }
-    }
-
-    // AI로 회고 생성
-    const lang = this.plugin.settings.language;
-    const langLabel = lang === "ko" ? "한국어" : lang === "ja" ? "日本語" : "English";
-
-    const filesContext = todayFiles.length > 0
-      ? todayFiles.map((f) => `### ${f.path}\n${f.content}`).join("\n\n")
-      : "(No additional files created today)";
-
-    const prompt = `You are a daily retrospective assistant. Analyze the following To-Do document and today's created files, then write a retrospective summary.
-
-Language: Write in ${langLabel}.
-
-## Today's To-Do
-${todoContent}
-
-## Files Created Today (${todayFiles.length} files)
-${filesContext}
-
-## Instructions
-- Summarize what was accomplished today based on the To-Do items and created files
-- Note any incomplete tasks and possible reasons
-- Provide brief insights or suggestions for improvement
-- Keep it concise (under 300 words)
-- Use markdown format with a ## heading
-- The heading should be "${lang === "ko" ? "📝 오늘의 회고" : lang === "ja" ? "📝 今日の振り返り" : "📝 Daily Retrospective"}"`;
-
-    const { BedrockClient } = await import("./bedrock-client");
-    const client = new BedrockClient(this.plugin.settings);
-    const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
-
-    // To-Do 문서 끝에 회고 추가
-    const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
-    await this.app.vault.modify(todoFile, updatedContent);
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
   }
 }

@@ -2,7 +2,7 @@
 // chat-view.ts에서 사용하는 도구 확인 관련 상수와 헬퍼 함수
 
 /** 파괴적 도구 목록: 실행 전 사용자 확인이 필요한 도구들 */
-export const DESTRUCTIVE_TOOLS = ['edit_note', 'create_note', 'delete_file', 'move_file'];
+export const DESTRUCTIVE_TOOLS = ['edit_note', 'create_note', 'delete_file', 'move_file', 'append_to_note'];
 
 /**
  * 도구 실행 전 사용자 확인이 필요한지 판단하는 헬퍼 함수

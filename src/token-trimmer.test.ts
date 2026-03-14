@@ -169,6 +169,65 @@ describe("토큰 추정 비율 일관성 (Property 1: Fault Condition)", () => {
 });
 
 /**
+ * B5: 커스텀 컨텍스트 윈도우 파라미터 테스트
+ * contextWindow 파라미터를 통해 동적으로 컨텍스트 윈도우 크기를 설정할 수 있는지 확인
+ *
+ * **Validates: Requirements REQ-B5**
+ */
+describe("커스텀 컨텍스트 윈도우 (B5: CONTEXT_WINDOW 동적 설정)", () => {
+  it("기본값(200K) — 파라미터 미전달 시 기존 동작과 동일", () => {
+    const messages = makeConversation(3, 100);
+    const originalLength = messages.length;
+    // contextWindow 파라미터 없이 호출
+    trimConversationHistory(messages, emptyTools);
+    expect(messages.length).toBe(originalLength);
+  });
+
+  it("작은 컨텍스트 윈도우 전달 시 더 많은 메시지가 트리밍된다", () => {
+    // 기본 200K로 트리밍
+    const messagesDefault = makeConversation(10, 50000);
+    trimConversationHistory(messagesDefault, emptyTools);
+
+    // 작은 50K 윈도우로 트리밍
+    const messagesSmall = makeConversation(10, 50000);
+    trimConversationHistory(messagesSmall, emptyTools, 50_000);
+
+    // 작은 윈도우에서 더 많이 트리밍되어야 함
+    expect(messagesSmall.length).toBeLessThanOrEqual(messagesDefault.length);
+  });
+
+  it("큰 컨텍스트 윈도우 전달 시 더 적은 메시지가 트리밍된다", () => {
+    // 기본 200K로 트리밍
+    const messagesDefault = makeConversation(10, 50000);
+    trimConversationHistory(messagesDefault, emptyTools);
+
+    // 큰 500K 윈도우로 트리밍
+    const messagesBig = makeConversation(10, 50000);
+    trimConversationHistory(messagesBig, emptyTools, 500_000);
+
+    // 큰 윈도우에서 더 많은 메시지가 유지되어야 함
+    expect(messagesBig.length).toBeGreaterThanOrEqual(messagesDefault.length);
+  });
+
+  it("매우 작은 컨텍스트 윈도우에서도 최소 2개 메시지는 유지된다", () => {
+    const messages = makeConversation(5, 10000);
+    // 극단적으로 작은 윈도우 (1K 토큰)
+    trimConversationHistory(messages, emptyTools, 1_000);
+    // MIN_MESSAGES = 2
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("컨텍스트 윈도우 내 메시지는 트리밍되지 않는다", () => {
+    // 작은 메시지 3쌍 (총 ~600자 ≈ 240토큰)
+    const messages = makeConversation(3, 100);
+    const originalLength = messages.length;
+    // 충분히 큰 윈도우
+    trimConversationHistory(messages, emptyTools, 100_000);
+    expect(messages.length).toBe(originalLength);
+  });
+});
+
+/**
  * Property 2: Preservation - trimConversationHistory() 동작 보존
  * 토큰 추정 변경 후에도 컨텍스트 윈도우 초과 방지 로직이 정상 동작하는지 확인
  *

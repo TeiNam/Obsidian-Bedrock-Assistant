@@ -3,8 +3,9 @@ import type { ConverseMessage, ToolDefinition } from "./types";
 // 토큰 추정 비율: 한국어 혼합 기준 약 2.5자/토큰
 export const CHARS_PER_TOKEN = 2.5;
 
-// 컨텍스트 윈도우 크기 (토큰 단위, 200K 기본)
-const CONTEXT_WINDOW = 200_000;
+// 컨텍스트 윈도우 기본값 (토큰 단위, 200K)
+// trimConversationHistory()에 contextWindow 파라미터가 전달되지 않을 때 사용
+const DEFAULT_CONTEXT_WINDOW = 200_000;
 // 컨텍스트 윈도우의 80%를 메시지 허용 한도로 설정
 const CONTEXT_USAGE_RATIO = 0.8;
 // 시스템 프롬프트 등 기본 예약 토큰 수
@@ -32,9 +33,10 @@ export function estimateTokens(messages: ConverseMessage[]): number {
  */
 export function trimConversationHistory(
   messages: ConverseMessage[],
-  tools: ToolDefinition[]
+  tools: ToolDefinition[],
+  contextWindow = DEFAULT_CONTEXT_WINDOW
 ): void {
-  const MAX_MESSAGE_TOKENS = CONTEXT_WINDOW * CONTEXT_USAGE_RATIO;
+  const MAX_MESSAGE_TOKENS = contextWindow * CONTEXT_USAGE_RATIO;
   // 도구 정의 크기도 토큰 예약에 포함
   const toolTokens = Math.ceil(JSON.stringify(tools).length / CHARS_PER_TOKEN);
   const reservedTokens = BASE_RESERVED_TOKENS + toolTokens;

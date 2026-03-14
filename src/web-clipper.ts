@@ -177,9 +177,17 @@ export class WebClipperModal extends Modal {
       const maxChars = 80000;
       const trimmedBody = body.length > maxChars ? body.slice(0, maxChars) + "\n\n[... content truncated ...]" : body;
 
-      // 2. AI로 번역 및 요약
+      // 2. AI로 번역 및 요약 (실패 시 원본 텍스트 앞부분으로 폴백)
       this.setStatus(this.t.summarizing);
-      const summary = await this.summarizeWithAI(url, title, trimmedBody);
+      let summary: string;
+      try {
+        summary = await this.summarizeWithAI(url, title, trimmedBody);
+      } catch (e) {
+        // AI 요약 실패 시 원본 텍스트 앞부분으로 폴백
+        console.warn("AI 요약 실패, 원본 텍스트로 폴백:", e);
+        new Notice("AI 요약에 실패하여 원본 텍스트로 저장합니다.");
+        summary = body.slice(0, 2000) + (body.length > 2000 ? "\n\n..." : "");
+      }
 
       // 3. 노트로 저장
       this.setStatus(this.t.saving);
