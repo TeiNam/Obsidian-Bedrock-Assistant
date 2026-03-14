@@ -112,7 +112,7 @@ export class BedrockClient implements IAiClient {
         .sort(([a], [b]) => (MODEL_PRIORITY[a] ?? 99) - (MODEL_PRIORITY[b] ?? 99))
         .map(([, m]) => m);
     } catch (e) {
-      console.warn("모델 목록 조회 실패:", e);
+      console.error("모델 목록 조회 실패:", e);
       return [];
     }
   }
@@ -172,7 +172,6 @@ export class BedrockClient implements IAiClient {
       // 중단된 경우 그대로 throw
       if (abortSignal?.aborted) throw error;
       // 스트리밍 실패 시 일반 호출로 폴백
-      console.warn("스트리밍 실패, 일반 호출로 전환:", error);
       return await this.converseFallback(input, onTextDelta, abortSignal);
     }
   }

@@ -1,15 +1,24 @@
 import type { ChatSession } from "./types";
 
 /**
+ * 하이라이트 세그먼트 타입
+ * DOM API로 안전하게 렌더링하기 위한 구조
+ */
+export interface HighlightSegment {
+  text: string;
+  highlight: boolean;
+}
+
+/**
  * 세션 검색 결과 타입
- * 원본 세션과 하이라이트된 제목을 포함
+ * 원본 세션과 하이라이트 세그먼트를 포함
  */
 export interface SessionSearchResult {
   session: ChatSession;
-  /** 검색어가 하이라이트된 제목 (HTML) */
-  highlightedTitle: string;
-  /** 검색어가 하이라이트된 첫 메시지 미리보기 (HTML, 없으면 빈 문자열) */
-  highlightedPreview: string;
+  /** 제목 하이라이트 세그먼트 배열 */
+  titleSegments: HighlightSegment[];
+  /** 미리보기 하이라이트 세그먼트 배열 (없으면 빈 배열) */
+  previewSegments: HighlightSegment[];
 }
 
 /**
@@ -30,8 +39,8 @@ export function filterSessions(
   if (trimmed === "") {
     return sessions.map((session) => ({
       session,
-      highlightedTitle: escapeHtml(session.title),
-      highlightedPreview: getFirstMessagePreview(session),
+      titleSegments: [{ text: session.title, highlight: false }],
+      previewSegments: getFirstMessagePreviewSegments(session),
     }));
   }
 
@@ -49,12 +58,12 @@ export function filterSessions(
     if (titleMatch || msgMatch) {
       results.push({
         session,
-        highlightedTitle: titleMatch
-          ? highlightText(session.title, trimmed)
-          : escapeHtml(session.title),
-        highlightedPreview: msgMatch
-          ? highlightText(truncateText(firstMsg, 80), trimmed)
-          : getFirstMessagePreview(session),
+        titleSegments: titleMatch
+          ? buildHighlightSegments(session.title, trimmed)
+          : [{ text: session.title, highlight: false }],
+        previewSegments: msgMatch
+          ? buildHighlightSegments(truncateText(firstMsg, 80), trimmed)
+          : getFirstMessagePreviewSegments(session),
       });
     }
   }
@@ -72,12 +81,12 @@ function getFirstMessageText(session: ChatSession): string {
 }
 
 /**
- * 세션의 첫 번째 메시지 미리보기 (HTML 이스케이프 처리)
+ * 세션의 첫 번째 메시지 미리보기 세그먼트 배열
  */
-function getFirstMessagePreview(session: ChatSession): string {
+function getFirstMessagePreviewSegments(session: ChatSession): HighlightSegment[] {
   const text = getFirstMessageText(session);
-  if (!text) return "";
-  return escapeHtml(truncateText(text, 80));
+  if (!text) return [];
+  return [{ text: truncateText(text, 80), highlight: false }];
 }
 
 /**
@@ -89,39 +98,25 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /**
- * HTML 특수문자 이스케이프
- */
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/**
- * 텍스트 내 검색어를 <mark> 태그로 감싸서 하이라이트
- * 대소문자 무시, HTML 이스케이프 처리 후 하이라이트 적용
+ * 텍스트 내 검색어를 기준으로 하이라이트 세그먼트 배열을 생성
+ * DOM API로 안전하게 렌더링하기 위한 구조
  *
  * @param text - 원본 텍스트
  * @param query - 검색어 (소문자)
- * @returns 하이라이트된 HTML 문자열
+ * @returns 하이라이트 세그먼트 배열
  */
-export function highlightText(text: string, query: string): string {
-  if (!query) return escapeHtml(text);
+export function buildHighlightSegments(text: string, query: string): HighlightSegment[] {
+  if (!query) return [{ text, highlight: false }];
 
   // 정규식 특수문자 이스케이프
   const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = new RegExp(`(${escapedQuery})`, "gi");
 
-  // 텍스트를 매칭/비매칭 부분으로 분리 후 각각 이스케이프 처리
   const parts = text.split(regex);
   return parts
-    .map((part) => {
-      if (part.toLowerCase() === query.toLowerCase()) {
-        return `<mark class="ba-search-highlight">${escapeHtml(part)}</mark>`;
-      }
-      return escapeHtml(part);
-    })
-    .join("");
+    .filter((part) => part.length > 0)
+    .map((part) => ({
+      text: part,
+      highlight: part.toLowerCase() === query.toLowerCase(),
+    }));
 }

@@ -81,7 +81,6 @@ export async function saveSessionsWithBackup(
       }
     } catch {
       // 백업 생성 실패는 저장을 중단하지 않음
-      console.warn("세션 백업 파일 생성 실패");
     }
   }
 

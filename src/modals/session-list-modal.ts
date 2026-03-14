@@ -5,7 +5,7 @@ import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ChatSession } from "../types";
 import type { ViewLang } from "../chat-view-i18n";
-import { filterSessions } from "../session-search";
+import { filterSessions, type HighlightSegment } from "../session-search";
 
 /**
  * 지난 대화 세션 목록을 표시하고 선택/삭제할 수 있는 모달
@@ -81,9 +81,9 @@ export class SessionListModal extends Modal {
       // 세션 정보 (클릭하면 복원)
       const infoEl = row.createDiv({ cls: "ba-session-info" });
 
-      // 하이라이트된 제목 (innerHTML 사용)
+      // 하이라이트된 제목 (DOM API로 안전하게 렌더링)
       const titleEl = infoEl.createDiv({ cls: "ba-session-title" });
-      titleEl.innerHTML = result.highlightedTitle;
+      this.renderSegments(titleEl, result.titleSegments);
 
       // 날짜 정보
       const date = new Date(session.updatedAt);
@@ -94,9 +94,9 @@ export class SessionListModal extends Modal {
       });
 
       // 검색어가 있고 첫 메시지에서 매칭된 경우 미리보기 표시
-      if (query.trim() && result.highlightedPreview) {
+      if (query.trim() && result.previewSegments.length > 0) {
         const previewEl = infoEl.createDiv({ cls: "ba-session-preview" });
-        previewEl.innerHTML = result.highlightedPreview;
+        this.renderSegments(previewEl, result.previewSegments);
       }
 
       infoEl.addEventListener("click", () => {
@@ -122,5 +122,16 @@ export class SessionListModal extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+  }
+
+  /** 하이라이트 세그먼트를 DOM API로 안전하게 렌더링 */
+  private renderSegments(container: HTMLElement, segments: HighlightSegment[]): void {
+    for (const seg of segments) {
+      if (seg.highlight) {
+        container.createEl("mark", { text: seg.text, cls: "ba-search-highlight" });
+      } else {
+        container.appendText(seg.text);
+      }
+    }
   }
 }

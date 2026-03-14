@@ -3,7 +3,8 @@
   "name": "Assistant Kiro",
   "version": "0.1.4",
   "minAppVersion": "1.4.0",
-  "description": "AWS Bedrock & Google Gemini 기반 AI 어시스턴트. 멀티 백엔드 채팅, 임베딩을 활용한 볼트 인덱싱 및 Obsidian 제어.",
+  "description": "AI assistant sidebar with dual backend support for AWS Bedrock and Google Gemini. Chat, vault indexing, to-do management, web clipper, and MCP server integration.",
   "author": "",
-  "isDesktopOnly": true
+  "isDesktopOnly": true,
+  "fundingUrl": "https://buymeacoffee.com/teinam"
 }

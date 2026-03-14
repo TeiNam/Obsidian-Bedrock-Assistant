@@ -75,7 +75,7 @@ export class VaultIndexer {
           await this.client.getEmbedding("test");
           this.useEmbeddings = true;
         } catch (error) {
-          console.warn("임베딩 모델 사용 불가, 키워드 검색으로 전환:", error);
+          console.error("임베딩 모델 사용 불가, 키워드 검색으로 전환:", error);
           this.useEmbeddings = false;
           new Notice("⚠️ 임베딩 모델 접근 불가 → 키워드 검색 모드로 인덱싱");
         }

@@ -77,7 +77,6 @@ export async function createTodoNote(
     // 이전 투두의 메모 섹션에서 오늘 이후(오늘 포함) 날짜 항목을 메모에 승계
     const datedNotes = await getDatedNotesFromPrevTodo(app, folder, now);
     if (datedNotes.length > 0) {
-      console.log("[ToDo] 메모 승계 항목:", datedNotes.length, datedNotes.map(n => n.date));
       const noteLines = datedNotes.map((n) => n.raw);
       content = injectNotesIntoMemoSection(content, noteLines);
     }
@@ -270,7 +269,7 @@ Classify ALL items.`;
 
     return classified;
   } catch (e) {
-    console.warn("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
+    console.error("AI 태스크 분류 실패, 첫 번째 섹션에 전부 넣기:", e);
     const result = new Map<string, string[]>();
     result.set(sections[0], tasks);
     return result;
@@ -355,7 +354,6 @@ export async function getDatedNotesFromPrevTodo(
 
   const results: Array<{ date: string; text: string; time: string | null; raw: string }> = [];
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  console.log("[ToDo] 메모 승계 - 이전 파일:", latest.basename, "오늘:", todayStr);
 
   const lines = content.split("\n");
   let inMemo = false;
@@ -373,8 +371,6 @@ export async function getDatedNotesFromPrevTodo(
         // 오늘 이후(오늘 포함)만 승계
         if (parsed.dateStr >= todayStr) {
           results.push({ date: parsed.dateStr, text: parsed.text, time: parsed.time, raw: line });
-        } else {
-          console.log("[ToDo] 메모 스킵 (과거):", parsed.dateStr, "<", todayStr);
         }
       }
     }
