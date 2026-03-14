@@ -1,6 +1,6 @@
 {
   "name": "obsidian-bedrock-assistant",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Obsidian sidebar AI assistant powered by AWS Bedrock & Google Gemini (multi-backend)",
   "main": "main.js",
   "scripts": {
