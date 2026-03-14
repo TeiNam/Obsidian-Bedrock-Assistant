@@ -124,7 +124,7 @@ class McpServerConnection {
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
-      console.warn(`[MCP:${this.name}] stderr:`, data.toString().trim());
+      console.error(`[MCP:${this.name}] stderr:`, data.toString().trim());
     });
 
     this.process.on("error", (err) => {
@@ -305,7 +305,6 @@ class McpServerConnection {
           }
         } else if (msg.id !== undefined && !this.pending.has(msg.id)) {
           // 타임아웃으로 pending Map에서 제거된 요청에 대한 늦은 응답
-          console.debug(`[MCP] 타임아웃 후 늦은 응답 도착 (id: ${msg.id})`);
         }
       } catch {
         // JSON 파싱 실패 무시

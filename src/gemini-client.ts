@@ -53,7 +53,7 @@ export class GeminiClient {
         .filter((m) => m.modelId.startsWith("gemini-"))
         .sort((a, b) => b.modelId.localeCompare(a.modelId));
     } catch (e) {
-      console.warn("모델 목록 조회 실패:", e);
+      console.error("모델 목록 조회 실패:", e);
       return [];
     }
   }
@@ -179,7 +179,6 @@ export class GeminiClient {
       return await this.streamGenerate(model, body, onTextDelta, abortSignal);
     } catch (error) {
       if (abortSignal?.aborted) throw error;
-      console.warn("스트리밍 실패, 일반 호출로 전환:", error);
       return await this.nonStreamGenerate(model, body, onTextDelta);
     }
   }

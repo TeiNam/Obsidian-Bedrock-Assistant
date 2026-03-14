@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filterSessions, highlightText, escapeHtml } from "./session-search";
+import { filterSessions, buildHighlightSegments } from "./session-search";
 import type { ChatSession } from "./types";
 
 /** 테스트용 세션 생성 헬퍼 */
@@ -78,14 +78,16 @@ describe("filterSessions", () => {
 
   it("검색 결과에 하이라이트된 제목이 포함된다", () => {
     const results = filterSessions(sessions, "React");
-    expect(results[0].highlightedTitle).toContain("<mark");
-    expect(results[0].highlightedTitle).toContain("React");
+    const segments = results[0].titleSegments;
+    expect(segments.some(s => s.highlight)).toBe(true);
+    expect(segments.some(s => s.text === "React")).toBe(true);
   });
 
   it("메시지 매칭 시 하이라이트된 미리보기가 포함된다", () => {
     const results = filterSessions(sessions, "번역");
-    expect(results[0].highlightedPreview).toContain("<mark");
-    expect(results[0].highlightedPreview).toContain("번역");
+    const segments = results[0].previewSegments;
+    expect(segments.some(s => s.highlight)).toBe(true);
+    expect(segments.some(s => s.text.includes("번역"))).toBe(true);
   });
 
   it("메시지가 없는 세션은 제목으로만 검색된다", () => {
@@ -107,43 +109,36 @@ describe("filterSessions", () => {
   });
 });
 
-describe("highlightText", () => {
-  it("검색어를 mark 태그로 감싼다", () => {
-    const result = highlightText("Hello World", "world");
-    expect(result).toBe('Hello <mark class="ba-search-highlight">World</mark>');
+describe("buildHighlightSegments", () => {
+  it("검색어를 하이라이트 세그먼트로 분리한다", () => {
+    const segments = buildHighlightSegments("Hello World", "world");
+    expect(segments).toEqual([
+      { text: "Hello ", highlight: false },
+      { text: "World", highlight: true },
+    ]);
   });
 
   it("여러 번 등장하는 검색어를 모두 하이라이트한다", () => {
-    const result = highlightText("test is a test", "test");
-    const markCount = (result.match(/<mark/g) || []).length;
-    expect(markCount).toBe(2);
+    const segments = buildHighlightSegments("test is a test", "test");
+    const highlightCount = segments.filter(s => s.highlight).length;
+    expect(highlightCount).toBe(2);
   });
 
-  it("빈 검색어는 이스케이프된 원본 텍스트를 반환한다", () => {
-    const result = highlightText("Hello <World>", "");
-    expect(result).toBe("Hello &lt;World&gt;");
+  it("빈 검색어는 원본 텍스트를 단일 세그먼트로 반환한다", () => {
+    const segments = buildHighlightSegments("Hello <World>", "");
+    expect(segments).toEqual([{ text: "Hello <World>", highlight: false }]);
   });
 
-  it("HTML 특수문자가 이스케이프된다", () => {
-    const result = highlightText('<script>alert("xss")</script>', "script");
-    expect(result).not.toContain("<script>");
-    expect(result).toContain("&lt;");
+  it("HTML 특수문자가 포함된 텍스트도 원본 그대로 유지한다", () => {
+    const segments = buildHighlightSegments('<script>alert("xss")</script>', "script");
+    // DOM API로 렌더링하므로 HTML 이스케이프 불필요 — 원본 텍스트 유지
+    const allText = segments.map(s => s.text).join("");
+    expect(allText).toBe('<script>alert("xss")</script>');
+    expect(segments.some(s => s.highlight && s.text === "script")).toBe(true);
   });
 
   it("정규식 특수문자가 포함된 검색어도 안전하게 처리된다", () => {
-    const result = highlightText("price is $100.00", "$100");
-    expect(result).toContain("<mark");
-  });
-});
-
-describe("escapeHtml", () => {
-  it("HTML 특수문자를 이스케이프한다", () => {
-    expect(escapeHtml('<div class="test">&')).toBe(
-      "&lt;div class=&quot;test&quot;&gt;&amp;"
-    );
-  });
-
-  it("일반 텍스트는 변경하지 않는다", () => {
-    expect(escapeHtml("Hello World")).toBe("Hello World");
+    const segments = buildHighlightSegments("price is $100.00", "$100");
+    expect(segments.some(s => s.highlight)).toBe(true);
   });
 });
