@@ -427,6 +427,12 @@ export class GeminiSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
+            // 채팅 뷰의 모델 캐시 초기화 및 UI 재빌드
+            const chatLeaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
+            for (const leaf of chatLeaves) {
+              (leaf.view as any).refreshModelList?.();
+              (leaf.view as any).rebuildUI?.();
+            }
             this.display(); // UI 재렌더링
           })
       );

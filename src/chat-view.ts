@@ -1021,9 +1021,25 @@ export class ChatView extends ItemView {
   // 모델 선택
   // ============================================
 
+  // 현재 백엔드에 맞는 채팅 모델 ID를 반환
+  private get activeChatModel(): string {
+    return this.plugin.settings.aiBackend === "bedrock"
+      ? this.plugin.settings.bedrockChatModel
+      : this.plugin.settings.chatModel;
+  }
+
+  // 현재 백엔드에 맞는 채팅 모델 ID를 설정
+  private set activeChatModel(modelId: string) {
+    if (this.plugin.settings.aiBackend === "bedrock") {
+      this.plugin.settings.bedrockChatModel = modelId;
+    } else {
+      this.plugin.settings.chatModel = modelId;
+    }
+  }
+
   // 모델 라벨 업데이트 (현재 선택된 모델 표시)
   private updateModelLabel(): void {
-    const modelId = this.plugin.settings.chatModel;
+    const modelId = this.activeChatModel;
     const displayName = this.getModelDisplayName(modelId);
     this.modelLabelEl.setText(displayName);
   }
@@ -1088,7 +1104,7 @@ export class ChatView extends ItemView {
       // 인라인 드롭다운 생성 (위로 열림)
       this.modelDropdownEl = this.modelSelectorEl.createDiv({ cls: "ba-model-dropdown" });
 
-      const currentModelId = this.plugin.settings.chatModel;
+      const currentModelId = this.activeChatModel;
       for (const model of this.cachedModels) {
         const item = this.modelDropdownEl.createDiv({ cls: "ba-model-dropdown-item" });
         if (model.modelId === currentModelId) {
@@ -1100,7 +1116,7 @@ export class ChatView extends ItemView {
           item.createSpan({ cls: "ba-model-dropdown-check", text: "✓" });
         }
         item.addEventListener("click", async () => {
-          this.plugin.settings.chatModel = model.modelId;
+          this.activeChatModel = model.modelId;
           await this.plugin.saveSettings();
           this.updateModelLabel();
           this.closeModelDropdown();
@@ -1289,7 +1305,7 @@ export class ChatView extends ItemView {
       if (!this.contextRingEl || !this.contextLabelEl) return;
 
       // 모델별 컨텍스트 윈도우 크기 (토큰)
-      const modelId = this.plugin.settings.chatModel;
+      const modelId = this.activeChatModel;
       const contextWindow = this.getModelContextWindow();
 
       // 현재 사용 중인 토큰 추정
