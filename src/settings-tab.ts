@@ -52,7 +52,8 @@ const I18N = {
     systemPromptCancel: "Cancel",
     ux: "User Experience",
     greeting: "Welcome Greeting",
-    greetingDesc: "Greeting shown when opening the sidebar",
+    greetingDesc: "Greeting shown when opening the sidebar (leave empty for default)",
+    greetingPlaceholder: "How can I help you?",
     autoAttach: "Auto-attach Active Note",
     autoAttachDesc: "Automatically include the currently open note as context",
     persistChat: "Save Chat History",
@@ -166,7 +167,8 @@ const I18N = {
     systemPromptCancel: "취소",
     ux: "사용자 경험",
     greeting: "환영 인사",
-    greetingDesc: "사이드바를 열 때 표시되는 인사말",
+    greetingDesc: "사이드바를 열 때 표시되는 인사말 (비워두면 기본 인사말 사용)",
+    greetingPlaceholder: "무엇을 도와드릴까요?",
     autoAttach: "현재 노트 자동 첨부",
     autoAttachDesc: "메시지 전송 시 현재 열려있는 노트를 자동으로 컨텍스트에 포함합니다",
     persistChat: "대화 히스토리 저장",
@@ -280,7 +282,8 @@ const I18N = {
     systemPromptCancel: "キャンセル",
     ux: "ユーザー体験",
     greeting: "ウェルカムメッセージ",
-    greetingDesc: "サイドバーを開いた時に表示される挨拶",
+    greetingDesc: "サイドバーを開いた時に表示される挨拶（空欄でデフォルト）",
+    greetingPlaceholder: "何かお手伝いできますか？",
     autoAttach: "アクティブノートを自動添付",
     autoAttachDesc: "現在開いているノートをコンテキストとして自動的に含める",
     persistChat: "チャット履歴を保存",
@@ -648,6 +651,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       .setDesc(t.greetingDesc)
       .addText((text) =>
         text
+          .setPlaceholder(t.greetingPlaceholder)
           .setValue(this.plugin.settings.welcomeGreeting)
           .onChange(async (value) => {
             this.plugin.settings.welcomeGreeting = value;
