@@ -1,11 +1,16 @@
 name: Release Obsidian Plugin
 
 on:
-  push:
-    branches:
-      - main
-      - kiro-edition
-      - gemini-edition
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "릴리즈 대상 브랜치"
+        required: true
+        type: choice
+        options:
+          - main
+          - kiro-edition
+        default: main
 
 permissions:
   contents: write
@@ -18,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref }}
+          ref: ${{ inputs.branch }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,11 +43,10 @@ jobs:
       - name: Determine edition prefix
         id: edition
         run: |
-          BRANCH="${GITHUB_REF#refs/heads/}"
+          BRANCH="${{ inputs.branch }}"
           case "$BRANCH" in
-            kiro-edition)  PREFIX="kiro" ;;
-            gemini-edition) PREFIX="gemini" ;;
-            *)             PREFIX="bedrock-assistant" ;;
+            kiro-edition) PREFIX="kiro" ;;
+            *)            PREFIX="bedrock-assistant" ;;
           esac
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
