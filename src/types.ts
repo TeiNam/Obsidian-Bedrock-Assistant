@@ -107,7 +107,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   awsSecretAccessKey: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
-  bedrockEmbeddingModel: "",
+  bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
 };
 
 // 채팅 메시지 타입

@@ -305,11 +305,13 @@ export class BedrockClient implements IAiClient {
 
   // Titan 임베딩 생성
   async getEmbedding(text: string): Promise<number[]> {
+    // 임베딩 모델 ID가 비어있으면 기본값 사용
+    const modelId = this.settings.bedrockEmbeddingModel || "amazon.titan-embed-text-v2:0";
     // 텍스트 길이 제한 (Titan v2 최대 8192 토큰)
     const truncated = text.slice(0, 20000);
 
     const command = new InvokeModelCommand({
-      modelId: this.settings.bedrockEmbeddingModel,
+      modelId,
       contentType: "application/json",
       accept: "application/json",
       body: JSON.stringify({
