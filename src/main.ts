@@ -215,6 +215,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   /** 백엔드 전환 시 기존 클라이언트를 폐기하고 새 클라이언트를 생성한다 */
   recreateAiClient(): void {
     this.aiClient = createAiClient(this.settings);
+    // 인덱서의 AI 클라이언트 참조도 갱신
+    this.indexer.client = this.aiClient;
   }
 
   // 인덱스 로드/저장

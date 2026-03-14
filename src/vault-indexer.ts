@@ -4,7 +4,7 @@ import type { IAiClient, VaultIndexEntry, IndexResult, IndexFailure } from "./ty
 // 볼트 인덱싱 및 검색
 export class VaultIndexer {
   private app: App;
-  private client: IAiClient;
+  client: IAiClient;
   private index: Map<string, VaultIndexEntry> = new Map();
   private indexing = false;
   private useEmbeddings = true;
