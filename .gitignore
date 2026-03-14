@@ -18,5 +18,5 @@ Thumbs.db
 # 소스맵
 *.map
 
-# Kiro 스펙 (로컬 전용)
+# Kiro - specs 제외 (agents, steering만 동기화)
 .kiro/specs/
