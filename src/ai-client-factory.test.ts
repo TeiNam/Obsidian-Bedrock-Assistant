@@ -111,8 +111,8 @@ describe("createAiClient", () => {
     });
 
     for (const method of REQUIRED_METHODS) {
-      expect(typeof (bedrockClient as Record<string, unknown>)[method]).toBe("function");
-      expect(typeof (geminiClient as Record<string, unknown>)[method]).toBe("function");
+      expect(typeof (bedrockClient as unknown as Record<string, unknown>)[method]).toBe("function");
+      expect(typeof (geminiClient as unknown as Record<string, unknown>)[method]).toBe("function");
     }
   });
 });
@@ -191,7 +191,7 @@ describe("Property 1: 팩토리 클라이언트 생성 정확성", () => {
 
         // IAiClient 인터페이스의 모든 메서드 존재 확인
         for (const method of REQUIRED_METHODS) {
-          expect(typeof (client as Record<string, unknown>)[method]).toBe("function");
+          expect(typeof (client as unknown as Record<string, unknown>)[method]).toBe("function");
         }
       }),
       { numRuns: 100 },
@@ -240,7 +240,7 @@ describe("Property 4: 활성 백엔드 모델 설정 전달", () => {
         const client = createAiClient(settings);
 
         // 생성자에 전달된 설정 객체를 캡처하여 검증
-        const capturedSettings = (client as Record<string, unknown>)._capturedSettings as GeminiAssistantSettings;
+        const capturedSettings = (client as unknown as Record<string, unknown>)._capturedSettings as GeminiAssistantSettings;
 
         if (settings.aiBackend === "bedrock") {
           // Bedrock 백엔드: bedrockChatModel, bedrockEmbeddingModel이 전달되어야 함
@@ -262,7 +262,7 @@ describe("Property 4: 활성 백엔드 모델 설정 전달", () => {
         const client = createAiClient(settings);
 
         // 생성자에 전달된 전체 설정 객체 확인
-        const capturedSettings = (client as Record<string, unknown>)._capturedSettings as GeminiAssistantSettings;
+        const capturedSettings = (client as unknown as Record<string, unknown>)._capturedSettings as GeminiAssistantSettings;
 
         // 양쪽 백엔드의 모델 필드가 모두 설정 객체에 포함되어야 함
         expect(capturedSettings.chatModel).toBe(settings.chatModel);

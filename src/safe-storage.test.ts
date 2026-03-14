@@ -104,7 +104,7 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
 
     // 모든 민감 필드가 "enc:" 접두사로 암호화되어야 함
     for (const field of SENSITIVE_FIELDS) {
-      const value = (encrypted as Record<string, unknown>)[field] as string;
+      const value = (encrypted as unknown as Record<string, unknown>)[field] as string;
       expect(isEncrypted(value)).toBe(true);
     }
   });
@@ -194,7 +194,7 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
 
         // 모든 민감 필드가 원본 값으로 복원되어야 함
         for (const field of SENSITIVE_FIELDS) {
-          expect((decrypted as Record<string, unknown>)[field]).toBe(value);
+          expect((decrypted as unknown as Record<string, unknown>)[field]).toBe(value);
         }
       }),
       { numRuns: 100 },
