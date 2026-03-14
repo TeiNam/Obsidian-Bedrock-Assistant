@@ -199,6 +199,15 @@ export default class GeminiAssistantPlugin extends Plugin {
       const credentials = loadCredentialsFromLocal();
       this.settings = { ...raw, ...credentials } as GeminiAssistantSettings;
     }
+
+    // 마이그레이션: 임베딩 모델이 빈 문자열이면 기본값으로 복원
+    // (이전 버전에서 빈 문자열로 저장된 경우 대응)
+    if (!this.settings.embeddingModel) {
+      this.settings.embeddingModel = DEFAULT_SETTINGS.embeddingModel;
+    }
+    if (!this.settings.bedrockEmbeddingModel) {
+      this.settings.bedrockEmbeddingModel = DEFAULT_SETTINGS.bedrockEmbeddingModel;
+    }
   }
 
   async saveSettings(): Promise<void> {
