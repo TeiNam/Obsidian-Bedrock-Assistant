@@ -1,7 +1,7 @@
 {
   "id": "assistant-kiro",
   "name": "Assistant Kiro",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "minAppVersion": "1.4.0",
   "description": "AI assistant sidebar with dual backend support for AWS Bedrock and Google Gemini. Chat, vault indexing, to-do management, web clipper, and MCP server integration.",
   "author": "",
