@@ -1,6 +1,6 @@
 {
   "name": "obsidian-assistant-kiro",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Obsidian sidebar AI assistant powered by AWS Bedrock & Google Gemini (multi-backend)",
   "main": "main.js",
   "scripts": {
