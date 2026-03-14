@@ -7,7 +7,9 @@ import { BRANDING, updateBranding } from "./branding";
 const I18N = {
   en: {
     title: BRANDING.settingsTitle.en,
-    pluginDesc: "An AI assistant sidebar for Obsidian powered by Google Gemini. Chat with Gemini models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
+    pluginDesc: "An AI assistant sidebar for Obsidian with dual backend support — AWS Bedrock and Google Gemini. Chat with AI models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
+    readmeLabel: "📖 Documentation",
+    readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
     languageDesc: "UI language for settings",
@@ -122,7 +124,9 @@ const I18N = {
   },
   ko: {
     title: BRANDING.settingsTitle.ko,
-    pluginDesc: "Google Gemini 기반 Obsidian AI 어시스턴트 사이드바입니다. Gemini 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
+    pluginDesc: "AWS Bedrock와 Google Gemini 듀얼 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바입니다. AI 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
+    readmeLabel: "📖 사용 가이드",
+    readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
     languageDesc: "설정 UI 언어",
@@ -237,7 +241,9 @@ const I18N = {
   },
   ja: {
     title: BRANDING.settingsTitle.ja,
-    pluginDesc: "Google Gemini搭載のObsidian AIアシスタントサイドバーです。Geminiモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
+    pluginDesc: "AWS BedrockとGoogle Geminiのデュアルバックエンドに対応したObsidian AIアシスタントサイドバーです。AIモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
+    readmeLabel: "📖 ドキュメント",
+    readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
     language: "言語",
     languageDesc: "設定UIの言語",
@@ -370,9 +376,35 @@ export class GeminiSettingTab extends PluginSettingTab {
     // 설정 페이지 타이틀을 현재 브랜딩에서 동적으로 가져옴
     containerEl.createEl("h2", { text: BRANDING.settingsTitle[lang] || BRANDING.settingsTitle.en });
 
-    // 플러그인 설명 + 후원 배너 (하나의 박스)
+    // 플러그인 설명 + README 링크 + 후원 배너 (하나의 박스)
     const aboutBox = containerEl.createDiv({ cls: "ba-about-box" });
     aboutBox.createEl("p", { text: t.pluginDesc, cls: "ba-about-desc" });
+
+    // README 링크 (플러그인 폴더 내 파일을 GitHub에서 열기)
+    const readmeRow = aboutBox.createDiv({ cls: "ba-about-readme" });
+    const readmeLink = readmeRow.createEl("a", {
+      text: t.readmeLabel,
+      cls: "ba-readme-link",
+    });
+    // 플러그인 폴더 내 README 파일 경로를 구성하여 Obsidian에서 열기
+    const readmeFilePath = `${this.app.vault.configDir}/plugins/${BRANDING.pluginId}/${t.readmeFile}`;
+    readmeLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        const content = await this.app.vault.adapter.read(readmeFilePath);
+        // 임시 마크다운 파일로 열기 대신 새 탭에서 표시
+        const leaf = this.app.workspace.getLeaf("tab");
+        await leaf.openFile(
+          this.app.vault.getAbstractFileByPath(readmeFilePath) as any
+        ).catch(() => {
+          // 플러그인 폴더 파일은 vault 파일이 아니므로 Notice로 안내
+          window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/kiro-edition/${t.readmeFile}`);
+        });
+      } catch {
+        window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/kiro-edition/${t.readmeFile}`);
+      }
+    });
+
     const sponsorRow = aboutBox.createDiv({ cls: "ba-about-sponsor" });
     sponsorRow.createSpan({ text: t.sponsorLabel });
     const sponsorLink = sponsorRow.createEl("a", {
@@ -430,6 +462,8 @@ export class GeminiSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
+            // 리본 아이콘, 뷰 탭 등 UI 브랜딩 갱신
+            this.plugin.refreshBranding();
             // 채팅 뷰의 모델 캐시 초기화 및 UI 재빌드
             const chatLeaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of chatLeaves) {

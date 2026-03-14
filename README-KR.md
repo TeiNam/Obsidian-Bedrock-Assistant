@@ -1,47 +1,37 @@
-# Bedrock Assistant — Kiro Edition
+# Assistant Kiro
 
-[English](README.md) | [한국어](README-KR.md)
+[English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
+![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://qr.kakaopay.com/Ej74xpc815dc06149)
 
-AWS Bedrock 기반 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
-이 버전은 **Kiro Edition**으로, AI 기반 IDE인 [Kiro](https://kiro.dev)를 활용하여 개발·유지보수됩니다.
-
-## Kiro Edition — 차이점
-
-### iCloud 안전 자격증명 저장
-
-기존(main) 브랜치에서는 API 키를 암호화하여 볼트 내 `data.json`에 저장합니다. 이 파일은 iCloud를 통해 기기 간 동기화되는데, 암호화가 각 기기의 OS 키체인에 바인딩되어 있어 다른 기기에서는 복호화할 수 없는 문제가 있었습니다.
-
-Kiro Edition에서는 자격증명을 **iCloud 동기화 대상이 아닌 로컬 전용 경로**(`~/Library/Application Support/obsidian/`)에 별도 저장합니다. 모델, 리전, UI 설정 등 나머지 설정은 기존처럼 정상 동기화됩니다.
-
-> **⚠️ 중요:** API 키는 기기별로 저장됩니다. iCloud로 볼트를 동기화하는 경우, 각 기기에서 AWS 자격증명을 별도로 설정해야 합니다.
-
-### 자동 릴리즈
-
-`kiro-edition` 브랜치에 푸시하면 GitHub Actions가 자동으로 테스트 → 빌드 → 패치 버전 증가 → GitHub Release 생성을 수행합니다.
+**AWS Bedrock**와 **Google Gemini** 듀얼 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
+설정 탭에서 백엔드를 전환할 수 있으며, 재설치 없이 바로 적용됩니다. AI 기반 IDE인 [Kiro](https://kiro.dev)로 개발·유지보수됩니다.
 
 ## 주요 기능
 
-- **Claude 채팅** — AWS Bedrock Claude 모델과 사이드바에서 대화
-- **볼트 시맨틱 검색** — Titan Embedding으로 노트를 인덱싱하고 의미 기반 검색
+- **듀얼 AI 백엔드** — 설정에서 AWS Bedrock (Claude)와 Google Gemini를 전환
+- **스트리밍 채팅** — 사이드바에서 실시간 스트리밍 응답
+- **볼트 시맨틱 검색** — 임베딩(Titan / Gemini)으로 노트를 인덱싱하고 의미 기반 검색
 - **태그 자동 생성** — 노트 내용을 분석하여 태그 자동 추천
-- **템플릿** — 커스텀 템플릿 생성/적용 (변수 치환 지원)
-- **To-Do 관리** — 일일 To-Do 생성, 미완료 항목 자동 승계 (계층 구조 유지), 아카이브
-- **아카이브 비우기** — 오래된 아카이브 파일 정리 모달 (하위 폴더 재귀 탐색, 빈 폴더 자동 삭제, 생성일 기준 필터링)
+- **To-Do 관리** — 템플릿 기반 일일 To-Do 생성, 미완료 항목 자동 승계 (계층 구조 유지), 아카이브
+- **아카이브 비우기** — 모달 UI로 오래된 아카이브 파일 정리
 - **웹 클리퍼** — URL로 웹 페이지를 가져와 AI로 번역/요약 후 마크다운 노트로 저장
-- **MCP 서버 연동** — Model Context Protocol 서버 연결 (uvx, Docker 지원)
-- **파일 관리** — AI를 통한 노트 생성/수정/이동/삭제
+- **MCP 서버 연동** — Model Context Protocol 서버 연결 (uvx, Docker)
+- **파일 관리** — AI 도구 호출을 통한 노트 생성/수정/이동/삭제
 - **다국어 지원** — 한국어 / English / 日本語
-- **파일 첨부** — 드래그앤드롭, 클립보드, 파일 검색으로 컨텍스트 첨부
-- **대화 세션 관리** — 지난 대화 저장/복원
-- **시스템 프롬프트 모달** — 전용 팝업 모달에서 시스템 프롬프트 편집
+- **파일 첨부** — 드래그앤드롭, 클립보드, 파일 검색, 이미지/PDF 첨부
+- **대화 세션 관리** — 지난 대화 저장/복원 및 검색
+- **일일 회고** — To-Do 기반 AI 일일 회고 생성
+- **컨텍스트 윈도우 표시** — 토큰 사용량을 시각적 링으로 표시
+- **Obsidian 스킬** — 시스템 프롬프트에 Obsidian 전용 지식 (Dataview, Tasks, Templater) 추가
+- **파괴적 도구 실행 확인** — 파일 수정 작업 전 선택적 확인 대화상자
 
 ## 설치
 
@@ -57,43 +47,114 @@ Kiro Edition에서는 자격증명을 **iCloud 동기화 대상이 아닌 로컬
 2. 볼트의 `.obsidian/plugins/assistant-kiro/` 폴더에 복사
 3. 설정 → 커뮤니티 플러그인에서 활성화
 
-## 설정
+## 빠른 시작
 
-### AWS 인증 (3가지 방식)
+1. 설정 → Assistant Kiro 설정 열기
+2. AI 백엔드 선택 (Gemini 또는 Bedrock)
+3. 자격증명 입력:
+   - **Gemini**: [Google AI Studio](https://aistudio.google.com/apikey)에서 발급받은 API 키 입력
+   - **Bedrock**: AWS Access Key, Secret Key, Region 입력
+4. 왼쪽 리본의 Assistant Kiro 아이콘을 클릭하여 사이드바 열기
+5. 대화 시작!
 
-| 방식 | 설명 |
+## AI 백엔드 설정
+
+### 백엔드 전환
+
+설정 → Assistant Kiro 설정 → AI 백엔드 드롭다운에서 전환합니다. 전환 즉시 사이드바 아이콘, 브랜딩, 모델 목록이 업데이트됩니다. 각 백엔드의 자격증명은 독립적으로 저장됩니다.
+
+### Google Gemini
+
+| 설정 | 설명 |
 |------|------|
-| **Manual** | Access Key / Secret Key 직접 입력 |
-| **Env / Profile** | 환경변수 또는 `~/.aws/credentials` 프로파일 |
-| **API Key** | Bedrock API Key (Bearer 토큰) |
+| API Key | [Google AI Studio](https://aistudio.google.com/apikey)에서 발급받은 Gemini API 키 |
+| 채팅 모델 | 사용 가능한 Gemini 모델 선택 (드롭다운) |
+| 임베딩 모델 | 볼트 인덱싱용 모델 (기본값: `text-embedding-004`) |
 
-> **참고:** 어떤 인증 방식을 선택하든, 자격증명은 각 기기의 로컬에만 저장되며 iCloud를 통해 동기화되지 않습니다. 사용하는 모든 기기에서 자격증명을 각각 설정해야 합니다.
+### AWS Bedrock
 
-### 필요 IAM 권한
+| 설정 | 설명 |
+|------|------|
+| Access Key ID | AWS IAM 액세스 키 |
+| Secret Access Key | AWS IAM 시크릿 키 |
+| Region | AWS 리전 (예: `us-east-1`) |
+| 채팅 모델 | 사용 가능한 Bedrock 모델 선택 (드롭다운) |
+| 임베딩 모델 | 볼트 인덱싱용 모델 (기본값: `amazon.titan-embed-text-v2:0`) |
 
-- `bedrock:InvokeModelWithResponseStream`
-- `bedrock:InvokeModel`
-- `bedrock:ListFoundationModels`
+#### 필요 IAM 권한
 
-## 웹 클리퍼
+```
+bedrock:InvokeModelWithResponseStream
+bedrock:InvokeModel
+bedrock:ListFoundationModels
+```
 
-웹 페이지를 가져와 번역(필요 시)하고 요약하여 마크다운 노트로 저장합니다.
+## 사용 가이드
 
-- 채팅 헤더의 지구본 아이콘 클릭 → URL 입력
-- 설정에서 저장 폴더 및 전용 AI 모델 지정 가능
-- 언어 감지: 같은 언어 = 요약만, 다른 언어 = 번역 + 요약
-- 프론트매터에 출처 URL, 날짜, 언어 포함
+### 채팅
 
-## To-Do & 아카이브
+- 메시지를 입력하고 Enter로 전송 (Shift+Enter로 줄바꿈)
+- AI가 스트리밍으로 응답하며, 마크다운으로 렌더링됩니다
+- 재생성 버튼으로 다른 응답을 받을 수 있습니다
+- Escape 키로 생성 중 중단 가능
 
-- **To-Do 생성**: `{{date}}` / `{{prevDate}}` 변수를 지원하는 템플릿으로 일일 노트 생성
-- **미완료 승계**: 전일 미완료 항목을 계층 구조를 유지하며 자동 승계
-- **자동 아카이브**: 새 To-Do 생성 시 설정 일수를 초과한 파일을 아카이브 폴더로 이동
-- **아카이브 비우기**: 전용 버튼으로 오래된 아카이브 파일 삭제 (폴더 및 기준 일수 설정 가능, 파일 생성일 기준)
+### 파일 첨부
+
+| 방법 | 설명 |
+|------|------|
+| 자동 첨부 | 현재 열린 노트가 자동으로 컨텍스트에 포함 (설정에서 토글) |
+| 수동 첨부 | 입력 툴바의 파일 추가 또는 검색 아이콘 클릭 |
+| 드래그 앤 드롭 | 파일을 입력 영역에 직접 드래그 |
+| 클립보드 붙여넣기 | 스크린샷이나 이미지를 클립보드에서 붙여넣기 |
+| 바이너리 파일 | 클립 아이콘으로 이미지 (PNG, JPG, GIF, WebP) 및 PDF 첨부 |
+
+### 볼트 인덱싱
+
+1. 사이드바 헤더의 검색 아이콘 클릭 (또는 커맨드 팔레트: "볼트 인덱싱")
+2. 모든 마크다운 파일이 임베딩으로 인덱싱됩니다
+3. 인덱싱 완료 후 AI가 질문에 답할 때 볼트를 시맨틱 검색할 수 있습니다
+4. 파일 수정 시 자동으로 재인덱싱됩니다 (2초 디바운스)
+
+### 태그 생성
+
+1. 에디터에서 노트 열기
+2. 사이드바 액션 툴바의 태그 아이콘 클릭
+3. AI가 노트를 분석하여 3~5개 태그를 추천
+4. 태그가 노트의 프론트매터에 자동 추가됩니다
+
+### To-Do 관리
+
+1. 설정에서 To-Do 폴더와 템플릿 설정
+2. 체크 아이콘을 클릭하여 오늘의 To-Do 생성
+3. 전일 미완료 항목이 계층 구조를 유지하며 자동 승계
+4. 설정된 일수를 초과한 To-Do 파일은 자동 아카이브
+
+### 일일 회고
+
+1. 액션 툴바의 책 아이콘 클릭
+2. 오늘 할 일을 모두 끝마쳤는지 확인
+3. AI가 회고 요약을 생성하여 오늘의 To-Do에 추가
+
+### 웹 클리퍼
+
+1. 액션 툴바의 지구본 아이콘 클릭
+2. URL 입력
+3. AI가 페이지를 가져와 번역(필요 시)하고 요약
+4. 프론트매터(출처 URL, 날짜, 언어)와 함께 마크다운 노트로 저장
+
+### 아카이브 비우기
+
+1. 액션 툴바의 휴지통 아이콘 클릭
+2. 아카이브 폴더에서 삭제할 파일 선택
+3. 파일 생성일과 설정된 기준 일수로 필터링
+
+### 웹 서치
+
+입력 툴바의 지구본 버튼을 토글하여 웹 서치를 활성화합니다. 활성화 시 AI가 최신 정보를 웹에서 검색하여 출처 URL과 함께 답변에 포함합니다.
 
 ## MCP 서버 설정
 
-설정 탭 → MCP Servers → Edit Config에서 JSON 형식으로 설정합니다.
+설정 탭 → MCP 서버 → 설정 편집에서 JSON 형식으로 설정합니다:
 
 ```json
 {
@@ -106,7 +167,13 @@ Kiro Edition에서는 자격증명을 **iCloud 동기화 대상이 아닌 로컬
 }
 ```
 
-`uvx` (Python)와 `docker` 명령 모두 지원합니다. GUI 환경에서 명령 경로를 자동으로 탐색합니다.
+`uvx` (Python)와 `docker` 명령 모두 지원합니다. GUI 환경에서 명령 경로를 자동으로 탐색합니다. 연결된 서버는 채팅 입력 하단에 상태 인디케이터로 표시됩니다.
+
+## 자격증명 저장
+
+자격증명은 **iCloud 동기화 대상이 아닌 로컬 전용 경로**(`~/Library/Application Support/obsidian/`)에 저장됩니다. 나머지 설정은 `data.json`을 통해 정상 동기화됩니다.
+
+> **참고:** API 키는 기기별로 저장됩니다. iCloud로 볼트를 동기화하는 경우, 각 기기에서 자격증명을 별도로 설정해야 합니다.
 
 ## 라이선스
 

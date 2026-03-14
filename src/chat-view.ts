@@ -1371,6 +1371,7 @@ export class ChatView extends ItemView {
 
   refreshModelList(): void {
     this.cachedModels = [];
+    this.updateModelLabel();
   }
 
   // 채팅 폰트 크기 적용

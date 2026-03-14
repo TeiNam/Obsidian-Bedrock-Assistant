@@ -1,11 +1,11 @@
-import { Notice, Plugin, TFile, addIcon } from "obsidian";
+import { Notice, Plugin, TFile, addIcon, setIcon } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
-import { BRANDING, updateBranding } from "./branding";
+import { BRANDING, updateBranding, getBranding } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import {
   decryptSettings,
@@ -30,6 +30,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   mcpManager!: McpManager;
   // 인덱싱 진행률 표시용 상태바 아이템
   private statusBarItem!: HTMLElement;
+  // 리본 아이콘 엘리먼트 참조 (브랜딩 전환 시 갱신용)
+  private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -39,10 +41,8 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 초기 브랜딩 설정 (로드된 설정의 aiBackend에 맞게 갱신)
     updateBranding(this.settings.aiBackend);
 
-    // 커스텀 아이콘 등록 (SVG가 있는 경우에만)
-    if (BRANDING.icon.svg) {
-      addIcon(BRANDING.icon.id, BRANDING.icon.svg);
-    }
+    // 커스텀 아이콘 등록 — 양쪽 백엔드 아이콘 모두 등록 (전환 시 즉시 사용 가능하도록)
+    this.registerBrandingIcons();
 
     // AI 클라이언트 초기화 (팩토리 패턴으로 백엔드에 따라 적절한 클라이언트 생성)
     this.aiClient = createAiClient(this.settings);
@@ -80,7 +80,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     });
 
     // 리본 아이콘 추가
-    this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
+    this.ribbonIconEl = this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
       this.activateView();
     });
 
@@ -217,6 +217,30 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.aiClient = createAiClient(this.settings);
     // 인덱서의 AI 클라이언트 참조도 갱신
     this.indexer.client = this.aiClient;
+  }
+
+  /** 양쪽 백엔드의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
+  private registerBrandingIcons(): void {
+    const bedrock = getBranding("bedrock");
+    const gemini = getBranding("gemini");
+    if (bedrock.icon.svg) addIcon(bedrock.icon.id, bedrock.icon.svg);
+    if (gemini.icon.svg) addIcon(gemini.icon.id, gemini.icon.svg);
+  }
+
+  /** 백엔드 전환 후 리본 아이콘, 뷰 탭 등 UI 브랜딩을 갱신한다 */
+  refreshBranding(): void {
+    // 리본 아이콘 갱신
+    if (this.ribbonIconEl) {
+      this.ribbonIconEl.empty();
+      setIcon(this.ribbonIconEl, BRANDING.icon.id);
+      this.ribbonIconEl.setAttribute("aria-label", BRANDING.displayName);
+    }
+    // 열려있는 뷰의 탭 아이콘/타이틀 갱신
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      // Obsidian의 leaf 탭 UI를 갱신하기 위해 뷰 상태를 다시 설정
+      (leaf as any).updateHeader?.();
+    }
   }
 
   // 인덱스 로드/저장

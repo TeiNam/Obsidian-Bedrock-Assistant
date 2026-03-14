@@ -1,47 +1,37 @@
-# Bedrock Assistant — Kiro Edition
+# Assistant Kiro
 
-[English](README.md) | [한국어](README-KR.md)
+[English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
+![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-An AI assistant sidebar plugin for Obsidian, powered by AWS Bedrock.
-This is the **Kiro Edition** — built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
-
-## Kiro Edition — What's Different?
-
-### iCloud-Safe Credential Storage
-
-The main branch stores API keys (encrypted) inside the vault's `data.json`, which gets synced via iCloud. Since encryption is tied to each device's OS keychain, synced keys cannot be decrypted on other machines.
-
-The Kiro Edition solves this by storing credentials in a **local-only path** (`~/Library/Application Support/obsidian/`) that is **not synced by iCloud**. All other settings (model, region, UI preferences, etc.) continue to sync normally.
-
-> **⚠️ Important:** API keys are stored per-device. After setting up iCloud sync, you need to configure your AWS credentials on each device separately.
-
-### Automated Releases
-
-Every push to the `kiro-edition` branch triggers a GitHub Actions workflow that automatically runs tests, builds, bumps the patch version, and creates a GitHub Release with the plugin artifacts.
+An AI assistant sidebar plugin for Obsidian with dual backend support — **AWS Bedrock** and **Google Gemini**.
+Switch between backends from the settings tab without reinstalling. Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
 
 ## Features
 
-- **Claude Chat** — Chat with AWS Bedrock Claude models directly from the sidebar
-- **Semantic Vault Search** — Index notes with Titan Embedding and search by meaning
+- **Dual AI Backend** — Switch between AWS Bedrock (Claude) and Google Gemini from settings
+- **Streaming Chat** — Real-time streaming responses in the sidebar
+- **Semantic Vault Search** — Index notes with embeddings (Titan / Gemini) and search by meaning
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags
-- **Templates** — Create and apply custom templates with variable substitution
-- **To-Do Management** — Daily to-do creation, automatic carry-over of incomplete items (preserving hierarchy), archiving old to-dos
-- **Archive Cleanup** — Clean up old archived files with a modal UI (recursive subfolder scan, empty folder removal, creation-date based filtering)
-- **Web Clipper** — Fetch any web page by URL, translate and summarize via AI, save as a markdown note with frontmatter
-- **MCP Server Integration** — Connect Model Context Protocol servers (uvx, Docker supported)
-- **File Management** — Create, edit, move, and delete notes through AI
+- **To-Do Management** — Daily to-do creation from templates, automatic carry-over of incomplete items (preserving hierarchy), archiving
+- **Archive Cleanup** — Clean up old archived files with a modal UI
+- **Web Clipper** — Fetch a web page by URL, translate and summarize via AI, save as markdown
+- **MCP Server Integration** — Connect Model Context Protocol servers (uvx, Docker)
+- **File Management** — Create, edit, move, and delete notes through AI tool calls
 - **Multilingual UI** — English, Korean (한국어), Japanese (日本語)
-- **File Attachments** — Attach context via drag-and-drop, clipboard, or file search
-- **Chat Session History** — Save and restore past conversations
-- **System Prompt Modal** — Edit system prompt in a dedicated popup modal
+- **File Attachments** — Attach context via drag-and-drop, clipboard, file search, or images/PDFs
+- **Chat Session History** — Save and restore past conversations with search
+- **Daily Retrospective** — Generate an AI-powered daily review based on your To-Do
+- **Context Window Indicator** — Visual ring showing token usage
+- **Obsidian Skills** — Enable Obsidian-specific knowledge (Dataview, Tasks, Templater) in the system prompt
+- **Destructive Tool Confirmation** — Optional confirmation dialog before file-modifying operations
 
 ## Installation
 
@@ -57,43 +47,114 @@ Every push to the `kiro-edition` branch triggers a GitHub Actions workflow that 
 2. Copy them to `.obsidian/plugins/assistant-kiro/` in your vault
 3. Enable the plugin in Settings → Community Plugins
 
-## Configuration
+## Quick Start
 
-### AWS Authentication (3 methods)
+1. Open Settings → Assistant Kiro Settings
+2. Choose your AI backend (Gemini or Bedrock)
+3. Enter your credentials:
+   - **Gemini**: Paste your API key from [Google AI Studio](https://aistudio.google.com/apikey)
+   - **Bedrock**: Enter AWS Access Key, Secret Key, and Region
+4. Click the Assistant Kiro icon in the left ribbon to open the sidebar
+5. Start chatting!
+
+## AI Backend Configuration
+
+### Switching Backends
+
+Open Settings → Assistant Kiro Settings → AI Backend dropdown. Switching instantly updates the sidebar icon, branding, and model list. Your credentials for each backend are saved independently.
+
+### Google Gemini
+
+| Setting | Description |
+|---------|-------------|
+| API Key | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) |
+| Chat Model | Select from available Gemini models (dropdown) |
+| Embedding Model | Model for vault indexing (default: `text-embedding-004`) |
+
+### AWS Bedrock
+
+| Setting | Description |
+|---------|-------------|
+| Access Key ID | AWS IAM access key |
+| Secret Access Key | AWS IAM secret key |
+| Region | AWS region (e.g. `us-east-1`) |
+| Chat Model | Select from available Bedrock models (dropdown) |
+| Embedding Model | Model for vault indexing (default: `amazon.titan-embed-text-v2:0`) |
+
+#### Required IAM Permissions
+
+```
+bedrock:InvokeModelWithResponseStream
+bedrock:InvokeModel
+bedrock:ListFoundationModels
+```
+
+## Usage Guide
+
+### Chat
+
+- Type a message and press Enter (Shift+Enter for newline)
+- The AI responds with streaming text, rendered as markdown
+- Click the regenerate button to get a different response
+- Press Escape to stop generation mid-stream
+
+### File Attachments
 
 | Method | Description |
 |--------|-------------|
-| **Manual** | Enter Access Key / Secret Key directly |
-| **Env / Profile** | Use environment variables or `~/.aws/credentials` profile |
-| **API Key** | Bedrock API Key (Bearer token) |
+| Auto-attach | Current note is automatically included as context (toggle in settings) |
+| Manual attach | Click the file-plus icon or search icon in the input toolbar |
+| Drag & drop | Drag files directly into the input area |
+| Clipboard paste | Paste screenshots or images from clipboard |
+| Binary files | Attach images (PNG, JPG, GIF, WebP) and PDFs via the paperclip icon |
 
-> **Note:** Whichever method you choose, credentials are stored locally on each device and will not sync across machines via iCloud. You must configure credentials on every device you use.
+### Vault Indexing
 
-### Required IAM Permissions
+1. Click the search icon in the sidebar header (or use the command palette: "Index vault")
+2. The plugin indexes all markdown files using embeddings
+3. Once indexed, the AI can search your vault semantically when answering questions
+4. Files are automatically re-indexed when modified (2-second debounce)
 
-- `bedrock:InvokeModelWithResponseStream`
-- `bedrock:InvokeModel`
-- `bedrock:ListFoundationModels`
+### Tag Generation
 
-## Web Clipper
+1. Open a note in the editor
+2. Click the tag icon in the sidebar action toolbar
+3. The AI analyzes the note and suggests 3–5 tags
+4. Tags are automatically added to the note's frontmatter
 
-Fetch a web page, translate (if needed), and summarize it into a markdown note.
+### To-Do Management
 
-- Click the globe icon in the chat header → enter a URL
-- Configurable save folder and dedicated AI model in settings
-- Language-aware: same language = summary only, different language = translate + summary
-- Saved with frontmatter (source URL, date, language)
+1. Configure a To-Do folder and template in settings
+2. Click the check-square icon to create today's To-Do
+3. Incomplete tasks from the previous day are automatically carried over (hierarchy preserved)
+4. Old To-Do files are auto-archived based on the configured day threshold
 
-## To-Do & Archive
+### Daily Retrospective
 
-- **To-Do creation**: generates a daily note from a template with `{{date}}` / `{{prevDate}}` variables
-- **Carry-over**: incomplete tasks from the previous day are carried over with full hierarchy preserved
-- **Auto archive**: old to-do files are moved to the archive folder when creating a new to-do
-- **Archive cleanup**: dedicated button to delete old archived files (configurable folder and day threshold, based on file creation date)
+1. Click the book icon in the action toolbar
+2. Confirm that you've finished today's tasks
+3. The AI generates a retrospective summary and appends it to today's To-Do
+
+### Web Clipper
+
+1. Click the globe icon in the action toolbar
+2. Enter a URL
+3. The AI fetches the page, translates (if needed), and summarizes it
+4. Saved as a markdown note with frontmatter (source URL, date, language)
+
+### Archive Cleanup
+
+1. Click the trash icon in the action toolbar
+2. Select files to delete from the archive folder
+3. Filtering is based on file creation date and the configured day threshold
+
+### Web Search
+
+Toggle the globe button in the input toolbar to enable web search. When enabled, the AI will search the web for up-to-date information and include source URLs.
 
 ## MCP Server Setup
 
-Navigate to Settings → MCP Servers → Edit Config and configure in JSON format:
+Navigate to Settings → MCP Servers → Edit Config:
 
 ```json
 {
@@ -106,7 +167,13 @@ Navigate to Settings → MCP Servers → Edit Config and configure in JSON forma
 }
 ```
 
-Both `uvx` (Python) and `docker` commands are supported. The plugin automatically resolves command paths for GUI environments.
+Both `uvx` (Python) and `docker` commands are supported. The plugin automatically resolves command paths for GUI environments. Connected servers show a status indicator at the bottom of the chat input.
+
+## Credential Storage
+
+Credentials are stored in a **local-only path** (`~/Library/Application Support/obsidian/`) that is **not synced by iCloud**. All other settings sync normally via `data.json`.
+
+> **Note:** API keys are stored per-device. If you use iCloud vault sync, configure credentials on each device separately.
 
 ## License
 

@@ -1,0 +1,180 @@
+# Assistant Kiro
+
+[English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
+
+![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
+![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
+![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
+![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
+
+**AWS Bedrock**と**Google Gemini**のデュアルバックエンドに対応したObsidian AIアシスタントサイドバープラグインです。
+設定タブからバックエンドを切り替えられ、再インストール不要で即座に反映されます。AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされています。
+
+## 主な機能
+
+- **デュアルAIバックエンド** — 設定からAWS Bedrock (Claude) とGoogle Geminiを切り替え
+- **ストリーミングチャット** — サイドバーでリアルタイムストリーミング応答
+- **ボルトセマンティック検索** — 埋め込み (Titan / Gemini) でノートをインデックスし、意味ベースで検索
+- **タグ自動生成** — ノート内容を分析してタグを自動推薦
+- **To-Do管理** — テンプレートベースの日次To-Do作成、未完了項目の自動引き継ぎ（階層構造維持）、アーカイブ
+- **アーカイブ整理** — モーダルUIで古いアーカイブファイルを整理
+- **Webクリッパー** — URLからWebページを取得し、AIで翻訳・要約してマークダウンノートとして保存
+- **MCPサーバー連携** — Model Context Protocolサーバー接続 (uvx, Docker)
+- **ファイル管理** — AIツール呼び出しによるノートの作成・編集・移動・削除
+- **多言語対応** — English / 한국어 / 日本語
+- **ファイル添付** — ドラッグ＆ドロップ、クリップボード、ファイル検索、画像/PDF添付
+- **チャットセッション管理** — 過去の会話の保存・復元・検索
+- **日次振り返り** — To-Doベースのai日次レビュー生成
+- **コンテキストウィンドウ表示** — トークン使用量をビジュアルリングで表示
+- **Obsidianスキル** — システムプロンプトにObsidian専用知識 (Dataview, Tasks, Templater) を追加
+- **破壊的ツール実行確認** — ファイル変更操作前のオプション確認ダイアログ
+
+## インストール
+
+### BRAT（推奨）
+
+1. [BRAT](https://github.com/TfTHacker/obsidian42-brat) プラグインをインストール
+2. BRAT設定でこのリポジトリURLを追加
+3. プラグインを有効化
+
+### 手動インストール
+
+1. [Releases](../../releases) ページから最新版の `main.js`、`styles.css`、`manifest.json` をダウンロード
+2. ボルトの `.obsidian/plugins/assistant-kiro/` フォルダにコピー
+3. 設定 → コミュニティプラグインで有効化
+
+## クイックスタート
+
+1. 設定 → Assistant Kiro 設定を開く
+2. AIバックエンドを選択（GeminiまたはBedrock）
+3. 資格情報を入力：
+   - **Gemini**: [Google AI Studio](https://aistudio.google.com/apikey) から取得したAPIキーを入力
+   - **Bedrock**: AWS Access Key、Secret Key、Regionを入力
+4. 左リボンのAssistant Kiroアイコンをクリックしてサイドバーを開く
+5. チャット開始！
+
+## AIバックエンド設定
+
+### バックエンド切り替え
+
+設定 → Assistant Kiro 設定 → AIバックエンドドロップダウンで切り替えます。切り替え時にサイドバーアイコン、ブランディング、モデルリストが即座に更新されます。各バックエンドの資格情報は独立して保存されます。
+
+### Google Gemini
+
+| 設定 | 説明 |
+|------|------|
+| APIキー | [Google AI Studio](https://aistudio.google.com/apikey) から取得したGemini APIキー |
+| チャットモデル | 利用可能なGeminiモデルから選択（ドロップダウン） |
+| 埋め込みモデル | ボルトインデックス用モデル（デフォルト: `text-embedding-004`） |
+
+### AWS Bedrock
+
+| 設定 | 説明 |
+|------|------|
+| Access Key ID | AWS IAMアクセスキー |
+| Secret Access Key | AWS IAMシークレットキー |
+| Region | AWSリージョン（例: `us-east-1`） |
+| チャットモデル | 利用可能なBedrockモデルから選択（ドロップダウン） |
+| 埋め込みモデル | ボルトインデックス用モデル（デフォルト: `amazon.titan-embed-text-v2:0`） |
+
+#### 必要なIAM権限
+
+```
+bedrock:InvokeModelWithResponseStream
+bedrock:InvokeModel
+bedrock:ListFoundationModels
+```
+
+## 使い方ガイド
+
+### チャット
+
+- メッセージを入力してEnterで送信（Shift+Enterで改行）
+- AIがストリーミングで応答し、マークダウンでレンダリングされます
+- 再生成ボタンで別の応答を取得できます
+- Escapeキーで生成中に中断可能
+
+### ファイル添付
+
+| 方法 | 説明 |
+|------|------|
+| 自動添付 | 現在開いているノートが自動的にコンテキストに含まれる（設定でトグル） |
+| 手動添付 | 入力ツールバーのファイル追加または検索アイコンをクリック |
+| ドラッグ＆ドロップ | ファイルを入力エリアに直接ドラッグ |
+| クリップボード貼り付け | スクリーンショットや画像をクリップボードから貼り付け |
+| バイナリファイル | クリップアイコンで画像（PNG, JPG, GIF, WebP）やPDFを添付 |
+
+### ボルトインデックス
+
+1. サイドバーヘッダーの検索アイコンをクリック（またはコマンドパレット:「ボルトインデックス」）
+2. すべてのマークダウンファイルが埋め込みでインデックスされます
+3. インデックス完了後、AIが質問に答える際にボルトをセマンティック検索できます
+4. ファイル変更時に自動で再インデックスされます（2秒デバウンス）
+
+### タグ生成
+
+1. エディタでノートを開く
+2. サイドバーアクションツールバーのタグアイコンをクリック
+3. AIがノートを分析して3〜5個のタグを推薦
+4. タグがノートのフロントマターに自動追加されます
+
+### To-Do管理
+
+1. 設定でTo-Doフォルダとテンプレートを設定
+2. チェックアイコンをクリックして今日のTo-Doを作成
+3. 前日の未完了項目が階層構造を維持して自動引き継ぎ
+4. 設定した日数を超えたTo-Doファイルは自動アーカイブ
+
+### 日次振り返り
+
+1. アクションツールバーのブックアイコンをクリック
+2. 今日のタスクをすべて完了したか確認
+3. AIが振り返りサマリーを生成して今日のTo-Doに追加
+
+### Webクリッパー
+
+1. アクションツールバーのグローブアイコンをクリック
+2. URLを入力
+3. AIがページを取得し、翻訳（必要に応じて）して要約
+4. フロントマター（ソースURL、日付、言語）付きのマークダウンノートとして保存
+
+### アーカイブ整理
+
+1. アクションツールバーのゴミ箱アイコンをクリック
+2. アーカイブフォルダから削除するファイルを選択
+3. ファイル作成日と設定した基準日数でフィルタリング
+
+### Web検索
+
+入力ツールバーのグローブボタンをトグルしてWeb検索を有効にします。有効時、AIが最新情報をWebで検索してソースURLと共に回答に含めます。
+
+## MCPサーバー設定
+
+設定タブ → MCPサーバー → 設定を編集でJSON形式で設定します：
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "mcp/fetch"]
+    }
+  }
+}
+```
+
+`uvx`（Python）と`docker`コマンドの両方に対応しています。GUI環境でコマンドパスを自動解決します。接続されたサーバーはチャット入力下部にステータスインジケーターで表示されます。
+
+## 資格情報の保存
+
+資格情報は**iCloud同期対象外のローカル専用パス**（`~/Library/Application Support/obsidian/`）に保存されます。その他の設定は`data.json`を通じて通常通り同期されます。
+
+> **注意:** APIキーはデバイスごとに保存されます。iCloudでボルトを同期している場合、各デバイスで資格情報を個別に設定してください。
+
+## ライセンス
+
+[MIT](LICENSE)
