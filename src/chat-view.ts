@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
-import type BedrockAssistantPlugin from "./main";
+import type GeminiAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 import { BRANDING } from "./branding";
@@ -20,7 +20,7 @@ export const VIEW_TYPE = BRANDING.viewType;
 
 // Claudian 스타일 사이드바 채팅 뷰
 export class ChatView extends ItemView {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private messages: ChatMessage[] = [];
 
   // DOM 요소 (onOpen()에서 초기화)
@@ -60,7 +60,7 @@ export class ChatView extends ItemView {
   // persistHistory 중복 호출 방지 가드 (B2 race condition 수정)
   private persistPending = false;
 
-  constructor(leaf: WorkspaceLeaf, plugin: BedrockAssistantPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: GeminiAssistantPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
@@ -520,7 +520,7 @@ export class ChatView extends ItemView {
           // 스트리밍 텍스트를 감싸는 wrapper (도구 호출 UI 보존을 위해 별도 div 사용)
           const streamingState = { wrapper: null as HTMLElement | null };
 
-          const result = await this.plugin.bedrockClient.converse(
+          const result = await this.plugin.aiClient.converse(
             converseMessages,
             allTools,
             (delta) => {
@@ -1073,7 +1073,7 @@ export class ChatView extends ItemView {
       if (this.cachedModels.length === 0) {
         this.modelLabelEl.setText(this.t.modelLoading);
         try {
-          this.cachedModels = await this.plugin.bedrockClient.listModels();
+          this.cachedModels = await this.plugin.aiClient.listModels();
         } catch (e) {
           console.error("모델 목록 조회 실패:", e);
         }
@@ -1238,7 +1238,7 @@ export class ChatView extends ItemView {
         },
       ];
 
-      const result = await this.plugin.bedrockClient.converse(tagMessages);
+      const result = await this.plugin.aiClient.converse(tagMessages);
       const textBlock = result.contentBlocks.find((b) => b.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         new Notice(this.t.tagsFailed);

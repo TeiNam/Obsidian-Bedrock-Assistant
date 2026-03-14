@@ -2,7 +2,7 @@
 
 import { Modal, TFile, Notice } from "obsidian";
 import type { App } from "obsidian";
-import type BedrockAssistantPlugin from "../main";
+import type GeminiAssistantPlugin from "../main";
 import type { ViewLang } from "../chat-view-i18n";
 
 /**
@@ -10,11 +10,11 @@ import type { ViewLang } from "../chat-view-i18n";
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export class CleanArchiveModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private t: Record<string, any>;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: App, plugin: BedrockAssistantPlugin, t: Record<string, any>) {
+  constructor(app: App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
     super(app);
     this.plugin = plugin;
     this.t = t;

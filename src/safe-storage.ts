@@ -30,11 +30,11 @@ const CREDENTIALS_FILE = "bedrock-assistant-credentials.json";
 const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();
 const nodePath: any = (() => { try { return require("path"); } catch { return null; } })();
 
-/** 암호화할 설정 필드 목록 */
+/** 암호화할 설정 필드 목록 (Gemini + Bedrock 자격증명) */
 export const SENSITIVE_FIELDS = [
+  "geminiApiKey",
   "awsAccessKeyId",
   "awsSecretAccessKey",
-  "bedrockApiKey",
 ] as const;
 
 /**

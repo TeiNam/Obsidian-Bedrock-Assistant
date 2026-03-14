@@ -9,7 +9,8 @@ import {
   ListInferenceProfilesCommand,
 } from "@aws-sdk/client-bedrock";
 import type {
-  BedrockAssistantSettings,
+  GeminiAssistantSettings,
+  IAiClient,
   ToolDefinition,
   ConverseMessage,
   ConverseResult,
@@ -27,75 +28,43 @@ const MODEL_PRIORITY: Record<string, number> = {
   "claude-haiku": 2,
 };
 
-// Bedrock API 클라이언트
-export class BedrockClient {
+// Bedrock API 클라이언트 (IAiClient 인터페이스 구현)
+export class BedrockClient implements IAiClient {
   private client: BedrockRuntimeClient;
-  private settings: BedrockAssistantSettings;
+  private settings: GeminiAssistantSettings;
 
-  constructor(settings: BedrockAssistantSettings) {
+  constructor(settings: GeminiAssistantSettings) {
     this.settings = settings;
     this.client = this.createClient();
   }
 
   // 설정 변경 시 클라이언트 재생성
-  updateSettings(settings: BedrockAssistantSettings) {
+  updateSettings(settings: GeminiAssistantSettings) {
     this.settings = settings;
     this.client = this.createClient();
   }
 
-  // credential 설정 로직을 공통으로 추출 (manual/apikey/env 분기)
+  // 자격증명 설정 로직
   private buildClientConfig(): Record<string, unknown> {
     const config: Record<string, unknown> = {
       region: this.settings.awsRegion,
     };
 
-    if (this.settings.awsCredentialSource === "manual" && this.settings.awsAccessKeyId) {
-      // 수동 입력 자격증명
+    // 수동 입력 자격증명이 있는 경우 사용
+    if (this.settings.awsAccessKeyId) {
       config.credentials = {
         accessKeyId: this.settings.awsAccessKeyId,
         secretAccessKey: this.settings.awsSecretAccessKey,
       };
-    } else if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-      // Bedrock API Key 인증: Bearer 토큰 방식
-      // SDK에 더미 자격증명을 넣고, 미들웨어로 Authorization 헤더를 덮어씀
-      config.credentials = {
-        accessKeyId: "apikey",
-        secretAccessKey: "apikey",
-      };
     }
-    // "env" 모드: credentials 미지정 → SDK 기본 체인 사용
+    // 자격증명 미지정 시 SDK 기본 체인 사용 (환경변수, IAM 역할 등)
 
     return config;
   }
 
-  // API Key 모드일 때 미들웨어로 Bearer 토큰 주입
-  private applyApiKeyMiddleware(client: { middlewareStack: any }): void {
-    if (this.settings.awsCredentialSource === "apikey" && this.settings.bedrockApiKey) {
-      const apiKey = this.settings.bedrockApiKey;
-      client.middlewareStack.add(
-        (next: any) => async (args: any) => {
-          // SigV4 서명 대신 Bearer 토큰 사용
-          args.request.headers["Authorization"] = `Bearer ${apiKey}`;
-          // SigV4가 추가한 불필요한 헤더 제거
-          delete args.request.headers["x-amz-date"];
-          delete args.request.headers["x-amz-security-token"];
-          delete args.request.headers["x-amz-content-sha256"];
-          return next(args);
-        },
-        {
-          step: "finalizeRequest",
-          name: "bedrockApiKeyAuth",
-          override: true,
-        }
-      );
-    }
-  }
-
   private createClient(): BedrockRuntimeClient {
     const config = this.buildClientConfig();
-    const client = new BedrockRuntimeClient(config as any);
-    this.applyApiKeyMiddleware(client);
-    return client;
+    return new BedrockRuntimeClient(config as any);
   }
 
   // 사용 가능한 모델 목록 반환 (Bedrock 추론 프로파일에서 최신 Claude 모델 조회)
@@ -129,7 +98,6 @@ export class BedrockClient {
       }
 
       // 같은 계열(opus/sonnet/haiku)에서 최신 버전만 남기기
-      // 모델 ID 기준 내림차순 정렬 후 계열별 첫 번째만 선택
       const bestByFamily = new Map<string, ModelInfo>();
       for (const m of models) {
         const family = MODEL_KEYWORDS.find((kw) => m.modelId.includes(kw)) || "";
@@ -152,11 +120,8 @@ export class BedrockClient {
   // Bedrock 컨트롤 플레인 클라이언트 생성 (모델 목록 조회용)
   private createControlClient(): BedrockControlClient {
     const config = this.buildClientConfig();
-    const client = new BedrockControlClient(config as any);
-    this.applyApiKeyMiddleware(client);
-    return client;
+    return new BedrockControlClient(config as any);
   }
-
 
   // Converse API 입력 구성
   private buildInput(
@@ -167,7 +132,7 @@ export class BedrockClient {
     const fullSystemPrompt = this.settings.systemPrompt + skillsPrompt;
 
     const input: Record<string, unknown> = {
-      modelId: this.settings.chatModel,
+      modelId: this.settings.bedrockChatModel,
       messages,
       system: [{ text: fullSystemPrompt }],
       inferenceConfig: {
@@ -344,7 +309,7 @@ export class BedrockClient {
     const truncated = text.slice(0, 20000);
 
     const command = new InvokeModelCommand({
-      modelId: this.settings.embeddingModel,
+      modelId: this.settings.bedrockEmbeddingModel,
       contentType: "application/json",
       accept: "application/json",
       body: JSON.stringify({
@@ -369,7 +334,7 @@ export class BedrockClient {
     maxTokens = 1024
   ): Promise<{ text: string }> {
     const input = {
-      modelId: this.settings.chatModel,
+      modelId: this.settings.bedrockChatModel,
       messages: [{ role: "user", content: [{ text: userText }] }],
       system: [{ text: systemText }],
       inferenceConfig: { maxTokens, temperature: 0 },
@@ -384,7 +349,6 @@ export class BedrockClient {
         }
       }
     }
-    throw new Error("No text in converseLight response");
+    throw new Error("converseLight 응답에 텍스트가 없습니다");
   }
-
 }

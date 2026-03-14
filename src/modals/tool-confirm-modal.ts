@@ -2,7 +2,7 @@
 
 import { Modal, setIcon } from "obsidian";
 import type { App } from "obsidian";
-import type BedrockAssistantPlugin from "../main";
+import type GeminiAssistantPlugin from "../main";
 import type { ViewLang } from "../chat-view-i18n";
 
 /**
@@ -13,7 +13,7 @@ export class ToolConfirmModal extends Modal {
   private toolInput: Record<string, unknown>;
   private t: ViewLang;
   private resolvePromise: (approved: boolean) => void;
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private resolved = false;
 
   constructor(
@@ -21,7 +21,7 @@ export class ToolConfirmModal extends Modal {
     toolName: string,
     toolInput: Record<string, unknown>,
     t: ViewLang,
-    plugin: BedrockAssistantPlugin,
+    plugin: GeminiAssistantPlugin,
     resolvePromise: (approved: boolean) => void
   ) {
     super(app);

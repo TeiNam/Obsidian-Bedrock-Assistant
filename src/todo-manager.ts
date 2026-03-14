@@ -3,7 +3,7 @@
 
 import { TFile, Notice } from "obsidian";
 import type { App } from "obsidian";
-import type BedrockAssistantPlugin from "./main";
+import type GeminiAssistantPlugin from "./main";
 import type { ViewLang } from "./chat-view-i18n";
 
 /**
@@ -12,7 +12,7 @@ import type { ViewLang } from "./chat-view-i18n";
  */
 export async function createTodoNote(
   app: App,
-  plugin: BedrockAssistantPlugin,
+  plugin: GeminiAssistantPlugin,
   t: ViewLang
 ): Promise<void> {
   try {
@@ -199,7 +199,7 @@ export function extractTodoSubSections(content: string): string[] {
  * AI를 사용해 미완료 태스크를 지정된 서브섹션별로 분류합니다.
  */
 export async function classifyTasksForSections(
-  plugin: BedrockAssistantPlugin,
+  plugin: GeminiAssistantPlugin,
   sections: string[],
   tasks: string[]
 ): Promise<Map<string, string[]>> {
@@ -230,7 +230,7 @@ Example: {"${sections[0]}": [1, 3], "${sections[1] || sections[0]}": [2]}
 Classify ALL items.`;
 
   try {
-    const result = await plugin.bedrockClient.converseLight(
+    const result = await plugin.aiClient.converseLight(
       prompt,
       "You are a task classifier. Respond only in JSON."
     );
@@ -517,7 +517,7 @@ export function injectNotesIntoMemoSection(content: string, notes: string[]): st
  */
 export async function archiveOldTodos(
   app: App,
-  plugin: BedrockAssistantPlugin,
+  plugin: GeminiAssistantPlugin,
   t: ViewLang,
   todoFolder: string,
   now: Date
