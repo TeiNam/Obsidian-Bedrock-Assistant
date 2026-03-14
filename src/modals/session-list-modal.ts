@@ -2,7 +2,7 @@
 
 import { Modal, setIcon } from "obsidian";
 import type { App } from "obsidian";
-import type BedrockAssistantPlugin from "../main";
+import type GeminiAssistantPlugin from "../main";
 import type { ChatSession } from "../types";
 import type { ViewLang } from "../chat-view-i18n";
 import { filterSessions } from "../session-search";
@@ -11,7 +11,7 @@ import { filterSessions } from "../session-search";
  * 지난 대화 세션 목록을 표시하고 선택/삭제할 수 있는 모달
  */
 export class SessionListModal extends Modal {
-  private plugin: BedrockAssistantPlugin;
+  private plugin: GeminiAssistantPlugin;
   private sessions: ChatSession[];
   private t: ViewLang;
   private onSelect: (session: ChatSession) => void;
@@ -19,7 +19,7 @@ export class SessionListModal extends Modal {
 
   constructor(
     app: App,
-    plugin: BedrockAssistantPlugin,
+    plugin: GeminiAssistantPlugin,
     sessions: ChatSession[],
     t: ViewLang,
     onSelect: (session: ChatSession) => void
