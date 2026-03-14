@@ -1238,7 +1238,7 @@ export class ChatView extends ItemView {
         },
       ];
 
-      const result = await this.plugin.aiClient.converse(tagMessages);
+      const result = await this.plugin.aiClient.converse(tagMessages, []);
       const textBlock = result.contentBlocks.find((b) => b.type === "text");
       if (!textBlock || textBlock.type !== "text") {
         new Notice(this.t.tagsFailed);
@@ -1355,6 +1355,7 @@ export class ChatView extends ItemView {
 
   refreshModelList(): void {
     this.cachedModels = [];
+    this.updateModelLabel();
   }
 
   // 채팅 폰트 크기 적용
