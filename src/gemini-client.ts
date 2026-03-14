@@ -93,12 +93,17 @@ export class GeminiClient {
           } else if ("toolUse" in b) {
             // 도구 호출 → functionCall (어시스턴트 메시지에서)
             const tu = b.toolUse as Record<string, unknown>;
-            parts.push({
+            const fc: Record<string, unknown> = {
               functionCall: {
                 name: tu.name,
                 args: tu.input || {},
               },
-            });
+            };
+            // Gemini 3.x thought signature 보존 (필수)
+            if (tu.thoughtSignature) {
+              fc.thoughtSignature = tu.thoughtSignature;
+            }
+            parts.push(fc);
           }
         }
       }
@@ -241,12 +246,17 @@ export class GeminiClient {
               onTextDelta?.(part.text);
             }
             if (part.functionCall) {
-              contentBlocks.push({
+              const toolBlock: ContentBlock = {
                 type: "tool_use",
                 toolUseId: part.functionCall.name || `call_${Date.now()}`,
                 name: part.functionCall.name,
                 input: part.functionCall.args || {},
-              });
+              };
+              // Gemini 3.x thought signature 보존
+              if (part.thoughtSignature) {
+                (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
+              }
+              contentBlocks.push(toolBlock);
             }
           }
 
@@ -307,12 +317,17 @@ export class GeminiClient {
             onTextDelta?.(part.text);
           }
           if (part.functionCall) {
-            contentBlocks.push({
+            const toolBlock: ContentBlock = {
               type: "tool_use",
               toolUseId: part.functionCall.name || `call_${Date.now()}`,
               name: part.functionCall.name,
               input: part.functionCall.args || {},
-            });
+            };
+            // Gemini 3.x thought signature 보존
+            if (part.thoughtSignature) {
+              (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
+            }
+            contentBlocks.push(toolBlock);
           }
         }
       }

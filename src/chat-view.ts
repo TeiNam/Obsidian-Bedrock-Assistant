@@ -569,13 +569,16 @@ export class ChatView extends ItemView {
             if (block.type === "text") {
               assistantContent.push({ text: block.text });
             } else if (block.type === "tool_use") {
-              assistantContent.push({
-                toolUse: {
-                  toolUseId: block.toolUseId,
-                  name: block.name,
-                  input: block.input,
-                },
-              });
+              const toolUseEntry: Record<string, unknown> = {
+                toolUseId: block.toolUseId,
+                name: block.name,
+                input: block.input,
+              };
+              // Gemini 3.x thought signature 보존 (function calling 필수)
+              if (block.thoughtSignature) {
+                toolUseEntry.thoughtSignature = block.thoughtSignature;
+              }
+              assistantContent.push({ toolUse: toolUseEntry });
             }
           }
           converseMessages.push({ role: "assistant", content: assistantContent });

@@ -167,6 +167,8 @@ export interface ContentBlockToolUse {
   toolUseId: string;
   name: string;
   input: Record<string, unknown>;
+  /** Gemini 3.x thought signature (function calling 시 필수 보존) */
+  thoughtSignature?: string;
 }
 
 export type ContentBlock = ContentBlockText | ContentBlockToolUse;
