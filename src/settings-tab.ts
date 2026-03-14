@@ -571,34 +571,19 @@ export class GeminiSettingTab extends PluginSettingTab {
           })();
         });
 
-      // Bedrock 임베딩 모델 드롭다운
+      // Bedrock 임베딩 모델 (텍스트 입력 — 임베딩 모델은 LLM과 별도)
       new Setting(containerEl)
         .setName(t.bedrockEmbeddingModelLabel)
         .setDesc(t.bedrockEmbeddingModelDesc)
-        .addDropdown((dropdown) => {
-          const current = this.plugin.settings.bedrockEmbeddingModel;
-          if (current) {
-            dropdown.addOption(current, current);
-          }
-          dropdown.setValue(current);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.bedrockEmbeddingModel = value;
-            await this.plugin.saveSettings();
-          });
-          // 비동기로 모델 목록 로드 후 드롭다운 갱신
-          (async () => {
-            try {
-              const models = await this.plugin.aiClient.listModels();
-              dropdown.selectEl.empty();
-              for (const m of models) {
-                dropdown.addOption(m.modelId, m.modelName || m.modelId);
-              }
-              dropdown.setValue(this.plugin.settings.bedrockEmbeddingModel);
-            } catch {
-              // 모델 로드 실패 시 현재값 유지
-            }
-          })();
-        });
+        .addText((text) =>
+          text
+            .setPlaceholder("amazon.titan-embed-text-v2:0")
+            .setValue(this.plugin.settings.bedrockEmbeddingModel)
+            .onChange(async (value) => {
+              this.plugin.settings.bedrockEmbeddingModel = value.trim();
+              await this.plugin.saveSettings();
+            })
+        );
     }
 
     // 생성 설정
