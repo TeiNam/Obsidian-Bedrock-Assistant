@@ -62,6 +62,15 @@ class McpServerConnection {
   // MCP 요청 타임아웃 (밀리초)
   private _timeoutMs = 30000;
 
+  // 자동 재연결 관련 속성
+  private reconnectAttempts = 0;
+  private static MAX_RECONNECT = 3;
+  private static RECONNECT_DELAY = 5000; // 5초
+  private intentionalDisconnect = false;
+
+  // 재연결 성공 시 호출되는 콜백 (McpManager에서 도구 목록 갱신용)
+  onReconnect: (() => void) | null = null;
+
   constructor(name: string, config: McpServerConfig) {
     this.name = name;
     this.config = config;
@@ -129,6 +138,19 @@ class McpServerConnection {
         p.reject(new Error(`MCP 서버 종료 (code: ${code})`));
       }
       this.pending.clear();
+
+      // 비정상 종료 시 자동 재연결 시도
+      if (!this.intentionalDisconnect && code !== 0 && this.reconnectAttempts < McpServerConnection.MAX_RECONNECT) {
+        this.reconnectAttempts++;
+        setTimeout(() => {
+          this.connect().then(() => {
+            this.reconnectAttempts = 0; // 재연결 성공 시 리셋
+            if (this.onReconnect) this.onReconnect();
+          }).catch(() => {
+            console.error(`[MCP:${this.name}] 재연결 실패 (${this.reconnectAttempts}/${McpServerConnection.MAX_RECONNECT})`);
+          });
+        }, McpServerConnection.RECONNECT_DELAY);
+      }
     });
 
     // 프로세스가 준비될 때까지 대기 (도커 컨테이너 등 시작 시간 필요)
@@ -151,6 +173,7 @@ class McpServerConnection {
 
       this.sendNotification("notifications/initialized", {});
       this._connected = true;
+      this.intentionalDisconnect = false; // 연결 성공 시 의도적 종료 플래그 리셋
 
       await this.refreshTools();
     } catch (error) {
@@ -292,6 +315,7 @@ class McpServerConnection {
   // 서버 연결 종료
   // 서버 연결 종료
     disconnect(): void {
+      this.intentionalDisconnect = true; // 의도적 종료 표시
       this._connected = false;
       this._tools = [];
       if (this.process) {
@@ -319,12 +343,25 @@ export class McpManager {
   private servers = new Map<string, McpServerConnection>();
   private config: McpConfig = { mcpServers: {} };
   private _timeoutSeconds = 30;
+  // prefixedName → serverName 매핑 (서버 이름에 _가 포함된 경우에도 정확한 라우팅 보장)
+  private toolServerMap = new Map<string, string>();
 
   // 모든 서버의 타임아웃 설정 (초 단위)
   setTimeout(seconds: number): void {
     this._timeoutSeconds = seconds;
     for (const server of this.servers.values()) {
       server.setTimeoutSeconds(seconds);
+    }
+  }
+
+  // toolServerMap 갱신 — 서버의 도구 목록에서 prefixedName → serverName 매핑 생성
+  private updateToolServerMap(): void {
+    this.toolServerMap.clear();
+    for (const [serverName, server] of this.servers) {
+      if (!server.connected) continue;
+      for (const tool of server.tools) {
+        this.toolServerMap.set(tool.name, serverName);
+      }
     }
   }
 
@@ -349,6 +386,8 @@ export class McpManager {
         await conn.connect();
         // 현재 설정된 타임아웃 적용
         conn.setTimeoutSeconds(this._timeoutSeconds);
+        // 재연결 성공 시 도구 목록 갱신 콜백 등록
+        conn.onReconnect = () => this.updateToolServerMap();
         this.servers.set(name, conn);
         connected.push(name);
       } catch (error) {
@@ -356,6 +395,9 @@ export class McpManager {
         failed.push(name);
       }
     }
+
+    // 도구 등록 후 toolServerMap 갱신
+    this.updateToolServerMap();
 
     return { connected, failed };
   }
@@ -369,16 +411,31 @@ export class McpManager {
     return tools;
   }
 
-  // MCP 도구 실행 (접두사 기반으로 서버 라우팅)
-  async executeTool(prefixedName: string, input: Record<string, unknown>): Promise<string> {
-    const match = prefixedName.match(/^mcp_([^_]+)_(.+)$/);
-    if (!match) return `잘못된 MCP 도구 이름: ${prefixedName}`;
+  // 모든 서버의 도구 목록 갱신 후 toolServerMap 업데이트
+  async refreshAllTools(): Promise<void> {
+    for (const server of this.servers.values()) {
+      if (server.connected) {
+        await server.refreshTools();
+      }
+    }
+    this.updateToolServerMap();
+  }
 
-    const [, serverName, toolName] = match;
+  // MCP 도구 실행 (toolServerMap 기반으로 서버 라우팅 — 서버 이름에 _ 포함 시에도 정확히 동작)
+  async executeTool(prefixedName: string, input: Record<string, unknown>): Promise<string> {
+    const serverName = this.toolServerMap.get(prefixedName);
+    if (!serverName) {
+      return `잘못된 MCP 도구 이름: ${prefixedName}`;
+    }
+
     const server = this.servers.get(serverName);
     if (!server || !server.connected) {
       return `MCP 서버에 연결되지 않음: ${serverName}`;
     }
+
+    // prefixedName에서 원래 도구 이름 추출: "mcp_{serverName}_{toolName}" 형식
+    const prefix = `mcp_${serverName}_`;
+    const toolName = prefixedName.slice(prefix.length);
 
     try {
       return await server.callTool(toolName, input);
@@ -405,5 +462,6 @@ export class McpManager {
   disconnectAll(): void {
     for (const server of this.servers.values()) server.disconnect();
     this.servers.clear();
+    this.toolServerMap.clear();
   }
 }

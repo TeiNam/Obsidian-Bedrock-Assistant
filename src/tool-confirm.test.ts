@@ -18,8 +18,8 @@ import { DESTRUCTIVE_TOOLS, needsToolConfirmation } from "./tool-confirm-utils";
 // --- DESTRUCTIVE_TOOLS 상수 검증 ---
 
 describe("DESTRUCTIVE_TOOLS 상수", () => {
-  it("파괴적 도구 4개가 정의되어 있다", () => {
-    expect(DESTRUCTIVE_TOOLS).toHaveLength(4);
+  it("파괴적 도구 5개가 정의되어 있다", () => {
+    expect(DESTRUCTIVE_TOOLS).toHaveLength(5);
   });
 
   it("edit_note가 포함되어 있다", () => {
@@ -36,6 +36,10 @@ describe("DESTRUCTIVE_TOOLS 상수", () => {
 
   it("move_file이 포함되어 있다", () => {
     expect(DESTRUCTIVE_TOOLS).toContain("move_file");
+  });
+
+  it("append_to_note가 포함되어 있다", () => {
+    expect(DESTRUCTIVE_TOOLS).toContain("append_to_note");
   });
 });
 
@@ -60,6 +64,10 @@ describe("needsToolConfirmation - Fault Condition (Property 1)", () => {
 
   it("confirmToolExecution=true + move_file → 확인 필요", () => {
     expect(needsToolConfirmation("move_file", true)).toBe(true);
+  });
+
+  it("confirmToolExecution=true + append_to_note → 확인 필요", () => {
+    expect(needsToolConfirmation("append_to_note", true)).toBe(true);
   });
 
   it("모든 파괴적 도구에 대해 confirmToolExecution=true이면 확인 필요", () => {

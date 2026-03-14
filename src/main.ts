@@ -30,6 +30,8 @@ export default class BedrockAssistantPlugin extends Plugin {
   mcpManager!: McpManager;
   // 인덱싱 진행률 표시용 상태바 아이템
   private statusBarItem!: HTMLElement;
+  // modify 이벤트 파일별 디바운스 타이머
+  private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -111,15 +113,20 @@ export default class BedrockAssistantPlugin extends Plugin {
       },
     });
 
-    // 파일 변경 감지 → 인덱스 자동 업데이트
+    // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
+    // indexVault 진행 중에는 modify 이벤트 인덱싱을 건너뛰어 동시 실행 방지
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          try {
-            await this.indexer.indexFile(file);
-          } catch {
-            // 자동 인덱싱 실패는 무시
-          }
+        if (file instanceof TFile && file.extension === "md" && !this.indexer.isIndexing) {
+          // 기존 타이머 취소
+          const existing = this.indexDebounceTimers.get(file.path);
+          if (existing) clearTimeout(existing);
+          // 2초 디바운스
+          const timer = setTimeout(async () => {
+            this.indexDebounceTimers.delete(file.path);
+            try { await this.indexer.indexFile(file); } catch { }
+          }, 2000);
+          this.indexDebounceTimers.set(file.path, timer);
         }
       })
     );
@@ -134,6 +141,12 @@ export default class BedrockAssistantPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    // 디바운스 타이머 정리
+    for (const timer of this.indexDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.indexDebounceTimers.clear();
+
     this.mcpManager?.disconnectAll();
     await this.saveIndex();
   }
