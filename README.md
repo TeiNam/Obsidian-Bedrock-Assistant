@@ -20,7 +20,8 @@ An AI assistant sidebar plugin for Obsidian with dual backend support — AWS Be
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags
 - **Templates** — Custom templates with variable substitution
 - **To-Do Management** — Daily to-do, automatic carry-over of incomplete items, archiving
-- **Archive Cleanup** — Clean up old archived files with modal UI
+- **Archive Cleanup** — Clean up old archived files from the settings tab
+- **P.A.R.A Organizer** — Set up the P.A.R.A folder structure (Projects, Areas, Resources, Archives) and use AI to classify existing notes
 - **Web Clipper** — Fetch, translate, and summarize web pages as markdown notes
 - **MCP Server Integration** — Model Context Protocol servers (uvx, Docker)
 - **File Management** — Create, edit, move, and delete notes through AI
@@ -96,7 +97,15 @@ Click the globe icon (🌐) in the chat header → enter a URL. The page is fetc
 - **To-Do**: Generates a daily note from a template with `{{date}}` / `{{prevDate}}` variables
 - **Carry-over**: Incomplete tasks from the previous day are carried over with hierarchy preserved
 - **Auto archive**: Old to-do files move to the archive folder
-- **Archive cleanup**: Delete old archived files via the trash button (configurable folder and day threshold)
+- **Archive cleanup**: Delete old archived files from the settings tab (configurable folder and day threshold)
+
+### P.A.R.A Organizer
+
+1. Open Settings → Bedrock Assistant → User Experience section
+2. Click the "Set up P.A.R.A" button below the welcome greeting
+3. The plugin creates four root folders: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
+4. If existing notes are found, the currently configured AI model classifies each note into the appropriate folder
+5. A progress modal shows real-time status and a summary when complete
 
 ### MCP Server
 
