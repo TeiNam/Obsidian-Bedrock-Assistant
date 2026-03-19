@@ -13,7 +13,6 @@ import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
-import { CleanArchiveModal } from "./modals/clean-archive-modal";
 import { RetrospectiveModal } from "./modals/retrospective-modal";
 
 export const VIEW_TYPE = BRANDING.viewType;
@@ -176,11 +175,6 @@ export class ChatView extends ItemView {
     const webClipBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.webClip } });
     setIcon(webClipBtn, "globe");
     this.registerDomEvent(webClipBtn, "click", () => this.openWebClipper());
-
-    // 아카이브 비우기 버튼
-    const cleanBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.cleanArchive } });
-    setIcon(cleanBtn, "trash-2");
-    this.registerDomEvent(cleanBtn, "click", () => this.openCleanArchiveModal());
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
 
@@ -1514,11 +1508,6 @@ export class ChatView extends ItemView {
   // 웹 페이지 요약 모달 열기
   private openWebClipper(): void {
     new WebClipperModal(this.app, this.plugin).open();
-  }
-
-  // 아카이브 비우기 모달 열기
-  private openCleanArchiveModal(): void {
-    new CleanArchiveModal(this.app, this.plugin, this.t).open();
   }
 
   // 회고 모달 열기

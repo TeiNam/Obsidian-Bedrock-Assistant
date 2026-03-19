@@ -2,6 +2,8 @@ import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFold
 import type GeminiAssistantPlugin from "./main";
 import { SKILLS } from "./skills";
 import { BRANDING, updateBranding } from "./branding";
+import { CleanArchiveModal } from "./modals/clean-archive-modal";
+import { VIEW_I18N } from "./chat-view-i18n";
 
 // 설정 탭 다국어 레이블
 const I18N = {
@@ -88,6 +90,7 @@ const I18N = {
     archiveCleanFolderDesc: "Folder to clean up old archived files from",
     archiveCleanDays: "Delete After (days)",
     archiveCleanDaysDesc: "Delete archived files older than this many days when using the Clean Archive button",
+    archiveCleanBtn: "Clean Archive",
     webClip: "Web Clipper",
     webClipFolder: "Save Folder",
     webClipFolderDesc: "Folder to save web page summaries",
@@ -204,6 +207,7 @@ const I18N = {
     archiveCleanFolderDesc: "아카이브 비우기 버튼으로 삭제할 파일이 있는 폴더",
     archiveCleanDays: "삭제 기준 (일)",
     archiveCleanDaysDesc: "아카이브 비우기 버튼 사용 시 이 일수를 초과한 아카이브 파일을 삭제합니다",
+    archiveCleanBtn: "아카이브 비우기",
     webClip: "웹 클리퍼",
     webClipFolder: "저장 폴더",
     webClipFolderDesc: "웹 페이지 요약을 저장할 폴더",
@@ -320,6 +324,7 @@ const I18N = {
     archiveCleanFolderDesc: "アーカイブ整理ボタンで削除するファイルがあるフォルダ",
     archiveCleanDays: "削除基準（日数）",
     archiveCleanDaysDesc: "アーカイブ整理ボタン使用時、この日数を超えたアーカイブファイルを削除します",
+    archiveCleanBtn: "アーカイブ整理",
     webClip: "Webクリッパー",
     webClipFolder: "保存フォルダ",
     webClipFolderDesc: "Webページ要約を保存するフォルダ",
@@ -943,6 +948,15 @@ export class GeminiSettingTab extends PluginSettingTab {
               this.plugin.settings.archiveCleanDays = num;
               await this.plugin.saveSettings();
             }
+          })
+      )
+      .addButton((btn) =>
+        btn
+          .setButtonText(t.archiveCleanBtn)
+          .setWarning()
+          .onClick(() => {
+            const viewLang = VIEW_I18N[lang] || VIEW_I18N.en;
+            new CleanArchiveModal(this.app, this.plugin, viewLang).open();
           })
       );
 
