@@ -21,7 +21,8 @@ Switch between backends from the settings tab without reinstalling. Built and ma
 - **Semantic Vault Search** — Index notes with embeddings (Titan / Gemini) and search by meaning
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags
 - **To-Do Management** — Daily to-do creation from templates, automatic carry-over of incomplete items (preserving hierarchy), archiving
-- **Archive Cleanup** — Clean up old archived files with a modal UI
+- **Archive Cleanup** — Clean up old archived files from the settings tab
+- **P.A.R.A Organizer** — Set up the P.A.R.A folder structure (Projects, Areas, Resources, Archives) and use AI to classify existing notes
 - **Web Clipper** — Fetch a web page by URL, translate and summarize via AI, save as markdown
 - **MCP Server Integration** — Connect Model Context Protocol servers (uvx, Docker)
 - **File Management** — Create, edit, move, and delete notes through AI tool calls
@@ -144,9 +145,18 @@ bedrock:ListFoundationModels
 
 ### Archive Cleanup
 
-1. Click the trash icon in the action toolbar
-2. Select files to delete from the archive folder
-3. Filtering is based on file creation date and the configured day threshold
+1. Open Settings → Assistant Kiro Settings → To-Do section
+2. Set the archive cleanup threshold (days) and click the cleanup button next to it
+3. Files older than the threshold are listed for deletion from the archive folder
+
+### P.A.R.A Organizer
+
+1. Open Settings → Assistant Kiro Settings → User Experience section
+2. Click the "Set up P.A.R.A" button below the welcome greeting
+3. The plugin creates four root folders: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
+4. If existing notes are found, the currently configured AI model classifies each note into the appropriate folder
+5. A progress modal shows real-time status and a summary when complete
+6. Notes already inside a P.A.R.A folder are skipped automatically
 
 ### Web Search
 
