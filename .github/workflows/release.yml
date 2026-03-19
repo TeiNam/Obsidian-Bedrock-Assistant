@@ -9,7 +9,6 @@ on:
         type: choice
         options:
           - main
-          - kiro-edition
         default: main
 
 permissions:
@@ -44,10 +43,7 @@ jobs:
         id: edition
         run: |
           BRANCH="${{ inputs.branch }}"
-          case "$BRANCH" in
-            kiro-edition) PREFIX="kiro" ;;
-            *)            PREFIX="bedrock-assistant" ;;
-          esac
+          PREFIX="bedrock-assistant"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "에디션: $PREFIX (브랜치: $BRANCH)"
