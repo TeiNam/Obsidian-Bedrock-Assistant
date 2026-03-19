@@ -3,6 +3,7 @@ import type GeminiAssistantPlugin from "./main";
 import { SKILLS } from "./skills";
 import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
+import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
 
 // 설정 탭 다국어 레이블
@@ -57,6 +58,18 @@ const I18N = {
     ux: "User Experience",
     greeting: "Welcome Greeting",
     greetingDesc: "Greeting shown when opening the sidebar",
+    paraSetup: "Set Up P.A.R.A",
+    paraSetupDesc: "P.A.R.A (Projects, Areas, Resources, Archives) is a universal organizational system. This will create 4 folders at the vault root and use AI to classify existing notes into the appropriate category.",
+    paraSetupBtn: "Set Up P.A.R.A",
+    paraModalTitle: "P.A.R.A Setup",
+    paraModalRunning: "Organizing vault with P.A.R.A structure...",
+    paraModalDone: "P.A.R.A setup complete!",
+    paraModalCreated: "Folders created",
+    paraModalMoved: "Notes moved",
+    paraModalSkipped: "Skipped (duplicate name)",
+    paraModalErrors: "Errors",
+    paraModalNoFiles: "No notes to move — folders are ready.",
+    paraModalClose: "Close",
     autoAttach: "Auto-attach Active Note",
     autoAttachDesc: "Automatically include the currently open note as context",
     persistChat: "Save Chat History",
@@ -174,6 +187,18 @@ const I18N = {
     ux: "사용자 경험",
     greeting: "환영 인사",
     greetingDesc: "사이드바를 열 때 표시되는 인사말",
+    paraSetup: "P.A.R.A 환경 설정",
+    paraSetupDesc: "P.A.R.A(Projects, Areas, Resources, Archives)는 범용 정보 정리 시스템입니다. 볼트 루트에 4개의 폴더를 생성하고, 기존 노트를 AI가 적절한 카테고리로 분류하여 이동합니다.",
+    paraSetupBtn: "P.A.R.A 설정하기",
+    paraModalTitle: "P.A.R.A 환경 설정",
+    paraModalRunning: "볼트를 P.A.R.A 구조로 정리하는 중...",
+    paraModalDone: "P.A.R.A 환경 설정 완료!",
+    paraModalCreated: "생성된 폴더",
+    paraModalMoved: "이동된 노트",
+    paraModalSkipped: "건너뜀 (이름 중복)",
+    paraModalErrors: "오류",
+    paraModalNoFiles: "이동할 노트가 없습니다 — 폴더가 준비되었습니다.",
+    paraModalClose: "닫기",
     autoAttach: "현재 노트 자동 첨부",
     autoAttachDesc: "메시지 전송 시 현재 열려있는 노트를 자동으로 컨텍스트에 포함합니다",
     persistChat: "대화 히스토리 저장",
@@ -291,6 +316,18 @@ const I18N = {
     ux: "ユーザー体験",
     greeting: "ウェルカムメッセージ",
     greetingDesc: "サイドバーを開いた時に表示される挨拶",
+    paraSetup: "P.A.R.A セットアップ",
+    paraSetupDesc: "P.A.R.A（Projects, Areas, Resources, Archives）は汎用的な情報整理システムです。ボルトのルートに4つのフォルダを作成し、AIが既存のノートを適切なカテゴリに分類して移動します。",
+    paraSetupBtn: "P.A.R.A セットアップ",
+    paraModalTitle: "P.A.R.A セットアップ",
+    paraModalRunning: "ボルトをP.A.R.A構造で整理中...",
+    paraModalDone: "P.A.R.A セットアップ完了！",
+    paraModalCreated: "作成されたフォルダ",
+    paraModalMoved: "移動されたノート",
+    paraModalSkipped: "スキップ（名前重複）",
+    paraModalErrors: "エラー",
+    paraModalNoFiles: "移動するノートがありません — フォルダの準備ができました。",
+    paraModalClose: "閉じる",
     autoAttach: "アクティブノートを自動添付",
     autoAttachDesc: "現在開いているノートをコンテキストとして自動的に含める",
     persistChat: "チャット履歴を保存",
@@ -710,6 +747,28 @@ export class GeminiSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.welcomeGreeting = value;
             await this.plugin.saveSettings();
+          })
+      );
+
+    // P.A.R.A 환경 설정
+    new Setting(containerEl)
+      .setName(t.paraSetup)
+      .setDesc(t.paraSetupDesc)
+      .addButton((btn) =>
+        btn
+          .setButtonText(t.paraSetupBtn)
+          .onClick(() => {
+            new ParaModal(this.app, this.plugin, {
+              paraModalTitle: t.paraModalTitle,
+              paraModalRunning: t.paraModalRunning,
+              paraModalDone: t.paraModalDone,
+              paraModalCreated: t.paraModalCreated,
+              paraModalMoved: t.paraModalMoved,
+              paraModalSkipped: t.paraModalSkipped,
+              paraModalErrors: t.paraModalErrors,
+              paraModalNoFiles: t.paraModalNoFiles,
+              paraModalClose: t.paraModalClose,
+            }).open();
           })
       );
 
