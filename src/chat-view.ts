@@ -564,7 +564,12 @@ export class ChatView extends ItemView {
           const assistantContent: unknown[] = [];
           for (const block of result.contentBlocks) {
             if (block.type === "text") {
-              assistantContent.push({ text: block.text });
+              const textEntry: Record<string, unknown> = { text: block.text };
+              // Gemini 3.x 텍스트 파트 thoughtSignature 보존 (권장)
+              if (block.thoughtSignature) {
+                textEntry.thoughtSignature = block.thoughtSignature;
+              }
+              assistantContent.push(textEntry);
             } else if (block.type === "tool_use") {
               const toolUseEntry: Record<string, unknown> = {
                 toolUseId: block.toolUseId,
@@ -609,6 +614,7 @@ export class ChatView extends ItemView {
             toolResultContents.push({
               toolResult: {
                 toolUseId: toolBlock.toolUseId,
+                name: toolBlock.name,
                 content: [{ text: toolResult }],
               },
             });

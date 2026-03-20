@@ -69,7 +69,12 @@ export class GeminiClient {
         if (typeof block === "object" && block !== null) {
           const b = block as Record<string, unknown>;
           if ("text" in b && typeof b.text === "string") {
-            parts.push({ text: b.text });
+            const textPart: Record<string, unknown> = { text: b.text };
+            // 텍스트 파트의 thoughtSignature 보존 (Gemini 3.x 권장)
+            if (b.thoughtSignature) {
+              textPart.thoughtSignature = b.thoughtSignature;
+            }
+            parts.push(textPart);
           } else if ("toolResult" in b) {
             // 도구 결과 → functionResponse
             const tr = b.toolResult as Record<string, unknown>;
@@ -212,6 +217,8 @@ export class GeminiClient {
     const contentBlocks: ContentBlock[] = [];
     let fullText = "";
     let stopReason = "end_turn";
+    // 텍스트 파트의 마지막 thoughtSignature 추적 (Gemini 3.x 권장 보존)
+    let lastTextThoughtSignature: string | undefined;
 
     const reader = response.body?.getReader();
     if (!reader) throw new Error("No response body");
@@ -245,6 +252,10 @@ export class GeminiClient {
               fullText += part.text;
               onTextDelta?.(part.text);
             }
+            // 텍스트 파트(빈 텍스트 포함)의 thoughtSignature 추적
+            if ("text" in part && part.thoughtSignature) {
+              lastTextThoughtSignature = part.thoughtSignature;
+            }
             if (part.functionCall) {
               const toolBlock: ContentBlock = {
                 type: "tool_use",
@@ -252,7 +263,7 @@ export class GeminiClient {
                 name: part.functionCall.name,
                 input: part.functionCall.args || {},
               };
-              // Gemini 3.x thought signature 보존
+              // Gemini 3.x thought signature 보존 (function calling 시 필수)
               if (part.thoughtSignature) {
                 (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
               }
@@ -274,7 +285,12 @@ export class GeminiClient {
     }
 
     if (fullText) {
-      contentBlocks.unshift({ type: "text", text: fullText });
+      const textBlock: ContentBlock = { type: "text", text: fullText };
+      // 텍스트 파트의 thoughtSignature 보존 (Gemini 3.x 권장)
+      if (lastTextThoughtSignature) {
+        (textBlock as import("./types").ContentBlockText).thoughtSignature = lastTextThoughtSignature;
+      }
+      contentBlocks.unshift(textBlock);
     }
 
     // Gemini는 function call 시에도 finishReason이 STOP일 수 있음
@@ -313,7 +329,12 @@ export class GeminiClient {
       if (parts) {
         for (const part of parts) {
           if (part.text) {
-            contentBlocks.push({ type: "text", text: part.text });
+            const textBlock: ContentBlock = { type: "text", text: part.text };
+            // 텍스트 파트의 thoughtSignature 보존 (Gemini 3.x 권장)
+            if (part.thoughtSignature) {
+              (textBlock as import("./types").ContentBlockText).thoughtSignature = part.thoughtSignature;
+            }
+            contentBlocks.push(textBlock);
             onTextDelta?.(part.text);
           }
           if (part.functionCall) {
@@ -323,7 +344,7 @@ export class GeminiClient {
               name: part.functionCall.name,
               input: part.functionCall.args || {},
             };
-            // Gemini 3.x thought signature 보존
+            // Gemini 3.x thought signature 보존 (function calling 시 필수)
             if (part.thoughtSignature) {
               (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
             }
