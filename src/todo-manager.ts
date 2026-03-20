@@ -56,20 +56,23 @@ export async function createTodoNote(
       .replace(/\{\{prevDate\}\}/g, prevDateStr);
 
     // 전일자(또는 가장 최근) To-Do에서 미완료 항목 가져오기
-    const carryOver = await getUnfinishedTasks(app, folder, now);
-    if (carryOver.length > 0) {
-      // 템플릿에서 오늘의 할 일 섹션 내 ### 서브섹션 추출
-      const subSections = extractTodoSubSections(content);
+    // 템플릿에 서브섹션이 있으면 섹션별로 추출하여 원래 위치에 이월 (AI 분류 불필요)
+    const subSections = extractTodoSubSections(content);
 
-      if (subSections.length >= 2) {
-        // AI로 서브섹션별 분류
-        const classified = await classifyTasksForSections(plugin, subSections, carryOver);
-        // 각 서브섹션의 빈 체크박스 자리에 분류된 항목 주입
-        for (const [section, sectionTasks] of classified) {
-          content = injectTasksIntoSubSection(content, section, sectionTasks);
+    if (subSections.length >= 2) {
+      // 섹션별 미완료 항목 추출 (원본 섹션 구조 보존)
+      const tasksBySection = await getUnfinishedTasksBySection(app, folder, now);
+      if (tasksBySection.size > 0) {
+        for (const [section, sectionTasks] of tasksBySection) {
+          if (sectionTasks.length > 0) {
+            content = injectTasksIntoSubSection(content, section, sectionTasks);
+          }
         }
-      } else {
-        // 서브섹션이 없으면 기존 방식으로 주입
+      }
+    } else {
+      // 서브섹션이 없으면 기존 플랫 방식으로 이월
+      const carryOver = await getUnfinishedTasks(app, folder, now);
+      if (carryOver.length > 0) {
         content = injectCarryOverTasks(content, carryOver);
       }
     }
@@ -138,6 +141,82 @@ export async function getUnfinishedTasks(app: App, todoFolder: string, today: Da
     }
   }
   return unfinished;
+}
+
+/**
+ * 전일자 To-Do에서 미완료 항목을 섹션별로 추출합니다.
+ * ### 서브섹션 구조를 보존하여 원래 섹션에 그대로 이월할 수 있도록 합니다.
+ * AI 분류 없이 원본 섹션 매핑을 유지하므로 분류 오류가 발생하지 않습니다.
+ */
+export async function getUnfinishedTasksBySection(
+  app: App,
+  todoFolder: string,
+  today: Date
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  const folder = app.vault.getAbstractFileByPath(todoFolder);
+  if (!folder) return result;
+
+  const children = (folder as any).children || [];
+  const dated: { file: TFile; date: Date }[] = [];
+  for (const child of children) {
+    if (!(child instanceof TFile) || child.extension !== "md") continue;
+    const match = child.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) continue;
+    const d = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (d < today) dated.push({ file: child, date: d });
+  }
+  if (dated.length === 0) return result;
+
+  dated.sort((a, b) => b.date.getTime() - a.date.getTime());
+  const latest = dated[0].file;
+  const content = await app.vault.cachedRead(latest);
+  const lines = content.split("\n");
+
+  let inTodoSection = false;
+  let currentSubSection: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // ## 오늘의 할 일 / To-Do 섹션 시작 감지
+    if (/^##\s+.*(?:오늘의 할 일|할 일|to.?do|tasks)/i.test(line)) {
+      inTodoSection = true;
+      continue;
+    }
+    // 다음 ## 섹션이 나오면 종료 (### 제외)
+    if (inTodoSection && /^##\s+/.test(line) && !/^###/.test(line)) {
+      break;
+    }
+
+    if (!inTodoSection) continue;
+
+    // ### 서브섹션 감지 (이모지 포함 가능)
+    const subMatch = line.match(/^###\s+(.+)/);
+    if (subMatch) {
+      currentSubSection = subMatch[1].trim();
+      if (!result.has(currentSubSection)) {
+        result.set(currentSubSection, []);
+      }
+      continue;
+    }
+
+    // 미완료 체크박스 항목 수집 (현재 서브섹션에 귀속)
+    if (currentSubSection && /^- \[ \]\s+.+/.test(line)) {
+      const tasks = result.get(currentSubSection) || [];
+      tasks.push(line);
+      // 하위 들여쓰기 항목도 함께 수집
+      let j = i + 1;
+      while (j < lines.length && /^[\t ]+/.test(lines[j]) && lines[j].trim().length > 0) {
+        tasks.push(lines[j]);
+        j++;
+      }
+      result.set(currentSubSection, tasks);
+      i = j - 1;
+    }
+  }
+
+  return result;
 }
 
 /**
