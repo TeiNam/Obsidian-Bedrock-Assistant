@@ -100,7 +100,7 @@ export class ChatView extends ItemView {
         this.applyFontSize();
 
         // 입력 영역
-        this.buildInputArea();
+        await this.buildInputArea();
 
         // 저장된 대화 히스토리 복원
         await this.restoreChatHistory();
@@ -150,7 +150,7 @@ export class ChatView extends ItemView {
     this.registerDomEvent(historyBtn, "click", () => this.showSessionList());
   }
 
-  private buildInputArea(): void {
+  private async buildInputArea(): Promise<void> {
     const inputContainer = this.viewContainerEl.createDiv({ cls: "ba-input-container" });
 
     // 액션 툴바 (입력창 바로 위)
@@ -302,11 +302,11 @@ export class ChatView extends ItemView {
       })
     );
 
-    // 초기 로드 시 현재 열린 파일 첨부
+    // 초기 로드 시 현재 열린 파일 첨부 (await로 파일 내용 로드 완료 보장)
     if (this.plugin.settings.autoAttachActiveNote) {
       const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
       if (activeView?.file) {
-        this.autoAttachFile(activeView.file.path);
+        await this.autoAttachFile(activeView.file.path);
       }
     }
 
@@ -829,6 +829,8 @@ export class ChatView extends ItemView {
         // 수동 첨부에도 포함된 경우 제거하지 않음
         if (!this.manuallyAttachedPaths.has(this.autoAttachedPath)) {
           this.attachedFiles.delete(this.autoAttachedPath);
+          // 이전 파일 제거 후 칩 UI 즉시 갱신 (데이터/UI 불일치 방지)
+          this.renderFileChips();
         }
       }
       this.autoAttachedPath = path;
