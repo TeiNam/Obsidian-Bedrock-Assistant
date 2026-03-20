@@ -257,7 +257,7 @@ export async function generateRetrospective(
     const prompt = buildRetrospectivePrompt(todoContent, todayFiles, settings.language);
     const result = await aiClient.converseLight(prompt, SYSTEM_PROMPT, 2048);
 
-    // 5. To-Do 문서 끝에 회고 추가
+    // 5. To-Do 문서 끝에 회고 추가 (사용자가 명시적으로 요청한 회고 생성이므로 vault.modify 사용이 적절)
     const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
     await app.vault.modify(todoFile as TFile, updatedContent);
 
