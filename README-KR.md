@@ -200,6 +200,10 @@ bedrock:ListFoundationModels
 
 제3자 분석이나 추적 서비스로 데이터를 전송하지 않습니다.
 
+## 데스크톱 전용
+
+이 플러그인은 데스크톱 전용(`isDesktopOnly: true`)입니다. MCP 서버 통합이 로컬 자식 프로세스를 stdio로 생성하는 방식이므로 모바일 플랫폼에서는 사용할 수 없습니다.
+
 ## 라이선스
 
 [MIT](LICENSE)

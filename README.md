@@ -200,6 +200,10 @@ This plugin makes network requests to the following external services:
 
 No data is sent to any third-party analytics or tracking services.
 
+## Desktop Only
+
+This plugin is desktop-only (`isDesktopOnly: true`) because MCP server integration relies on spawning local child processes via stdio, which is not available on mobile platforms.
+
 ## License
 
 [MIT](LICENSE)
