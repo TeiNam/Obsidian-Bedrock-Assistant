@@ -1,0 +1,268 @@
+// ============================================
+// 회고 서비스 공통 모듈
+// ============================================
+// 기존 RetrospectiveModal의 회고 생성 로직을 추출하여
+// 모달과 채팅 양쪽에서 재사용할 수 있도록 공통화한 모듈.
+// 헬퍼 함수들은 개별 export하여 property 테스트가 가능하다.
+
+import { normalizePath, TFile } from "obsidian";
+import type { App } from "obsidian";
+import type { GeminiAssistantSettings, IAiClient } from "./types";
+
+// ============================================
+// 인터페이스 정의
+// ============================================
+
+/** 회고 생성 결과 타입 */
+export interface RetrospectiveResult {
+  /** 회고 생성 성공 여부 */
+  success: boolean;
+  /** 생성된 회고 텍스트 (성공 시) */
+  text?: string;
+  /** 안내/오류 메시지 (실패 시) */
+  message?: string;
+}
+
+/** 회고 생성에 필요한 의존성 */
+export interface RetrospectiveDeps {
+  app: App;
+  settings: GeminiAssistantSettings;
+  aiClient: IAiClient;
+}
+
+// ============================================
+// 헬퍼 함수: To-Do 경로 생성
+// ============================================
+
+/**
+ * 오늘자 To-Do 파일 경로를 생성한다.
+ * 형식: {todoFolder}/YYYY-MM-DD.md
+ * 월/일은 항상 2자리 zero-padded.
+ *
+ * @param todoFolder - To-Do 폴더 경로 (기본값: "ToDo")
+ * @param date - 대상 날짜 (기본값: 현재 날짜)
+ * @returns normalizePath 적용된 To-Do 파일 경로
+ */
+export function buildTodoPath(todoFolder: string, date?: Date): string {
+  const folder = todoFolder || "ToDo";
+  const d = date ?? new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return normalizePath(`${folder}/${year}-${month}-${day}.md`);
+}
+
+
+// ============================================
+// 헬퍼 함수: 날짜 문자열 생성
+// ============================================
+
+/**
+ * Date 객체에서 YYYY-MM-DD 형식의 문자열을 생성한다.
+ *
+ * @param date - 대상 날짜
+ * @returns YYYY-MM-DD 형식 문자열
+ */
+function formatDateStr(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// ============================================
+// 헬퍼 함수: Today_Files 수집
+// ============================================
+
+/** 수집된 파일 정보 */
+interface CollectedFile {
+  path: string;
+  content: string;
+}
+
+/**
+ * 오늘 생성된 마크다운 파일을 수집한다.
+ * To-Do 파일 자체와 archiveCleanFolder 하위 파일은 제외한다.
+ *
+ * @param files - 볼트 내 전체 파일 목록
+ * @param todoFilePath - 제외할 To-Do 파일 경로
+ * @param archiveCleanFolder - 제외할 아카이브 폴더 경로
+ * @param dateStr - 오늘 날짜 문자열 (YYYY-MM-DD)
+ * @returns 필터링 조건을 통과한 파일 목록 (TFile[])
+ */
+export function collectTodayFiles(
+  files: TFile[],
+  todoFilePath: string,
+  archiveCleanFolder: string,
+  dateStr: string,
+): TFile[] {
+  const normalizedArchive = normalizePath(archiveCleanFolder || "ToDo/Archive");
+  const todayStart = new Date(dateStr + "T00:00:00").getTime();
+  const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+
+  return files.filter((file) => {
+    // 생성일이 오늘인 파일만
+    if (file.stat.ctime < todayStart || file.stat.ctime >= todayEnd) return false;
+    // To-Do 파일 자체 제외
+    if (file.path === todoFilePath) return false;
+    // 아카이브 폴더 하위 제외
+    if (file.path.startsWith(normalizedArchive + "/")) return false;
+    // 마크다운 파일만
+    if (file.extension !== "md") return false;
+    return true;
+  });
+}
+
+// ============================================
+// 헬퍼 함수: 콘텐츠 Truncation
+// ============================================
+
+/**
+ * 콘텐츠가 maxLength를 초과하면 앞부분만 잘라내고 "..."을 붙인다.
+ * maxLength 이하이면 원본을 그대로 반환한다.
+ *
+ * @param content - 원본 콘텐츠
+ * @param maxLength - 최대 길이 (기본값: 2000)
+ * @returns truncation 적용된 콘텐츠
+ */
+export function truncateContent(content: string, maxLength: number = 2000): string {
+  if (content.length <= maxLength) return content;
+  return content.substring(0, maxLength) + "...";
+}
+
+
+// ============================================
+// 헬퍼 함수: 프롬프트 생성
+// ============================================
+
+/** 언어별 라벨 매핑 */
+const LANGUAGE_LABELS: Record<string, string> = {
+  ko: "한국어",
+  ja: "日本語",
+  en: "English",
+};
+
+/** 언어별 회고 제목 매핑 */
+const RETROSPECTIVE_HEADINGS: Record<string, string> = {
+  ko: "📝 오늘의 회고",
+  ja: "📝 今日の振り返り",
+  en: "📝 Daily Retrospective",
+};
+
+/**
+ * 회고 생성용 AI 프롬프트를 구성한다.
+ * 언어 설정에 따라 적절한 라벨과 제목을 사용한다.
+ *
+ * @param todoContent - To-Do 문서 내용
+ * @param todayFiles - 오늘 생성된 파일 목록 (경로 + 콘텐츠)
+ * @param language - 언어 설정 ("en" | "ko" | "ja")
+ * @returns 생성된 프롬프트 문자열
+ */
+export function buildRetrospectivePrompt(
+  todoContent: string,
+  todayFiles: CollectedFile[],
+  language: string,
+): string {
+  const langLabel = LANGUAGE_LABELS[language] || "English";
+  const heading = RETROSPECTIVE_HEADINGS[language] || RETROSPECTIVE_HEADINGS.en;
+
+  const filesContext = todayFiles.length > 0
+    ? todayFiles.map((f) => `### ${f.path}\n${f.content}`).join("\n\n")
+    : "(No additional files created today)";
+
+  return `You are a daily retrospective assistant. Analyze the following To-Do document and today's created files, then write a retrospective summary.
+
+Language: Write in ${langLabel}.
+
+## Today's To-Do
+${todoContent}
+
+## Files Created Today (${todayFiles.length} files)
+${filesContext}
+
+## Instructions
+- Summarize what was accomplished today based on the To-Do items and created files
+- Note any incomplete tasks and possible reasons
+- Provide brief insights or suggestions for improvement
+- Keep it concise (under 300 words)
+- Use markdown format with a ## heading
+- The heading should be "${heading}"`;
+}
+
+/** 시스템 프롬프트 (회고 생성용) */
+const SYSTEM_PROMPT = "You are a helpful retrospective assistant. Write in markdown format.";
+
+
+// ============================================
+// 메인 함수: 회고 생성
+// ============================================
+
+/**
+ * 오늘자 To-Do 문서를 기반으로 회고를 생성하고 문서에 추가한다.
+ * 모달과 채팅 양쪽에서 호출 가능한 공통 함수.
+ *
+ * 처리 흐름:
+ * 1. 오늘자 To-Do 파일 존재 확인
+ * 2. To-Do 내용 읽기
+ * 3. 오늘 생성된 파일 수집 및 콘텐츠 truncation
+ * 4. AI 프롬프트 구성 및 converseLight() 호출
+ * 5. 생성된 회고를 To-Do 문서 끝에 추가
+ *
+ * @param deps - 회고 생성에 필요한 의존성 (app, settings, aiClient)
+ * @returns 회고 생성 결과
+ */
+export async function generateRetrospective(
+  deps: RetrospectiveDeps,
+): Promise<RetrospectiveResult> {
+  const { app, settings, aiClient } = deps;
+
+  // 1. 오늘자 To-Do 파일 경로 생성 및 존재 확인
+  const now = new Date();
+  const dateStr = formatDateStr(now);
+  const todoPath = buildTodoPath(settings.todoFolder, now);
+  const todoFile = app.vault.getAbstractFileByPath(todoPath);
+
+  if (!todoFile || !(todoFile instanceof TFile)) {
+    return { success: false };
+  }
+
+  try {
+    // 2. To-Do 내용 읽기
+    const todoContent = await app.vault.read(todoFile as TFile);
+
+    // 3. 오늘 생성된 파일 수집
+    const allFiles = app.vault.getFiles();
+    const filteredFiles = collectTodayFiles(
+      allFiles,
+      todoPath,
+      settings.archiveCleanFolder,
+      dateStr,
+    );
+
+    // 파일 콘텐츠 읽기 및 truncation 적용
+    const todayFiles: CollectedFile[] = [];
+    for (const file of filteredFiles) {
+      try {
+        const content = await app.vault.cachedRead(file);
+        todayFiles.push({
+          path: file.path,
+          content: truncateContent(content),
+        });
+      } catch {
+        // 읽기 실패 시 건너뜀 (기존 모달 동작과 동일)
+      }
+    }
+
+    // 4. AI 프롬프트 구성 및 호출
+    const prompt = buildRetrospectivePrompt(todoContent, todayFiles, settings.language);
+    const result = await aiClient.converseLight(prompt, SYSTEM_PROMPT, 2048);
+
+    // 5. To-Do 문서 끝에 회고 추가
+    const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
+    await app.vault.modify(todoFile as TFile, updatedContent);
+
+    return { success: true, text: result.text.trim() };
+  } catch (error) {
+    return { success: false, message: (error as Error).message };
+  }
+}
