@@ -30,6 +30,10 @@ Switch between backends from the settings tab without reinstalling. Built and ma
 - **File Attachments** — Attach context via drag-and-drop, clipboard, file search, or images/PDFs
 - **Chat Session History** — Save and restore past conversations with search
 - **Daily Retrospective** — Generate an AI-powered daily review based on your To-Do
+- **Chat Retrospective Command** — Type "회고", "retrospective", or "振り返り" in chat to auto-generate a retrospective
+- **Chat Export** — Export conversations as markdown files
+- **Conversation Search** — Search through saved chat sessions
+- **MCP JSON Editor** — Real-time validation, auto-formatting, bracket matching, and templates
 - **Context Window Indicator** — Visual ring showing token usage
 - **Obsidian Skills** — Enable Obsidian-specific knowledge (Dataview, Tasks, Templater) in the system prompt
 - **Destructive Tool Confirmation** — Optional confirmation dialog before file-modifying operations
