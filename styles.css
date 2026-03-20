@@ -1755,3 +1755,30 @@ body.theme-light .ba-message-content pre {
 .ba-remove-all-chip .ba-file-chip-icon {
   color: inherit;
 }
+
+/* ============================================
+   MCP JSON 에디터 - 검증 및 포맷팅 UI
+   ============================================ */
+
+/* MCP JSON 에디터 - 오류 시 빨간 테두리 */
+.ba-mcp-editor.has-error {
+  border-color: var(--text-error) !important;
+}
+
+/* MCP JSON 에디터 - 오류 메시지 표시 영역 */
+.ba-mcp-error-indicator {
+  color: var(--text-error);
+  font-size: 12px;
+  margin-top: 4px;
+  padding: 4px 8px;
+}
+
+/* MCP JSON 에디터 - 포맷 버튼 */
+.ba-mcp-format-btn {
+  margin-right: 8px;
+}
+
+/* MCP JSON 에디터 - 템플릿 삽입 버튼 */
+.ba-mcp-template-btn {
+  margin-right: 8px;
+}
