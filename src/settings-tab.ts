@@ -425,8 +425,8 @@ export class GeminiSettingTab extends PluginSettingTab {
     const lang = this.plugin.settings.language;
     const t = I18N[lang] || I18N.en;
 
-    // 설정 페이지 타이틀을 현재 브랜딩에서 동적으로 가져옴
-    containerEl.createEl("h2", { text: BRANDING.settingsTitle[lang] || BRANDING.settingsTitle.en });
+    // 설정 페이지 타이틀을 현재 브랜딩에서 동적으로 가져옴 (심사 기준: setHeading 사용)
+    new Setting(containerEl).setName(BRANDING.settingsTitle[lang] || BRANDING.settingsTitle.en).setHeading();
 
     // 플러그인 설명 + README 링크 + 후원 배너 (하나의 박스)
     const aboutBox = containerEl.createDiv({ cls: "ba-about-box" });
@@ -442,6 +442,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     readmeLink.addEventListener("click", async (e) => {
       e.preventDefault();
       try {
+        // README 파일은 .obsidian 하위 플러그인 폴더에 위치하므로 adapter를 직접 사용
         const content = await this.app.vault.adapter.read(readmeFilePath);
         const leaf = this.app.workspace.getLeaf("tab");
         await leaf.openFile(
@@ -512,7 +513,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     // 조건부 자격증명 필드: 백엔드에 따라 다른 필드 표시
     if (this.plugin.settings.aiBackend === "gemini") {
       // Gemini API 설정
-      containerEl.createEl("h3", { text: t.awsAuth });
+      new Setting(containerEl).setName(t.awsAuth).setHeading();
 
       const apiKeySetting = new Setting(containerEl)
         .setName(t.apiKey)
@@ -534,7 +535,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       this.addToggleVisibilityButton(apiKeySetting.controlEl);
     } else {
       // Bedrock (AWS) 자격증명 설정
-      containerEl.createEl("h3", { text: "AWS Bedrock" });
+      new Setting(containerEl).setName("AWS Bedrock").setHeading();
 
       const awsAccessKeySetting = new Setting(containerEl)
         .setName(t.awsAccessKeyLabel)
@@ -589,7 +590,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     }
 
     // 조건부 모델 설정: 백엔드별 모델 드롭다운 표시
-    containerEl.createEl("h3", { text: t.modelSettings });
+    new Setting(containerEl).setName(t.modelSettings).setHeading();
 
     if (this.plugin.settings.aiBackend === "gemini") {
       // Gemini 채팅 모델 드롭다운
@@ -694,7 +695,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     }
 
     // 생성 설정
-    containerEl.createEl("h3", { text: t.genSettings });
+    new Setting(containerEl).setName(t.genSettings).setHeading();
 
     new Setting(containerEl)
       .setName(t.maxTokens)
@@ -736,7 +737,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     // 사용자 경험 설정
-    containerEl.createEl("h3", { text: t.ux });
+    new Setting(containerEl).setName(t.ux).setHeading();
 
     new Setting(containerEl)
       .setName(t.greeting)
@@ -868,7 +869,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     // 코드 블록 설정
-    containerEl.createEl("h3", { text: t.codeBlock });
+    new Setting(containerEl).setName(t.codeBlock).setHeading();
     const codeBlockBox = containerEl.createDiv({ cls: "ba-about-box" });
     codeBlockBox.createEl("p", {
       text: t.codeBlockDesc,
@@ -885,7 +886,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     );
 
     // To-Do 설정
-    containerEl.createEl("h3", { text: t.todo });
+    new Setting(containerEl).setName(t.todo).setHeading();
 
     new Setting(containerEl)
       .setName(t.todoFolder)
@@ -970,7 +971,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     // 아카이브 비우기 설정
-    containerEl.createEl("h3", { text: t.archiveClean });
+    new Setting(containerEl).setName(t.archiveClean).setHeading();
 
     new Setting(containerEl)
       .setName(t.archiveCleanFolder)
@@ -1020,7 +1021,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     // 웹 클리퍼 설정
-    containerEl.createEl("h3", { text: t.webClip });
+    new Setting(containerEl).setName(t.webClip).setHeading();
 
     new Setting(containerEl)
       .setName(t.webClipFolder)
@@ -1075,7 +1076,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       });
 
     // Obsidian 스킬 설정
-    containerEl.createEl("h3", { text: t.skills });
+    new Setting(containerEl).setName(t.skills).setHeading();
     const skillsBox = containerEl.createDiv({ cls: "ba-about-box" });
     skillsBox.createEl("p", {
       text: t.skillsDesc,
@@ -1103,7 +1104,7 @@ export class GeminiSettingTab extends PluginSettingTab {
     }
 
     // MCP 서버 설정
-    containerEl.createEl("h3", { text: t.mcpServers });
+    new Setting(containerEl).setName(t.mcpServers).setHeading();
 
     // MCP 도구 타임아웃 슬라이더
     new Setting(containerEl)

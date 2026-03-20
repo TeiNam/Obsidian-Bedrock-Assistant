@@ -20,3 +20,8 @@ export class App {
     getAbstractFileByPath: () => null,
   };
 }
+
+// 테스트 환경에서는 경로를 그대로 반환하는 스텁
+export function normalizePath(path: string): string {
+  return path;
+}

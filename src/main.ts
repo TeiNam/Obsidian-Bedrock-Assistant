@@ -254,7 +254,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   // 인덱스 로드/저장
   async loadIndex(): Promise<void> {
     try {
-      // 숨김 파일은 getAbstractFileByPath 캐시에 없을 수 있으므로 adapter를 직접 사용
+      // 숨김 파일(.으로 시작)은 Vault API 캐시에 포함되지 않으므로 adapter를 직접 사용
       const exists = await this.app.vault.adapter.exists(INDEX_FILE);
       if (exists) {
         const data = await this.app.vault.adapter.read(INDEX_FILE);
@@ -268,7 +268,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   async saveIndex(): Promise<void> {
     try {
       const data = this.indexer.serialize();
-      // 숨김 파일은 getAbstractFileByPath 캐시에 없을 수 있으므로 adapter를 직접 사용
+      // 숨김 파일(.으로 시작)은 Vault API 캐시에 포함되지 않으므로 adapter를 직접 사용
       await this.app.vault.adapter.write(INDEX_FILE, data);
     } catch (error) {
       console.error("인덱스 저장 실패:", error);
@@ -318,9 +318,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     const vault = this.app.vault;
     return {
       exists: async (path: string): Promise<boolean> => {
+        // 숨김 파일(.으로 시작)은 Vault API 캐시에 포함되지 않으므로 adapter를 직접 사용
         return await vault.adapter.exists(path);
       },
       read: async (path: string): Promise<string> => {
+        // 숨김 파일(.으로 시작)은 Vault API 캐시에 포함되지 않으므로 adapter를 직접 사용
         return await vault.adapter.read(path);
       },
       write: async (path: string, data: string): Promise<void> => {
@@ -328,7 +330,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (file && file instanceof TFile) {
           await vault.modify(file, data);
         } else {
-          // 캐시에 없지만 파일은 존재할 수 있으므로 adapter로 직접 쓰기
+          // 캐시에 없지만 파일은 존재할 수 있으므로 adapter로 직접 쓰기 (숨김 파일 대응)
           await vault.adapter.write(path, data);
         }
       },
@@ -342,7 +344,7 @@ export default class GeminiAssistantPlugin extends Plugin {
           if (existing && existing instanceof TFile) {
             await vault.modify(existing, data);
           } else {
-            // 캐시에 없지만 파일은 존재하는 경우 adapter로 직접 쓰기
+            // 캐시에 없지만 파일은 존재하는 경우 adapter로 직접 쓰기 (숨김 파일 대응)
             await vault.adapter.write(path, data);
           }
         }
@@ -452,6 +454,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   async loadMcpConfig(): Promise<{ connected: string[]; failed: string[] }> {
     const configPath = this.getMcpConfigPath();
     try {
+      // MCP 설정 파일은 .obsidian 하위 플러그인 폴더에 위치하므로 adapter를 직접 사용
       const adapter = this.app.vault.adapter;
       if (await adapter.exists(configPath)) {
         const data = await adapter.read(configPath);
@@ -467,6 +470,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   async saveMcpConfig(configJson: string): Promise<void> {
     const configPath = this.getMcpConfigPath();
     try {
+      // MCP 설정 파일은 .obsidian 하위 플러그인 폴더에 위치하므로 adapter를 직접 사용
       await this.app.vault.adapter.write(configPath, configJson);
     } catch (error) {
       console.error("MCP 설정 저장 실패:", error);
@@ -477,6 +481,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   async readMcpConfig(): Promise<string> {
     const configPath = this.getMcpConfigPath();
     try {
+      // MCP 설정 파일은 .obsidian 하위 플러그인 폴더에 위치하므로 adapter를 직접 사용
       const adapter = this.app.vault.adapter;
       if (await adapter.exists(configPath)) {
         return await adapter.read(configPath);

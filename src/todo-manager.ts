@@ -1,7 +1,7 @@
 // To-Do 관련 유틸리티 함수 (chat-view.ts에서 분리)
 // createTodoNote, getUnfinishedTasks, injectCarryOverTasks 등 To-Do 생성/관리 로직
 
-import { TFile, Notice } from "obsidian";
+import { TFile, Notice, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import type { ViewLang } from "./chat-view-i18n";
@@ -16,7 +16,7 @@ export async function createTodoNote(
   t: ViewLang
 ): Promise<void> {
   try {
-    const folder = plugin.settings.todoFolder || "ToDo";
+    const folder = normalizePath(plugin.settings.todoFolder || "ToDo");
 
     // 폴더가 없으면 생성
     const folderExists = app.vault.getAbstractFileByPath(folder);
@@ -38,7 +38,7 @@ export async function createTodoNote(
     }
 
     // 템플릿 파일에서 내용 읽기
-    const templateFolder = plugin.settings.templateFolder || "Templates";
+    const templateFolder = normalizePath(plugin.settings.templateFolder || "Templates");
     const templateName = plugin.settings.todoTemplateName || "Daily To-Do";
     const templatePath = `${templateFolder}/${templateName}.md`;
     let template = `# 📋 {{date}}\n\n## To-Do\n\n- [ ] \n\n## Notes\n\n`;
@@ -518,7 +518,7 @@ export async function archiveOldTodos(
   todoFolder: string,
   now: Date
 ): Promise<void> {
-  const archiveFolder = plugin.settings.todoArchiveFolder || "ToDo/Archive";
+  const archiveFolder = normalizePath(plugin.settings.todoArchiveFolder || "ToDo/Archive");
   const archiveDays = plugin.settings.todoArchiveDays || 7;
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - archiveDays);

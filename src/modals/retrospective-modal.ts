@@ -1,6 +1,6 @@
 // 회고 모달 (chat-view.ts에서 분리)
 
-import { Modal, TFile, Notice } from "obsidian";
+import { Modal, TFile, Notice, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ViewLang } from "../chat-view-i18n";
@@ -30,7 +30,7 @@ export class RetrospectiveModal extends Modal {
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const todoFolder = this.plugin.settings.todoFolder || "ToDo";
-    const todoPath = `${todoFolder}/${dateStr}.md`;
+    const todoPath = normalizePath(`${todoFolder}/${dateStr}.md`);
     const todoFile = this.app.vault.getAbstractFileByPath(todoPath);
 
     if (!todoFile || !(todoFile instanceof TFile)) {
@@ -72,8 +72,8 @@ export class RetrospectiveModal extends Modal {
     const todoContent = await this.app.vault.read(todoFile);
 
     // 오늘 생성된 파일 수집 (To-Do 파일, 아카이브 비우기 대상 폴더 제외)
-    const todoFolder = this.plugin.settings.todoFolder || "ToDo";
-    const archiveCleanFolder = this.plugin.settings.archiveCleanFolder || "ToDo/Archive";
+    const todoFolder = normalizePath(this.plugin.settings.todoFolder || "ToDo");
+    const archiveCleanFolder = normalizePath(this.plugin.settings.archiveCleanFolder || "ToDo/Archive");
     const allFiles = this.app.vault.getFiles();
     const todayStart = new Date(dateStr + "T00:00:00").getTime();
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
@@ -131,7 +131,7 @@ ${filesContext}
     const client = new BedrockClient(this.plugin.settings);
     const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
 
-    // To-Do 문서 끝에 회고 추가
+    // To-Do 문서 끝에 회고 추가 (사용자가 명시적으로 요청한 작업이므로 vault.modify 사용)
     const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
     await this.app.vault.modify(todoFile, updatedContent);
   }

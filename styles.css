@@ -93,6 +93,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  font-size: var(--ba-chat-font-size, 14px);
 }
 
 .ba-messages::-webkit-scrollbar {
@@ -407,7 +408,7 @@ body.theme-light .ba-message-content pre {
   background: transparent !important;
   color: var(--text-normal);
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--ba-chat-font-size, 14px);
   line-height: 1.4;
   box-shadow: none !important;
   overflow-y: auto;

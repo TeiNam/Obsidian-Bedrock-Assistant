@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, MarkdownView, Notice } from "obsidian";
+import { App, TFile, TFolder, MarkdownView, Notice, normalizePath } from "obsidian";
 import type { VaultIndexer } from "./vault-indexer";
 import type { ToolDefinition } from "./types";
 
@@ -169,6 +169,22 @@ export class ToolExecutor {
 
   async execute(toolName: string, input: Record<string, unknown>): Promise<string> {
     try {
+      // 사용자 입력 경로에 normalizePath 적용 (심사 기준: 경로 정규화 필수)
+      if (input.path && typeof input.path === "string") {
+        input.path = normalizePath(input.path);
+      }
+      if (input.folder && typeof input.folder === "string") {
+        input.folder = normalizePath(input.folder);
+      }
+      if (input.source_path && typeof input.source_path === "string") {
+        input.source_path = normalizePath(input.source_path);
+      }
+      if (input.destination_path && typeof input.destination_path === "string") {
+        input.destination_path = normalizePath(input.destination_path);
+      }
+      if (input.output_path && typeof input.output_path === "string") {
+        input.output_path = normalizePath(input.output_path);
+      }
       switch (toolName) {
         case "search_vault":
           return await this.searchVault(input.query as string, (input.limit as number) || 5);
@@ -262,7 +278,7 @@ export class ToolExecutor {
       if (!current.includes(find)) {
         return `교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`;
       }
-      // find에 해당하는 모든 텍스트를 교체 (정규식 이스케이프 없이 안전)
+      // find에 해당하는 모든 텍스트를 교체 (사용자가 명시적으로 요청한 편집이므로 vault.modify 사용)
       const updated = current.split(find).join(replace);
       await this.app.vault.modify(file, updated);
       new Notice(`노트 부분 수정됨: ${path}`);

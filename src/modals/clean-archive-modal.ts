@@ -1,6 +1,6 @@
 // 아카이브 비우기 모달 (chat-view.ts에서 분리)
 
-import { Modal, TFile, Notice } from "obsidian";
+import { Modal, TFile, Notice, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ViewLang } from "../chat-view-i18n";
@@ -25,7 +25,7 @@ export class CleanArchiveModal extends Modal {
     contentEl.addClass("ba-clean-archive-modal");
     contentEl.createEl("h2", { text: this.t.cleanArchiveTitle });
 
-    const archiveFolder = this.plugin.settings.archiveCleanFolder;
+    const archiveFolder = normalizePath(this.plugin.settings.archiveCleanFolder);
     const archiveDays = this.plugin.settings.archiveCleanDays;
     const now = Date.now();
     const cutoff = now - archiveDays * 24 * 60 * 60 * 1000;
