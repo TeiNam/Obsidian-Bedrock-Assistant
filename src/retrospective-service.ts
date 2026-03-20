@@ -193,19 +193,26 @@ ${filesContext}
 // 헬퍼 함수: 기존 회고 섹션 감지 및 교체
 // ============================================
 
-/** 모든 언어의 회고 헤딩 패턴 (## 레벨) */
-const ALL_HEADINGS = Object.values(RETROSPECTIVE_HEADINGS);
+/** AI가 생성하는 회고 헤딩 + 템플릿에 있는 회고 헤딩 */
+const ALL_HEADINGS = [
+  ...Object.values(RETROSPECTIVE_HEADINGS),
+  // 템플릿에서 사용하는 회고 헤딩 (이모지가 다름: 📊 vs 📝)
+  "📊 오늘의 회고",
+  "📊 今日の振り返り",
+  "📊 Daily Retrospective",
+];
 
 /**
  * To-Do 콘텐츠에서 기존 회고 섹션의 시작 인덱스를 찾는다.
- * 모든 언어의 회고 헤딩을 검색하며, 현재 언어를 우선 검색한다.
+ * AI 생성 헤딩(📝)과 템플릿 헤딩(📊) 모두 검색한다.
+ * 현재 언어를 우선 검색한다.
  *
  * @param content - To-Do 문서 내용
  * @param language - 현재 언어 설정
  * @returns 회고 섹션 시작 인덱스 (-1이면 없음)
  */
 export function findRetrospectiveSection(content: string, language: string): number {
-  // 현재 언어 헤딩을 먼저 검색
+  // 현재 언어의 AI 헤딩과 템플릿 헤딩을 먼저 검색
   const currentHeading = RETROSPECTIVE_HEADINGS[language] || RETROSPECTIVE_HEADINGS.en;
   const headings = [currentHeading, ...ALL_HEADINGS.filter((h) => h !== currentHeading)];
 
