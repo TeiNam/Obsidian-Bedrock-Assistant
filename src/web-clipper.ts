@@ -1,4 +1,4 @@
-import { Modal, App, Notice, setIcon, requestUrl } from "obsidian";
+import { Modal, App, Notice, setIcon, requestUrl, normalizePath } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import { createAiClient } from "./ai-client-factory";
 
@@ -279,7 +279,7 @@ Rules:
    * 요약 결과를 옵시디언 노트로 저장
    */
   private async saveAsNote(url: string, title: string, summary: string): Promise<string> {
-    const folder = this.plugin.settings.webClipFolder || "WebClips";
+    const folder = normalizePath(this.plugin.settings.webClipFolder || "WebClips");
     const vault = this.app.vault;
 
     // 폴더 생성 (없으면)

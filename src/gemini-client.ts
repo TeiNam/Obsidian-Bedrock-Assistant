@@ -194,6 +194,7 @@ export class GeminiClient {
   }
 
   // 스트리밍 호출 (SSE)
+  // Obsidian의 requestUrl은 SSE 스트리밍을 지원하지 않으므로 fetch API를 직접 사용
   private async streamGenerate(
     model: string,
     body: Record<string, unknown>,

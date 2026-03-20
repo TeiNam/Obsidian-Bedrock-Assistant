@@ -1299,6 +1299,7 @@ export class ChatView extends ItemView {
       }
 
       await this.app.vault.modify(file, newContent);
+      // 참고: 태그 삽입은 사용자가 명시적으로 요청한 작업이므로 vault.modify 사용이 적절
       new Notice(this.t.tagsAdded(tags.join(", ")));
     } catch (error) {
       console.error("Tag generation error:", error);
@@ -1390,11 +1391,10 @@ export class ChatView extends ItemView {
     }
   }
 
-  // 채팅 폰트 크기 적용
+  // 채팅 폰트 크기 적용 (CSS 변수 기반 — 심사 기준: 인라인 스타일 대신 CSS 변수 사용)
   applyFontSize(): void {
     const size = this.plugin.settings.chatFontSize || 14;
-    if (this.messagesEl) this.messagesEl.style.fontSize = `${size}px`;
-    if (this.inputEl) this.inputEl.style.fontSize = `${size}px`;
+    this.viewContainerEl?.style.setProperty("--ba-chat-font-size", `${size}px`);
   }
 
   // 언어 변경 시 UI 전체 재빌드

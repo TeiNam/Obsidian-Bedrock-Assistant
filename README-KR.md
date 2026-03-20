@@ -185,6 +185,17 @@ bedrock:ListFoundationModels
 
 > **참고:** API 키는 기기별로 저장됩니다. iCloud로 볼트를 동기화하는 경우, 각 기기에서 자격증명을 별도로 설정해야 합니다.
 
+## 네트워크 사용
+
+이 플러그인은 다음 외부 서비스에 네트워크 요청을 보냅니다:
+
+- **AWS Bedrock API** — Bedrock 백엔드 사용 시, 채팅/임베딩/모델 목록 조회를 위해 AWS Bedrock 엔드포인트에 요청합니다. 설정된 AWS 리전에 따라 엔드포인트가 결정됩니다 (예: `bedrock-runtime.us-east-1.amazonaws.com`).
+- **Google Gemini API** — Gemini 백엔드 사용 시, 채팅/임베딩/모델 목록 조회를 위해 `generativelanguage.googleapis.com`에 요청합니다.
+- **웹 클리퍼** — 웹 클리퍼 기능 사용 시, 요약을 위해 대상 URL의 페이지 콘텐츠를 가져옵니다.
+- **MCP 서버** — MCP 서버가 설정된 경우, 로컬에서 실행된 MCP 서버 프로세스와 stdio를 통해 통신합니다.
+
+제3자 분석이나 추적 서비스로 데이터를 전송하지 않습니다.
+
 ## 라이선스
 
 [MIT](LICENSE)

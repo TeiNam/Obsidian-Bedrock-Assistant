@@ -185,6 +185,17 @@ Credentials are stored in a **local-only path** (`~/Library/Application Support/
 
 > **Note:** API keys are stored per-device. If you use iCloud vault sync, configure credentials on each device separately.
 
+## Network Usage
+
+This plugin makes network requests to the following external services:
+
+- **AWS Bedrock API** — When using the Bedrock backend, requests are sent to AWS Bedrock endpoints for chat, embedding, and model listing. The specific region endpoint depends on your configured AWS Region (e.g., `bedrock-runtime.us-east-1.amazonaws.com`).
+- **Google Gemini API** — When using the Gemini backend, requests are sent to `generativelanguage.googleapis.com` for chat, embedding, and model listing.
+- **Web Clipper** — When using the Web Clipper feature, the plugin fetches the target URL to retrieve page content for summarization.
+- **MCP Servers** — When MCP servers are configured, the plugin communicates with locally spawned MCP server processes via stdio.
+
+No data is sent to any third-party analytics or tracking services.
+
 ## License
 
 [MIT](LICENSE)

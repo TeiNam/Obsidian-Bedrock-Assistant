@@ -185,6 +185,17 @@ bedrock:ListFoundationModels
 
 > **注意:** APIキーはデバイスごとに保存されます。iCloudでボルトを同期している場合、各デバイスで資格情報を個別に設定してください。
 
+## ネットワーク使用
+
+このプラグインは以下の外部サービスにネットワークリクエストを送信します：
+
+- **AWS Bedrock API** — Bedrockバックエンド使用時、チャット・埋め込み・モデル一覧取得のためにAWS Bedrockエンドポイントにリクエストします。設定されたAWSリージョンによりエンドポイントが決まります（例：`bedrock-runtime.us-east-1.amazonaws.com`）。
+- **Google Gemini API** — Geminiバックエンド使用時、チャット・埋め込み・モデル一覧取得のために`generativelanguage.googleapis.com`にリクエストします。
+- **Webクリッパー** — Webクリッパー機能使用時、要約のために対象URLのページコンテンツを取得します。
+- **MCPサーバー** — MCPサーバーが設定されている場合、ローカルで起動されたMCPサーバープロセスとstdioで通信します。
+
+サードパーティの分析やトラッキングサービスにデータを送信することはありません。
+
 ## ライセンス
 
 [MIT](LICENSE)
