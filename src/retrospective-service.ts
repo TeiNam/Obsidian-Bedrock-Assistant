@@ -185,8 +185,9 @@ ${filesContext}
 - Note any incomplete tasks and possible reasons
 - Provide brief insights or suggestions for improvement
 - Keep it concise (under 300 words)
-- Use markdown format with a ## heading
-- The heading should be "${heading}"`;
+- Use markdown format
+- The heading MUST be exactly: ## ${heading}
+- Use ## (h2) level heading only. Do NOT use # (h1).`;
 }
 
 // ============================================
