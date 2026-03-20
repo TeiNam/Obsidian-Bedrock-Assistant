@@ -14,6 +14,8 @@ import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
 import { RetrospectiveModal } from "./modals/retrospective-modal";
+import { isRetrospectiveCommand } from "./retrospective-command";
+import { generateRetrospective } from "./retrospective-service";
 
 export const VIEW_TYPE = BRANDING.viewType;
 
@@ -404,6 +406,12 @@ export class ChatView extends ItemView {
     this.messages.push(userMsg);
     this.renderUserMessage(userMsg);
 
+    // 회고 명령 인터셉트 — AI API 호출 전에 판별
+    if (isRetrospectiveCommand(text)) {
+      await this.handleRetrospectiveCommand();
+      return;
+    }
+
     // 첨부 파일 컨텍스트를 별도로 구성 (원본 메시지는 변경하지 않음)
     const contextPrefix = this.buildContextPrefix();
 
@@ -424,6 +432,71 @@ export class ChatView extends ItemView {
     const iconEl = labelEl.createDiv({ cls: "ba-assistant-label-icon" });
     setIcon(iconEl, BRANDING.icon.id);
     labelEl.createSpan({ cls: "ba-assistant-label-name", text: BRANDING.displayName });
+  }
+
+  /**
+   * 채팅 기반 회고 처리.
+   * 어시스턴트 메시지 컨테이너를 생성하고, 진행 상태를 표시하며,
+   * RetrospectiveService를 호출하여 결과를 채팅에 렌더링한다.
+   */
+  private async handleRetrospectiveCommand(): Promise<void> {
+    this.setGenerating(true);
+
+    // 어시스턴트 메시지 컨테이너 생성
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+
+    // 생성 중 상태 표시
+    contentEl.createDiv({ cls: "ba-thinking", text: this.t.chatRetroGenerating });
+    this.scrollToBottom();
+
+    try {
+      const result = await generateRetrospective({
+        app: this.app,
+        settings: this.plugin.settings,
+        aiClient: this.plugin.aiClient,
+      });
+
+      // 생성 중 표시 제거
+      contentEl.empty();
+
+      if (result.success && result.text) {
+        // 성공: 회고 텍스트를 마크다운으로 렌더링
+        await MarkdownRenderer.render(this.app, result.text, contentEl, "", this);
+        contentEl.createDiv({ cls: "ba-info", text: this.t.chatRetroComplete });
+
+        // 어시스턴트 메시지를 히스토리에 추가
+        this.messages.push({
+          role: "assistant",
+          content: result.text,
+          timestamp: Date.now(),
+        });
+      } else if (!result.message) {
+        // To-Do 없음 (message 없는 실패)
+        contentEl.createDiv({ cls: "ba-info", text: this.t.chatRetroNoTodo });
+
+        this.messages.push({
+          role: "assistant",
+          content: this.t.chatRetroNoTodo,
+          timestamp: Date.now(),
+        });
+      } else {
+        // 에러 (message 있는 실패)
+        contentEl.createDiv({ cls: "ba-error", text: this.t.chatRetroFailed(result.message) });
+
+        this.messages.push({
+          role: "assistant",
+          content: this.t.chatRetroFailed(result.message),
+          timestamp: Date.now(),
+        });
+      }
+
+      this.scrollToBottom();
+      this.persistHistory();
+    } finally {
+      this.setGenerating(false);
+    }
   }
 
 

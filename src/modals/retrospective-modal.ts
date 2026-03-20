@@ -1,12 +1,14 @@
 // 회고 모달 (chat-view.ts에서 분리)
+// 공통 서비스(retrospective-service)를 호출하여 회고를 생성한다.
 
 import { Modal, TFile, Notice, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
-import type { ViewLang } from "../chat-view-i18n";
+import { generateRetrospective } from "../retrospective-service";
 
 /**
- * 오늘의 회고를 AI로 생성하여 To-Do 문서에 추가하는 모달
+ * 오늘의 회고를 AI로 생성하여 To-Do 문서에 추가하는 모달.
+ * 회고 생성 로직은 retrospective-service 공통 모듈에 위임한다.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export class RetrospectiveModal extends Modal {
@@ -58,82 +60,24 @@ export class RetrospectiveModal extends Modal {
       contentEl.createEl("p", { text: this.t.retroGenerating, cls: "ba-retro-message" });
 
       try {
-        await this.generateRetrospective(todoFile as TFile, dateStr);
-        new Notice(this.t.retroComplete);
+        // 공통 서비스를 호출하여 회고 생성 (BedrockClient 직접 생성 대신 aiClient 사용)
+        const result = await generateRetrospective({
+          app: this.app,
+          settings: this.plugin.settings,
+          aiClient: this.plugin.aiClient,
+        });
+
+        if (result.success) {
+          new Notice(this.t.retroComplete);
+        } else if (result.message) {
+          // 서비스에서 에러 메시지가 반환된 경우
+          new Notice(this.t.retroFailed(result.message));
+        }
       } catch (error) {
         new Notice(this.t.retroFailed((error as Error).message));
       }
       this.close();
     });
-  }
-
-  // 회고 생성 및 To-Do 문서에 추가
-  private async generateRetrospective(todoFile: TFile, dateStr: string): Promise<void> {
-    const todoContent = await this.app.vault.read(todoFile);
-
-    // 오늘 생성된 파일 수집 (To-Do 파일, 아카이브 비우기 대상 폴더 제외)
-    const todoFolder = normalizePath(this.plugin.settings.todoFolder || "ToDo");
-    const archiveCleanFolder = normalizePath(this.plugin.settings.archiveCleanFolder || "ToDo/Archive");
-    const allFiles = this.app.vault.getFiles();
-    const todayStart = new Date(dateStr + "T00:00:00").getTime();
-    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
-
-    const todayFiles: { path: string; content: string }[] = [];
-    for (const file of allFiles) {
-      // 생성일이 오늘인 파일만
-      if (file.stat.ctime < todayStart || file.stat.ctime >= todayEnd) continue;
-      // To-Do 파일 자체 제외
-      if (file.path === todoFile.path) continue;
-      // 아카이브 비우기 대상 폴더 제외
-      if (file.path.startsWith(archiveCleanFolder + "/")) continue;
-      // 마크다운 파일만
-      if (file.extension !== "md") continue;
-
-      try {
-        const content = await this.app.vault.cachedRead(file);
-        // 너무 긴 파일은 앞부분만
-        todayFiles.push({
-          path: file.path,
-          content: content.length > 2000 ? content.substring(0, 2000) + "..." : content,
-        });
-      } catch {
-        // 읽기 실패 시 건너뜀
-      }
-    }
-
-    // AI로 회고 생성
-    const lang = this.plugin.settings.language;
-    const langLabel = lang === "ko" ? "한국어" : lang === "ja" ? "日本語" : "English";
-
-    const filesContext = todayFiles.length > 0
-      ? todayFiles.map((f) => `### ${f.path}\n${f.content}`).join("\n\n")
-      : "(No additional files created today)";
-
-    const prompt = `You are a daily retrospective assistant. Analyze the following To-Do document and today's created files, then write a retrospective summary.
-
-Language: Write in ${langLabel}.
-
-## Today's To-Do
-${todoContent}
-
-## Files Created Today (${todayFiles.length} files)
-${filesContext}
-
-## Instructions
-- Summarize what was accomplished today based on the To-Do items and created files
-- Note any incomplete tasks and possible reasons
-- Provide brief insights or suggestions for improvement
-- Keep it concise (under 300 words)
-- Use markdown format with a ## heading
-- The heading should be "${lang === "ko" ? "📝 오늘의 회고" : lang === "ja" ? "📝 今日の振り返り" : "📝 Daily Retrospective"}"`;
-
-    const { BedrockClient } = await import("../bedrock-client");
-    const client = new BedrockClient(this.plugin.settings);
-    const result = await client.converseLight(prompt, "You are a helpful retrospective assistant. Write in markdown format.", 2048);
-
-    // To-Do 문서 끝에 회고 추가 (사용자가 명시적으로 요청한 작업이므로 vault.modify 사용)
-    const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
-    await this.app.vault.modify(todoFile, updatedContent);
   }
 
   onClose(): void {
