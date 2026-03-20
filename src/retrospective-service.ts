@@ -189,6 +189,71 @@ ${filesContext}
 - The heading should be "${heading}"`;
 }
 
+// ============================================
+// 헬퍼 함수: 기존 회고 섹션 감지 및 교체
+// ============================================
+
+/** 모든 언어의 회고 헤딩 패턴 (## 레벨) */
+const ALL_HEADINGS = Object.values(RETROSPECTIVE_HEADINGS);
+
+/**
+ * To-Do 콘텐츠에서 기존 회고 섹션의 시작 인덱스를 찾는다.
+ * 모든 언어의 회고 헤딩을 검색하며, 현재 언어를 우선 검색한다.
+ *
+ * @param content - To-Do 문서 내용
+ * @param language - 현재 언어 설정
+ * @returns 회고 섹션 시작 인덱스 (-1이면 없음)
+ */
+export function findRetrospectiveSection(content: string, language: string): number {
+  // 현재 언어 헤딩을 먼저 검색
+  const currentHeading = RETROSPECTIVE_HEADINGS[language] || RETROSPECTIVE_HEADINGS.en;
+  const headings = [currentHeading, ...ALL_HEADINGS.filter((h) => h !== currentHeading)];
+
+  for (const heading of headings) {
+    const marker = `## ${heading}`;
+    const idx = content.indexOf(marker);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+/**
+ * To-Do 콘텐츠에서 기존 회고 섹션을 제거한다.
+ * AI 프롬프트에 이전 회고가 포함되지 않도록 하기 위해 사용.
+ *
+ * @param content - To-Do 문서 내용
+ * @param language - 현재 언어 설정
+ * @returns 회고 섹션이 제거된 콘텐츠
+ */
+export function removeExistingRetrospective(content: string, language: string): string {
+  const idx = findRetrospectiveSection(content, language);
+  if (idx === -1) return content;
+  return content.substring(0, idx).trimEnd();
+}
+
+/**
+ * 기존 회고 섹션이 있으면 교체하고, 없으면 끝에 추가한다.
+ *
+ * @param content - To-Do 문서 원본 내용
+ * @param newRetrospective - 새로 생성된 회고 텍스트
+ * @param language - 현재 언어 설정
+ * @returns 회고가 교체/추가된 최종 콘텐츠
+ */
+export function replaceOrAppendRetrospective(
+  content: string,
+  newRetrospective: string,
+  language: string,
+): string {
+  const idx = findRetrospectiveSection(content, language);
+  if (idx !== -1) {
+    // 기존 회고 섹션 이전 내용 + 새 회고로 교체
+    const before = content.substring(0, idx).trimEnd();
+    return before + "\n\n" + newRetrospective + "\n";
+  }
+  // 기존 회고 없음 → 끝에 추가
+  return content.trimEnd() + "\n\n" + newRetrospective + "\n";
+}
+
 /** 시스템 프롬프트 (회고 생성용) */
 const SYSTEM_PROMPT = "You are a helpful retrospective assistant. Write in markdown format.";
 
@@ -253,12 +318,16 @@ export async function generateRetrospective(
       }
     }
 
-    // 4. AI 프롬프트 구성 및 호출
-    const prompt = buildRetrospectivePrompt(todoContent, todayFiles, settings.language);
+    // 4. AI 프롬프트 구성 및 호출 (기존 회고 섹션은 프롬프트에서 제외)
+    const contentForPrompt = removeExistingRetrospective(todoContent, settings.language);
+    const prompt = buildRetrospectivePrompt(contentForPrompt, todayFiles, settings.language);
     const result = await aiClient.converseLight(prompt, SYSTEM_PROMPT, 2048);
 
-    // 5. To-Do 문서 끝에 회고 추가 (사용자가 명시적으로 요청한 회고 생성이므로 vault.modify 사용이 적절)
-    const updatedContent = todoContent.trimEnd() + "\n\n" + result.text.trim() + "\n";
+    // 5. 기존 회고 섹션이 있으면 교체, 없으면 끝에 추가
+    // (사용자가 명시적으로 요청한 회고 생성이므로 vault.modify 사용이 적절)
+    const updatedContent = replaceOrAppendRetrospective(
+      todoContent, result.text.trim(), settings.language,
+    );
     await app.vault.modify(todoFile as TFile, updatedContent);
 
     return { success: true, text: result.text.trim() };
