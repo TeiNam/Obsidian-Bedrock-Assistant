@@ -5,6 +5,8 @@ import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
 import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
+import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
+import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 
 // 설정 탭 다국어 레이블
 const I18N = {
@@ -137,6 +139,11 @@ const I18N = {
     confirmToolExecutionDesc: "Show a confirmation dialog before executing destructive tools (edit, delete, move, create)",
     mcpTimeout: "MCP Tool Timeout",
     mcpTimeoutDesc: "Timeout in seconds for MCP tool requests (10–120)",
+    // JSON 에디터 관련 I18N 키
+    mcpFormatBtn: "Format",
+    mcpTemplateBtn: "Insert Template",
+    mcpBracketError: (char: string, line: number, col: number) => `Unmatched '${char}' at line ${line}, column ${col}`,
+    mcpJsonErrorAt: (line: number, col: number, msg: string) => `JSON error at line ${line}, column ${col}: ${msg}`,
   },
   ko: {
     title: BRANDING.settingsTitle.ko,
@@ -267,6 +274,11 @@ const I18N = {
     confirmToolExecutionDesc: "파괴적 도구(편집, 삭제, 이동, 생성) 실행 전 확인 대화상자를 표시합니다",
     mcpTimeout: "MCP 도구 타임아웃",
     mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (10~120초)",
+    // JSON 에디터 관련 I18N 키
+    mcpFormatBtn: "포맷",
+    mcpTemplateBtn: "템플릿 삽입",
+    mcpBracketError: (char: string, line: number, col: number) => `줄 ${line}, 열 ${col}에서 짝이 맞지 않는 '${char}'`,
+    mcpJsonErrorAt: (line: number, col: number, msg: string) => `줄 ${line}, 열 ${col}에서 JSON 오류: ${msg}`,
   },
   ja: {
     title: BRANDING.settingsTitle.ja,
@@ -397,6 +409,11 @@ const I18N = {
     confirmToolExecutionDesc: "破壊的ツール（編集、削除、移動、作成）の実行前に確認ダイアログを表示します",
     mcpTimeout: "MCPツールタイムアウト",
     mcpTimeoutDesc: "MCPツールリクエストのタイムアウト（10〜120秒）",
+    // JSON エディター関連 I18N キー
+    mcpFormatBtn: "フォーマット",
+    mcpTemplateBtn: "テンプレート挿入",
+    mcpBracketError: (char: string, line: number, col: number) => `行${line}, 列${col}で対応しない '${char}'`,
+    mcpJsonErrorAt: (line: number, col: number, msg: string) => `行${line}, 列${col}のJSONエラー: ${msg}`,
   },
 } as const;
 
@@ -1244,6 +1261,12 @@ class McpConfigModal extends Modal {
   private onSaved: () => void;
   private textArea!: HTMLTextAreaElement;
   private statusEl!: HTMLElement;
+  // 오류 표시 영역 참조
+  private errorIndicatorEl!: HTMLElement;
+  // 디바운스 타이머 (입력 시 300ms 지연 후 검증 실행)
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // 템플릿 삽입 버튼 참조 (input 핸들러에서 가시성 토글에 사용)
+  private templateBtn!: HTMLButtonElement;
 
   constructor(app: App, plugin: GeminiAssistantPlugin, onSaved: () => void) {
     super(app);
@@ -1299,12 +1322,80 @@ class McpConfigModal extends Modal {
       }
     });
 
+    // 입력 시 300ms 디바운스로 JSON 검증 + 괄호 매칭 수행
+    this.textArea.addEventListener("input", () => {
+      // 기존 타이머가 있으면 취소
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+      }
+      // 300ms 후 검증 실행
+      this.debounceTimer = setTimeout(() => {
+        this.debounceTimer = null;
+        const text = this.textArea.value;
+        // 빈 텍스트일 때 검증 건너뛰기: 오류 표시 숨김, 템플릿 버튼 표시
+        if (text.trim() === "") {
+          this.errorIndicatorEl.textContent = "";
+          this.errorIndicatorEl.style.display = "none";
+          this.textArea.classList.remove("has-error");
+          this.templateBtn.style.display = "";
+          return;
+        }
+        // 텍스트가 비어있지 않으면 템플릿 버튼 숨김
+        this.templateBtn.style.display = "none";
+        // JSON 검증 및 괄호 매칭 수행
+        const jsonResult = validateJson(text);
+        const bracketResult = matchBrackets(text);
+        // 검증 결과에 따라 Error Indicator 업데이트
+        this.updateErrorIndicator(jsonResult, bracketResult);
+      }, 300);
+    });
+
+    // 오류 표시 영역 (textarea 하단, 초기에는 숨김)
+    this.errorIndicatorEl = contentEl.createDiv({ cls: "ba-mcp-error-indicator" });
+    this.errorIndicatorEl.style.display = "none";
+
     // 연결 상태 표시 영역
     this.statusEl = contentEl.createDiv({ cls: "ba-mcp-status" });
     this.renderStatus();
 
     // 버튼 행
     const btnRow = contentEl.createDiv({ cls: "ba-mcp-btn-row" });
+
+    // 템플릿 삽입 버튼: 설정 텍스트가 비어있을 때만 표시
+    this.templateBtn = btnRow.createEl("button", {
+      text: t.mcpTemplateBtn,
+      cls: "ba-mcp-template-btn",
+    });
+    // 설정 텍스트가 비어있을 때만 표시
+    this.templateBtn.style.display = this.textArea.value.trim() === "" ? "" : "none";
+    this.templateBtn.addEventListener("click", () => {
+      this.textArea.value = getDefaultTemplate();
+      // 삽입 후 즉시 검증 수행
+      const jsonResult = validateJson(this.textArea.value);
+      const bracketResult = matchBrackets(this.textArea.value);
+      this.updateErrorIndicator(jsonResult, bracketResult);
+      // 템플릿 삽입 후 버튼 숨김
+      this.templateBtn.style.display = "none";
+    });
+
+    // 포맷 버튼: 클릭 시 JSON을 2칸 들여쓰기로 정렬
+    const formatBtn = btnRow.createEl("button", {
+      text: t.mcpFormatBtn,
+      cls: "ba-mcp-format-btn",
+    });
+    formatBtn.addEventListener("click", () => {
+      const text = this.textArea.value;
+      const formatted = formatJson(text);
+      // formatJson은 유효하지 않은 JSON이면 원본을 그대로 반환하므로
+      // 변경이 있을 때만 textarea 업데이트
+      if (formatted !== text) {
+        this.textArea.value = formatted;
+        // 포맷팅 후 검증 수행
+        const jsonResult = validateJson(formatted);
+        const bracketResult = matchBrackets(formatted);
+        this.updateErrorIndicator(jsonResult, bracketResult);
+      }
+    });
 
     const saveBtn = btnRow.createEl("button", {
       text: t.mcpModalSave,
@@ -1327,7 +1418,11 @@ class McpConfigModal extends Modal {
       return;
     }
 
-    await this.plugin.saveMcpConfig(configText);
+    // 저장 전 자동 포맷팅 적용 (2칸 들여쓰기)
+    const formattedText = formatJson(configText);
+    this.textArea.value = formattedText;
+
+    await this.plugin.saveMcpConfig(formattedText);
     new Notice(t.mcpModalSaving);
 
     const result = await this.plugin.loadMcpConfig();
@@ -1350,6 +1445,38 @@ class McpConfigModal extends Modal {
     for (const leaf of leaves) {
       (leaf.view as any).updateMcpIndicator?.();
     }
+  }
+
+  /**
+   * 검증 결과에 따라 오류 표시 영역과 textarea 스타일을 업데이트한다.
+   * 오류 시: 메시지 + 줄/열 번호 표시, textarea에 .has-error 클래스 추가
+   * 정상 시: 오류 영역 숨김, .has-error 클래스 제거
+   */
+  private updateErrorIndicator(jsonResult: JsonValidationResult, bracketResult: BracketMatchResult): void {
+    const t = I18N[this.plugin.settings.language] || I18N.en;
+
+    // 괄호 오류가 있으면 괄호 오류 메시지 우선 표시
+    if (!bracketResult.balanced && bracketResult.errors.length > 0) {
+      const firstErr = bracketResult.errors[0];
+      this.errorIndicatorEl.textContent = t.mcpBracketError(firstErr.char, firstErr.line, firstErr.column);
+      this.errorIndicatorEl.style.display = "";
+      this.textArea.classList.add("has-error");
+      return;
+    }
+
+    // JSON 검증 오류가 있으면 JSON 오류 메시지 표시
+    if (!jsonResult.valid && jsonResult.error) {
+      const { line, column, message } = jsonResult.error;
+      this.errorIndicatorEl.textContent = t.mcpJsonErrorAt(line, column, message);
+      this.errorIndicatorEl.style.display = "";
+      this.textArea.classList.add("has-error");
+      return;
+    }
+
+    // 정상: 오류 영역 숨기고 오류 스타일 제거
+    this.errorIndicatorEl.textContent = "";
+    this.errorIndicatorEl.style.display = "none";
+    this.textArea.classList.remove("has-error");
   }
 
   // 연결 상태 렌더링
@@ -1375,6 +1502,11 @@ class McpConfigModal extends Modal {
   }
 
   onClose(): void {
+    // 디바운스 타이머 정리
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
     this.contentEl.empty();
   }
 }
