@@ -160,6 +160,8 @@ export interface ToolResultBlock {
 export interface ContentBlockText {
   type: "text";
   text: string;
+  /** Gemini 3.x thought signature (텍스트 파트에서도 반환될 수 있음, 권장 보존) */
+  thoughtSignature?: string;
 }
 
 export interface ContentBlockToolUse {
