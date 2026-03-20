@@ -29,6 +29,11 @@ An AI assistant sidebar plugin for Obsidian with dual backend support — AWS Be
 - **File Attachments** — Drag-and-drop, clipboard, file search (images, PDFs, text)
 - **Chat Session History** — Save and restore past conversations
 - **Obsidian Skills** — Built-in knowledge modules for accurate Obsidian syntax
+- **Chat Retrospective** — Type "회고", "retrospective", or "振り返り" in chat to auto-generate a daily retrospective
+- **Chat Export** — Export conversations as markdown files
+- **Response Regeneration** — Regenerate the last AI response
+- **Conversation Search** — Search through saved chat sessions
+- **MCP JSON Editor** — Real-time validation, auto-formatting, bracket matching, and templates
 - **Destructive Tool Confirmation** — Optional confirmation before file operations
 - **Context Window Management** — Automatic token trimming
 
