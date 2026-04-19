@@ -19,6 +19,14 @@ import type {
 } from "./types";
 import { buildSkillsPrompt } from "./skills";
 
+/**
+ * temperature 파라미터를 지원하지 않는 모델 여부 확인
+ * claude-opus-4 이상(anthropic.claude-opus-4-*)은 temperature deprecated
+ */
+function isTemperatureDeprecated(modelId: string): boolean {
+  return /claude-opus-4/.test(modelId);
+}
+
 // 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)
 const MODEL_KEYWORDS = ["claude-opus", "claude-sonnet", "claude-haiku"];
 // 모델 정렬 우선순위 (opus > sonnet > haiku)
@@ -137,7 +145,10 @@ export class BedrockClient implements IAiClient {
       system: [{ text: fullSystemPrompt }],
       inferenceConfig: {
         maxTokens: this.settings.maxTokens,
-        temperature: this.settings.temperature,
+        // claude-opus-4 이상 모델은 temperature 파라미터를 지원하지 않음
+        ...(!isTemperatureDeprecated(this.settings.bedrockChatModel) && {
+          temperature: this.settings.temperature,
+        }),
       },
     };
 
@@ -336,7 +347,7 @@ export class BedrockClient implements IAiClient {
       modelId: this.settings.bedrockChatModel,
       messages: [{ role: "user", content: [{ text: userText }] }],
       system: [{ text: systemText }],
-      inferenceConfig: { maxTokens, temperature: 0 },
+      inferenceConfig: { maxTokens, ...(isTemperatureDeprecated(this.settings.bedrockChatModel) ? {} : { temperature: 0 }) },
     };
     const command = new ConverseCommand(input as any);
     const response = await this.client.send(command);
