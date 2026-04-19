@@ -304,6 +304,18 @@ export class ChatView extends ItemView {
       })
     );
 
+    // 탭 전환(active-leaf-change) 이벤트 → 자동 첨부
+    // file-open은 새로 열 때만 발생하므로, 이미 열린 탭 클릭 시에도 감지
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        if (!this.plugin.settings.autoAttachActiveNote) return;
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (activeView?.file) {
+          this.autoAttachFile(activeView.file.path);
+        }
+      })
+    );
+
     // 초기 로드 시 현재 열린 파일 첨부 (await로 파일 내용 로드 완료 보장)
     if (this.plugin.settings.autoAttachActiveNote) {
       const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
