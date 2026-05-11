@@ -1,6 +1,10 @@
 name: Release Obsidian Plugin
 
 on:
+  push:
+    branches:
+      - main
+      - kiro-edition
   workflow_dispatch:
     inputs:
       branch:
@@ -9,6 +13,7 @@ on:
         type: choice
         options:
           - main
+          - kiro-edition
         default: main
 
 permissions:
@@ -17,12 +22,23 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # version bump 커밋은 릴리즈 스킵 (무한 루프 방지)
+    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
     steps:
+      - name: Determine branch
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ inputs.branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.branch }}
+          ref: ${{ steps.branch.outputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,8 +58,12 @@ jobs:
       - name: Determine edition prefix
         id: edition
         run: |
-          BRANCH="${{ inputs.branch }}"
-          PREFIX="bedrock-assistant"
+          BRANCH="${{ steps.branch.outputs.ref }}"
+          if [ "$BRANCH" = "kiro-edition" ]; then
+            PREFIX="kiro"
+          else
+            PREFIX="bedrock-assistant"
+          fi
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "에디션: $PREFIX (브랜치: $BRANCH)"
