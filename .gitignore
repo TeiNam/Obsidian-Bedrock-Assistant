@@ -19,5 +19,7 @@ Thumbs.db
 # 소스맵
 *.map
 
-# Kiro - specs 제외 (agents, steering만 동기화)
+# Kiro (steering, agents만 추적)
 .kiro/specs/
+.kiro/settings/
+.kiro/hooks/
