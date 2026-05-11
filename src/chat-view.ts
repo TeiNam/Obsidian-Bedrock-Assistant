@@ -1103,7 +1103,11 @@ export class ChatView extends ItemView {
 
     // 첨부 파일 컨텍스트
     for (const [path, content] of this.attachedFiles) {
-      parts.push(`${this.t.attachedFileLabel(path)}\n${content.slice(0, 8000)}`);
+      // 자동 마운트된 현재 노트는 "열린 노트" 라벨로 구분
+      const label = path === this.autoAttachedPath
+        ? this.t.activeNoteLabel(path)
+        : this.t.attachedFileLabel(path);
+      parts.push(`${label}\n${content.slice(0, 8000)}`);
     }
 
     if (parts.length === 0) return "";
