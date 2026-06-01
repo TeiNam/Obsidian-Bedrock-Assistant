@@ -10,7 +10,7 @@ import { needsToolConfirmation } from "./tool-confirm-utils";
 import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
-import { createTodoNote } from "./todo-manager";
+import { createTodoNote, createTimeboxNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
 import { RetrospectiveModal } from "./modals/retrospective-modal";
@@ -57,6 +57,9 @@ export class ChatView extends ItemView {
   // 웹 서치 토글
   private webSearchEnabled = false;
   private webSearchBtn: HTMLElement | null = null;
+
+  // TimeBox 중복 생성 방지 가드(Req 3.12): 진행 중인 날짜 키 집합
+  private timeboxInFlight: Set<string> = new Set();
 
   // persistHistory 중복 호출 방지 가드 (B2 race condition 수정)
   private persistPending = false;
@@ -162,6 +165,11 @@ export class ChatView extends ItemView {
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
     this.registerDomEvent(todoBtn, "click", () => this.handleCreateTodoNote());
+
+    // TimeBox 생성 버튼 (시계 아이콘, Timebox_Trigger)
+    const timeboxBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTimebox } });
+    setIcon(timeboxBtn, "clock");
+    this.registerDomEvent(timeboxBtn, "click", () => this.handleCreateTimeboxNote());
 
     // 회고 버튼
     const retroBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.retrospective } });
@@ -1287,6 +1295,24 @@ export class ChatView extends ItemView {
   // 오늘 날짜로 To-Do 노트 생성 (todo-manager.ts로 분리)
   private async handleCreateTodoNote(): Promise<void> {
     await createTodoNote(this.app, this.plugin, this.t);
+  }
+
+  // 오늘 날짜로 TimeBox 노트 생성 (todo-manager.ts로 분리)
+  private async handleCreateTimeboxNote(): Promise<void> {
+    // 중복 생성 방지(Req 3.12): 같은 날짜 키가 진행 중이면 무시
+    const now = new Date();
+    const key = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    if (this.timeboxInFlight.has(key)) {
+      new Notice(this.t.timeboxInProgress);
+      return;
+    }
+    this.timeboxInFlight.add(key);
+    try {
+      await createTimeboxNote(this.app, this.plugin, this.t);
+    } finally {
+      // 성공/실패와 무관하게 진행 중 키를 해제하여 재시도를 허용한다
+      this.timeboxInFlight.delete(key);
+    }
   }
   // 현재 노트에 AI 기반 태그 자동 생성
   private async generateTags(): Promise<void> {

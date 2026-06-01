@@ -15,6 +15,7 @@ import {
   SENSITIVE_FIELDS,
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
+import { migratePlannerSettings } from "./planner-settings";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -174,7 +175,12 @@ export default class GeminiAssistantPlugin extends Plugin {
 
   // 설정 로드/저장
   async loadSettings(): Promise<void> {
-    const raw = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // 저장된 원본 데이터를 먼저 로드한다 (DEFAULT_SETTINGS 병합 전)
+    const loaded = (await this.loadData()) as Record<string, unknown> | null;
+    // 마이그레이션: 저장 데이터에 plannerFolder 키가 없고 todoFolder가 비어있지 않으면
+    // todoFolder 값을 plannerFolder로 승계한다. (병합 전 원본에 적용해야 키 존재 여부 판별 가능)
+    const migrated = migratePlannerSettings(loaded ?? {});
+    const raw = Object.assign({}, DEFAULT_SETTINGS, migrated);
 
     // 마이그레이션: data.json에 암호화된 키가 남아있으면 로컬로 이전 후 제거
     let hasMigratedKeys = false;

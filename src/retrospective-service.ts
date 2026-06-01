@@ -8,6 +8,7 @@
 import { normalizePath, TFile } from "obsidian";
 import type { App } from "obsidian";
 import type { GeminiAssistantSettings, IAiClient } from "./types";
+import { buildTodoDocPath } from "./planner-paths";
 
 // ============================================
 // 인터페이스 정의
@@ -50,6 +51,45 @@ export function buildTodoPath(todoFolder: string, date?: Date): string {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return normalizePath(`${folder}/${year}-${month}-${day}.md`);
+}
+
+
+// ============================================
+// 헬퍼 함수: 오늘자 To-Do 파일 해석 (새 구조 우선, Legacy 폴백)
+// ============================================
+
+/**
+ * 오늘자 To-Do 파일을 새 Date_Folder 구조 우선, Legacy 평면 구조 폴백으로 해석한다.
+ *
+ * 처리 순서:
+ * 1) 새 구조 `buildTodoDocPath(plannerFolder, date)` 가 TFile로 존재하면 반환 (Req 9.1)
+ * 2) 없으면 Legacy `buildTodoPath(legacyFolder, date)` 가 TFile로 존재하면 반환 (Req 9.2)
+ * 3) 둘 다 없으면 null 반환 (Req 9.3 → 호출부에서 사용자 알림)
+ *
+ * @param app - Obsidian App 인스턴스 (볼트 접근용)
+ * @param plannerFolder - 새 구조 Planner 루트 폴더 경로
+ * @param legacyFolder - Legacy 평면 구조 To-Do 폴더 경로
+ * @param date - 대상 날짜 (오늘)
+ * @returns 해석된 To-Do 파일(TFile) 또는 null
+ */
+export function resolveTodayTodoFile(
+  app: App,
+  plannerFolder: string,
+  legacyFolder: string,
+  date: Date,
+): TFile | null {
+  // 1. 새 구조 우선 탐색 (Req 9.1)
+  const newPath = buildTodoDocPath(plannerFolder, date);
+  const newFile = app.vault.getAbstractFileByPath(newPath);
+  if (newFile instanceof TFile) return newFile;
+
+  // 2. Legacy 평면 구조 폴백 (Req 9.2)
+  const legacyPath = buildTodoPath(legacyFolder, date);
+  const legacyFile = app.vault.getAbstractFileByPath(legacyPath);
+  if (legacyFile instanceof TFile) return legacyFile;
+
+  // 3. 둘 다 없음 (Req 9.3)
+  return null;
 }
 
 
@@ -289,19 +329,26 @@ export async function generateRetrospective(
 ): Promise<RetrospectiveResult> {
   const { app, settings, aiClient } = deps;
 
-  // 1. 오늘자 To-Do 파일 경로 생성 및 존재 확인
+  // 1. 오늘자 To-Do 파일 해석 (새 구조 우선, Legacy 폴백)
   const now = new Date();
   const dateStr = formatDateStr(now);
-  const todoPath = buildTodoPath(settings.todoFolder, now);
-  const todoFile = app.vault.getAbstractFileByPath(todoPath);
+  const todoFile = resolveTodayTodoFile(
+    app,
+    settings.plannerFolder,
+    settings.todoFolder,
+    now,
+  );
 
-  if (!todoFile || !(todoFile instanceof TFile)) {
+  if (!todoFile) {
     return { success: false };
   }
 
+  // 해석된 파일의 실제 경로 (collectTodayFiles에서 To-Do 자체 제외용)
+  const todoPath = todoFile.path;
+
   try {
     // 2. To-Do 내용 읽기
-    const todoContent = await app.vault.read(todoFile as TFile);
+    const todoContent = await app.vault.read(todoFile);
 
     // 3. 오늘 생성된 파일 수집
     const allFiles = app.vault.getFiles();
@@ -336,7 +383,7 @@ export async function generateRetrospective(
     const updatedContent = replaceOrAppendRetrospective(
       todoContent, result.text.trim(), settings.language,
     );
-    await app.vault.modify(todoFile as TFile, updatedContent);
+    await app.vault.modify(todoFile, updatedContent);
 
     return { success: true, text: result.text.trim() };
   } catch (error) {
