@@ -206,6 +206,9 @@ export class BedrockClient implements IAiClient {
 
     if (response.stream) {
       for await (const event of response.stream) {
+        // 중지 신호 능동 확인: 이미 버퍼된 이벤트라도 즉시 수신 중단 (Req 10.4, 13.1)
+        if (abortSignal?.aborted) break;
+
         // 텍스트 블록 시작
         if (event.contentBlockStart?.start && "text" in event.contentBlockStart.start) {
           currentText = "";

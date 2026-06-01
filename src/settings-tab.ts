@@ -7,9 +7,15 @@ import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
 import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
+import { normalizePlannerSetting } from "./planner-settings";
+
+// Daily Planner 설정 기본값 (빈/공백 입력 정규화에 사용)
+const PLANNER_FOLDER_DEFAULT = "Daily Planner";
+const TIMEBOX_TEMPLATE_DEFAULT = "TimeBox Daily";
 
 // 설정 탭 다국어 레이블
-const I18N = {
+// (테스트에서 i18n 키 완전성 검증을 위해 export — 런타임 동작 변화 없음, 추가적 export일 뿐)
+export const I18N = {
   en: {
     title: BRANDING.settingsTitle.en,
     pluginDesc: "An AI assistant sidebar for Obsidian with dual backend support — AWS Bedrock and Google Gemini. Chat with AI models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
@@ -91,6 +97,13 @@ const I18N = {
     todo: "To-Do",
     todoFolder: "To-Do Folder",
     todoFolderDesc: "Vault folder path for storing to-do lists",
+    // Daily Planner 설정 (Req 4.1, 4.2)
+    plannerFolder: "Daily Planner",
+    plannerFolderDesc: "Vault folder path for the Daily Planner (date folders are created inside it)",
+    // TimeBox 템플릿 설정 (Req 4.3)
+    timeboxTemplate: "TimeBox Template",
+    timeboxTemplateDesc: "Template file name in the Templates folder (without .md) used for TimeBox documents. Variables: {{date}}.",
+    timeboxTemplatePlaceholder: "TimeBox Daily",
     todoTasksInstall: "Install Tasks Plugin",
     todoTasksInfo: "Install the Tasks plugin to enable advanced task management with due dates, recurring tasks, and queries.",
     todoTemplate: "To-Do Template",
@@ -225,6 +238,13 @@ const I18N = {
     todo: "To-Do",
     todoFolder: "To-Do 폴더",
     todoFolderDesc: "To-Do 리스트를 저장할 볼트 내 폴더 경로",
+    // Daily Planner 설정 (Req 4.1, 4.2)
+    plannerFolder: "Daily Planner",
+    plannerFolderDesc: "Daily Planner를 저장할 볼트 내 폴더 경로 (이 폴더 안에 날짜 폴더가 생성됩니다)",
+    // TimeBox 템플릿 설정 (Req 4.3)
+    timeboxTemplate: "TimeBox 템플릿",
+    timeboxTemplateDesc: "TimeBox 문서 생성에 사용할 템플릿 폴더 내 파일명 (.md 제외). 사용 가능 변수: {{date}}.",
+    timeboxTemplatePlaceholder: "TimeBox Daily",
     todoTasksInstall: "Tasks 플러그인 설치",
     todoTasksInfo: "Tasks 플러그인을 설치하면 마감일, 반복 작업, 쿼리 등 고급 할 일 관리 기능을 사용할 수 있습니다.",
     todoTemplate: "To-Do 템플릿",
@@ -359,6 +379,13 @@ const I18N = {
     todo: "To-Do",
     todoFolder: "To-Doフォルダ",
     todoFolderDesc: "To-Doリストを保存するボルト内のフォルダパス",
+    // Daily Planner 設定 (Req 4.1, 4.2)
+    plannerFolder: "Daily Planner",
+    plannerFolderDesc: "Daily Planner を保存するボルト内のフォルダパス（このフォルダ内に日付フォルダが作成されます）",
+    // TimeBox テンプレート設定 (Req 4.3)
+    timeboxTemplate: "TimeBoxテンプレート",
+    timeboxTemplateDesc: "TimeBoxドキュメントの生成に使用するテンプレートフォルダ内のファイル名（.md不要）。変数: {{date}}。",
+    timeboxTemplatePlaceholder: "TimeBox Daily",
     todoTasksInstall: "Tasksプラグインをインストール",
     todoTasksInfo: "Tasksプラグインをインストールして、期限、繰り返しタスク、クエリなどの高度なタスク管理を有効にします。",
     todoTemplate: "To-Doテンプレート",
@@ -902,25 +929,30 @@ export class GeminiSettingTab extends PluginSettingTab {
       })
     );
 
-    // To-Do 설정
+    // Daily Planner 설정 (Req 4.1 — 폴더 항목 레이블을 "Daily Planner"로 표시)
     new Setting(containerEl).setName(t.todo).setHeading();
 
+    // 플래너 폴더 항목 (Req 4.1, 4.2, 4.5, 4.8)
     new Setting(containerEl)
-      .setName(t.todoFolder)
-      .setDesc(t.todoFolderDesc)
+      .setName(t.plannerFolder)
+      .setDesc(t.plannerFolderDesc)
       .addText((text) =>
         text
-          .setPlaceholder("ToDo")
-          .setValue(this.plugin.settings.todoFolder)
+          .setPlaceholder(PLANNER_FOLDER_DEFAULT)
+          .setValue(this.plugin.settings.plannerFolder)
           .onChange(async (value) => {
-            this.plugin.settings.todoFolder = value.trim() || "ToDo";
-            await this.plugin.saveSettings();
+            // 빈/공백 입력 시 기본값 적용 (Req 4.5)
+            const normalized = normalizePlannerSetting(value, PLANNER_FOLDER_DEFAULT);
+            this.plugin.settings.plannerFolder = normalized;
+            await this.plugin.saveSettings(); // 즉시 저장 (Req 4.8)
+            // 정규화 결과가 입력과 다르면(공백/빈 입력) 표시값을 갱신
+            if (normalized !== value) text.setValue(normalized);
           })
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
           new FolderSuggestModal(this.app, async (folder) => {
-            this.plugin.settings.todoFolder = folder;
+            this.plugin.settings.plannerFolder = normalizePlannerSetting(folder, PLANNER_FOLDER_DEFAULT);
             await this.plugin.saveSettings();
             this.display();
           }, t.folderSelectPlaceholder).open();
@@ -937,6 +969,24 @@ export class GeminiSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.todoTemplateName = value.trim() || "Daily To-Do";
             await this.plugin.saveSettings();
+          })
+      );
+
+    // TimeBox 템플릿 항목 (Req 4.3, 4.6, 4.8)
+    new Setting(containerEl)
+      .setName(t.timeboxTemplate)
+      .setDesc(t.timeboxTemplateDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder(t.timeboxTemplatePlaceholder)
+          .setValue(this.plugin.settings.timeboxTemplateName)
+          .onChange(async (value) => {
+            // 빈/공백 입력 시 기본값 적용 (Req 4.6)
+            const normalized = normalizePlannerSetting(value, TIMEBOX_TEMPLATE_DEFAULT);
+            this.plugin.settings.timeboxTemplateName = normalized;
+            await this.plugin.saveSettings(); // 즉시 저장 (Req 4.8)
+            // 정규화 결과가 입력과 다르면(공백/빈 입력) 표시값을 갱신
+            if (normalized !== value) text.setValue(normalized);
           })
       );
 

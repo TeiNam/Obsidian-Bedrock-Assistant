@@ -8,6 +8,7 @@ import type {
   ModelInfo,
 } from "./types";
 import { buildSkillsPrompt } from "./skills";
+import { isAbortError } from "./abort-utils";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -188,7 +189,8 @@ export class GeminiClient {
     try {
       return await this.streamGenerate(model, body, onTextDelta, abortSignal);
     } catch (error) {
-      if (abortSignal?.aborted) throw error;
+      // 사용자 중지(abort)는 폴백(nonStreamGenerate)으로 흘려보내지 않고 즉시 전파
+      if (isAbortError(error, abortSignal)) throw error;
       return await this.nonStreamGenerate(model, body, onTextDelta);
     }
   }
@@ -229,6 +231,12 @@ export class GeminiClient {
     let buffer = "";
 
     while (true) {
+      // 루프 진입 시 중지 신호를 능동 확인하고 reader를 취소하여 즉시 종료
+      if (abortSignal?.aborted) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+
       const { done, value } = await reader.read();
       if (done) break;
 

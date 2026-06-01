@@ -17,7 +17,7 @@ export interface GeminiAssistantSettings {
   templateFolder: string;
   // 채팅 영역 폰트 크기 (px)
   chatFontSize: number;
-  // To-Do 리스트 저장 폴더 경로
+  // To-Do 리스트 저장 폴더 경로 (Legacy 평면 구조 해석 + 마이그레이션 원천)
   todoFolder: string;
   // To-Do 템플릿 파일명 (템플릿 폴더 내, .md 제외)
   todoTemplateName: string;
@@ -25,6 +25,10 @@ export interface GeminiAssistantSettings {
   todoArchiveFolder: string;
   // To-Do 아카이브 기준 일수
   todoArchiveDays: number;
+  // Daily Planner 루트 폴더 경로 (날짜 폴더를 담는 루트, 신규)
+  plannerFolder: string;
+  // TimeBox 템플릿 파일명 (템플릿 폴더 내, .md 제외, 신규)
+  timeboxTemplateName: string;
   // 파괴적 도구 실행 전 확인 모달 표시 여부
   confirmToolExecution: boolean;
   // MCP 도구 요청 타임아웃 (초)
@@ -95,6 +99,8 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   todoTemplateName: "Daily To-Do",
   todoArchiveFolder: "ToDo/Archive",
   todoArchiveDays: 7,
+  plannerFolder: "Daily Planner",
+  timeboxTemplateName: "TimeBox Daily",
   confirmToolExecution: false,
   mcpTimeout: 30,
   webClipFolder: "WebClips",
