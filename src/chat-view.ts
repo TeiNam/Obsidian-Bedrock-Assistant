@@ -13,7 +13,6 @@ import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 import { createTodoNote, createTimeboxNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
-import { RetrospectiveModal } from "./modals/retrospective-modal";
 import { isRetrospectiveCommand } from "./retrospective-command";
 import { generateRetrospective } from "./retrospective-service";
 
@@ -170,11 +169,6 @@ export class ChatView extends ItemView {
     const timeboxBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTimebox } });
     setIcon(timeboxBtn, "clock");
     this.registerDomEvent(timeboxBtn, "click", () => this.handleCreateTimeboxNote());
-
-    // 회고 버튼
-    const retroBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.retrospective } });
-    setIcon(retroBtn, "book-open");
-    this.registerDomEvent(retroBtn, "click", () => this.openRetrospectiveModal());
 
     // 태그 생성 버튼
     const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
@@ -1625,11 +1619,6 @@ export class ChatView extends ItemView {
   // 웹 페이지 요약 모달 열기
   private openWebClipper(): void {
     new WebClipperModal(this.app, this.plugin).open();
-  }
-
-  // 회고 모달 열기
-  private openRetrospectiveModal(): void {
-    new RetrospectiveModal(this.app, this.plugin, this.t).open();
   }
 
   // 현재 대화를 마크다운 파일로 내보내기
