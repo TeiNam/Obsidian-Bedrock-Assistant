@@ -25,7 +25,7 @@ export class CleanArchiveModal extends Modal {
     contentEl.addClass("ba-clean-archive-modal");
     contentEl.createEl("h2", { text: this.t.cleanArchiveTitle });
 
-    const archiveFolder = normalizePath(this.plugin.settings.archiveCleanFolder);
+    const archiveFolder = normalizePath(this.plugin.settings.todoArchiveFolder);
     const archiveDays = this.plugin.settings.archiveCleanDays;
     const now = Date.now();
     const cutoff = now - archiveDays * 24 * 60 * 60 * 1000;

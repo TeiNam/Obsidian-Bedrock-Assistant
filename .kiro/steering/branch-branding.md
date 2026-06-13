@@ -41,6 +41,8 @@ inclusion: always
 
 2. **공통 기능은 main에서 먼저 구현 후 cherry-pick으로 전파**
    - main → kiro-edition 순서
+   - **예외 — main 전용 기능**: `multi-provider-ai-backends`(OpenAI/Anthropic/Ollama 백엔드)는 의도적으로 main 브랜치에만 두고 kiro-edition으로 cherry-pick 전파하지 않는다. 근거: kiro-edition은 Bedrock/Gemini 2종 백엔드 브랜딩에 집중한다. 이 정책은 spec 디렉터리(`.kiro/specs/`)가 `.gitignore`로 추적 제외되므로 본 steering 파일에 기록하여 브랜치 간 참조 가능성을 확보한다.
+   - 코드/CI 차원의 자동 차단 메커니즘은 두지 않으며, 전파 제외는 본 규칙을 따르는 수동 운영으로 보증한다.
 
 3. **새 기능 추가 시 브랜딩 참조는 `BRANDING` 상수 사용**
    - 하드코딩된 플러그인 이름/ID 금지

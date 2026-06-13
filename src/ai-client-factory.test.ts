@@ -13,6 +13,10 @@ import { DEFAULT_SETTINGS, GeminiAssistantSettings } from "./types";
 const bedrockConstructorCalls: GeminiAssistantSettings[] = [];
 // GeminiClient 생성자 호출 기록
 const geminiConstructorCalls: GeminiAssistantSettings[] = [];
+// OpenAIClient 생성자 호출 기록 (Property 1 검증용)
+const openaiConstructorCalls: GeminiAssistantSettings[] = [];
+// OllamaClient 생성자 호출 기록 (Property 1 검증용)
+const ollamaConstructorCalls: GeminiAssistantSettings[] = [];
 
 vi.mock("./bedrock-client", () => {
   return {
@@ -48,10 +52,49 @@ vi.mock("./gemini-client", () => {
   };
 });
 
+// OpenAIClient / OllamaClient 모킹
+// Property 1(팩토리 분기 및 폴백) 검증을 위해 두 클라이언트도 동일한 class 기반 전략으로 모킹한다.
+// 실제 네트워크(fetch/requestUrl) 의존성을 제거하고, 어떤 클라이언트가 생성되는지만 확인한다.
+vi.mock("./openai-client", () => {
+  return {
+    OpenAIClient: class MockOpenAIClient {
+      updateSettings = vi.fn();
+      listModels = vi.fn();
+      converse = vi.fn();
+      getEmbedding = vi.fn();
+      converseLight = vi.fn();
+      _capturedSettings: GeminiAssistantSettings;
+      constructor(settings: GeminiAssistantSettings) {
+        this._capturedSettings = settings;
+        openaiConstructorCalls.push(settings);
+      }
+    },
+  };
+});
+
+vi.mock("./ollama-client", () => {
+  return {
+    OllamaClient: class MockOllamaClient {
+      updateSettings = vi.fn();
+      listModels = vi.fn();
+      converse = vi.fn();
+      getEmbedding = vi.fn();
+      converseLight = vi.fn();
+      _capturedSettings: GeminiAssistantSettings;
+      constructor(settings: GeminiAssistantSettings) {
+        this._capturedSettings = settings;
+        ollamaConstructorCalls.push(settings);
+      }
+    },
+  };
+});
+
 // 모킹 후 import
 import { createAiClient } from "./ai-client-factory";
 import { BedrockClient } from "./bedrock-client";
 import { GeminiClient } from "./gemini-client";
+import { OpenAIClient } from "./openai-client";
+import { OllamaClient } from "./ollama-client";
 
 // IAiClient 인터페이스가 요구하는 메서드 목록
 const REQUIRED_METHODS = [
@@ -271,6 +314,102 @@ describe("Property 4: 활성 백엔드 모델 설정 전달", () => {
         expect(capturedSettings.bedrockEmbeddingModel).toBe(settings.bedrockEmbeddingModel);
       }),
       { numRuns: 100 },
+    );
+  });
+});
+
+// ============================================
+// Property 1: 팩토리 분기 및 폴백
+// ============================================
+
+/**
+ * Property 1: 팩토리 분기 및 폴백
+ *
+ * 임의의 aiBackend 값(4개 유효값 "bedrock"/"gemini"/"openai"/"ollama" 및
+ * 임의의 무효 문자열·null·undefined)에 대해, createAiClient는
+ * "openai"→OpenAIClient, "ollama"→OllamaClient, "bedrock"→BedrockClient,
+ * "gemini" 및 그 외 모든 값→GeminiClient 인스턴스를 반환한다.
+ *
+ * Validates: Requirements 1.3, 1.4, 1.5, 14.4
+ */
+
+// 4개 유효 백엔드 값 생성기
+const validBackendArb = fc.constantFrom(
+  "bedrock" as const,
+  "gemini" as const,
+  "openai" as const,
+  "ollama" as const,
+);
+
+// 무효 백엔드 값 생성기: 임의 문자열(유효 4값과 우연히 겹치지 않도록 필터) + null + undefined
+const invalidBackendArb = fc.oneof(
+  fc
+    .string()
+    .filter((s) => !["bedrock", "gemini", "openai", "ollama"].includes(s)),
+  fc.constant(null),
+  fc.constant(undefined),
+);
+
+// 유효/무효 값을 모두 포함하는 통합 백엔드 생성기
+const anyBackendArb = fc.oneof(validBackendArb, invalidBackendArb);
+
+describe("Property 1: 팩토리 분기 및 폴백", () => {
+  beforeEach(() => {
+    bedrockConstructorCalls.length = 0;
+    geminiConstructorCalls.length = 0;
+    openaiConstructorCalls.length = 0;
+    ollamaConstructorCalls.length = 0;
+  });
+
+  it("Feature: multi-provider-ai-backends, Property 1: 팩토리 분기 및 폴백", () => {
+    // Feature: multi-provider-ai-backends, Property 1: 팩토리 분기 및 폴백
+    fc.assert(
+      fc.property(anyBackendArb, (backend) => {
+        // 각 실행마다 생성자 호출 기록 초기화
+        bedrockConstructorCalls.length = 0;
+        geminiConstructorCalls.length = 0;
+        openaiConstructorCalls.length = 0;
+        ollamaConstructorCalls.length = 0;
+
+        // aiBackend는 4값 union 타입이므로 무효 값 주입을 위해 캐스팅한다.
+        const settings = {
+          ...DEFAULT_SETTINGS,
+          aiBackend: backend,
+        } as unknown as GeminiAssistantSettings;
+
+        const client = createAiClient(settings);
+
+        if (backend === "openai") {
+          // "openai" → OpenAIClient
+          expect(client).toBeInstanceOf(OpenAIClient);
+          expect(openaiConstructorCalls).toHaveLength(1);
+          expect(bedrockConstructorCalls).toHaveLength(0);
+          expect(ollamaConstructorCalls).toHaveLength(0);
+          expect(geminiConstructorCalls).toHaveLength(0);
+        } else if (backend === "ollama") {
+          // "ollama" → OllamaClient
+          expect(client).toBeInstanceOf(OllamaClient);
+          expect(ollamaConstructorCalls).toHaveLength(1);
+          expect(bedrockConstructorCalls).toHaveLength(0);
+          expect(openaiConstructorCalls).toHaveLength(0);
+          expect(geminiConstructorCalls).toHaveLength(0);
+        } else if (backend === "bedrock") {
+          // "bedrock" → BedrockClient
+          expect(client).toBeInstanceOf(BedrockClient);
+          expect(bedrockConstructorCalls).toHaveLength(1);
+          expect(openaiConstructorCalls).toHaveLength(0);
+          expect(ollamaConstructorCalls).toHaveLength(0);
+          expect(geminiConstructorCalls).toHaveLength(0);
+        } else {
+          // "gemini" 및 그 외 모든 무효 값(임의 문자열/null/undefined) → GeminiClient 폴백
+          expect(client).toBeInstanceOf(GeminiClient);
+          expect(geminiConstructorCalls).toHaveLength(1);
+          expect(bedrockConstructorCalls).toHaveLength(0);
+          expect(openaiConstructorCalls).toHaveLength(0);
+          expect(ollamaConstructorCalls).toHaveLength(0);
+        }
+      }),
+      { numRuns: 200 },
     );
   });
 });

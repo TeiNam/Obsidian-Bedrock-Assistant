@@ -8,6 +8,10 @@
 // 백엔드에 따라 displayName, icon, settingsTitle을 동적 전환합니다.
 // pluginId, viewType, files는 백엔드와 무관하게 고정됩니다.
 
+// aiBackend union(4값)을 단일 출처에서 참조하기 위해 타입 전용 import 사용
+// (types.ts는 branding을 import하지 않으므로 순환 의존 없음)
+import type { GeminiAssistantSettings } from "./types";
+
 /** 브랜딩 설정 타입 (플러그인 전체에서 사용) */
 export interface BrandingConfig {
   pluginId: string;
@@ -63,6 +67,36 @@ const GEMINI_BRANDING: SwitchableBranding = {
   },
 };
 
+/** OpenAI 백엔드 브랜딩 (AI 두뇌 회로 아이콘) */
+const OPENAI_BRANDING: SwitchableBranding = {
+  displayName: "OpenAI Assistant",
+  icon: {
+    id: "openai-assistant",
+    /** Lucide brain-circuit 아이콘 (AI 두뇌) — currentColor 인라인 SVG */
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M12 13h4"/><path d="M12 18h6a2 2 0 0 1 2 2v1"/><path d="M12 8h8"/><path d="M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>`,
+  },
+  settingsTitle: {
+    en: "OpenAI Assistant Settings",
+    ko: "OpenAI Assistant 설정",
+    ja: "OpenAI Assistant 設定",
+  },
+};
+
+/** Ollama 백엔드 브랜딩 (로컬/셀프호스트 서버 아이콘) */
+const OLLAMA_BRANDING: SwitchableBranding = {
+  displayName: "Ollama Assistant",
+  icon: {
+    id: "ollama-assistant",
+    /** Lucide server 아이콘 (로컬 서버) — currentColor 인라인 SVG */
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>`,
+  },
+  settingsTitle: {
+    en: "Ollama Assistant Settings",
+    ko: "Ollama Assistant 설정",
+    ja: "Ollama Assistant 設定",
+  },
+};
+
 // ============================================
 // 백엔드에 따라 브랜딩을 반환하는 함수
 // ============================================
@@ -70,9 +104,21 @@ const GEMINI_BRANDING: SwitchableBranding = {
 /**
  * 지정된 AI 백엔드에 해당하는 브랜딩(displayName, icon, settingsTitle)을 반환한다.
  * pluginId, viewType, files는 포함하지 않음 (고정값이므로).
+ * aiBackend는 4값 union("bedrock" | "gemini" | "openai" | "ollama")이며,
+ * 정의되지 않은 값은 Gemini 브랜딩으로 폴백한다(factory 폴백 정책과 일관).
  */
-export function getBranding(aiBackend: "bedrock" | "gemini"): SwitchableBranding {
-  return aiBackend === "bedrock" ? BEDROCK_BRANDING : GEMINI_BRANDING;
+export function getBranding(aiBackend: GeminiAssistantSettings["aiBackend"]): SwitchableBranding {
+  switch (aiBackend) {
+    case "bedrock":
+      return BEDROCK_BRANDING;
+    case "openai":
+      return OPENAI_BRANDING;
+    case "ollama":
+      return OLLAMA_BRANDING;
+    case "gemini":
+    default:
+      return GEMINI_BRANDING;
+  }
 }
 
 // ============================================
@@ -115,7 +161,7 @@ export let BRANDING: BrandingConfig = {
  * pluginId, viewType, files는 변경하지 않음 (고정값).
  * Object.assign으로 내부 값만 갱신하므로 기존 import 참조가 유지된다.
  */
-export function updateBranding(aiBackend: "bedrock" | "gemini"): void {
+export function updateBranding(aiBackend: GeminiAssistantSettings["aiBackend"]): void {
   const brand = getBranding(aiBackend);
   Object.assign(BRANDING, {
     displayName: brand.displayName,

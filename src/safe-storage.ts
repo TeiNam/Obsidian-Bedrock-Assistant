@@ -30,11 +30,14 @@ const CREDENTIALS_FILE = "bedrock-assistant-credentials.json";
 const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();
 const nodePath: any = (() => { try { return require("path"); } catch { return null; } })();
 
-/** 암호화할 설정 필드 목록 (Gemini + Bedrock 자격증명) */
+/** 암호화할 설정 필드 목록 (Gemini + Bedrock + OpenAI 자격증명) */
 export const SENSITIVE_FIELDS = [
   "geminiApiKey",
   "awsAccessKeyId",
   "awsSecretAccessKey",
+  // OpenAI API 키 — 기존 자격증명과 동일한 민감 필드 처리(저장/제거/로컬 이전/레거시 마이그레이션)를 적용 (Req 3.1)
+  // 참고: Ollama 서버 base URL(ollamaBaseUrl)은 비민감이므로 의도적으로 제외하여 data.json에 일반 저장 (Req 3.5)
+  "openaiApiKey",
 ] as const;
 
 /**

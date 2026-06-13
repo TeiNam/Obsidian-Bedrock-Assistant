@@ -1,6 +1,5 @@
 import { Modal, App, Notice, setIcon, requestUrl, normalizePath } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import { createAiClient } from "./ai-client-factory";
 
 // 웹 클리퍼 다국어 레이블
 const CLIPPER_I18N = {
@@ -218,12 +217,8 @@ export class WebClipperModal extends Modal {
    * Bedrock AI를 사용하여 번역 및 요약 (설정 언어에 따라 동작 변경)
    */
   private async summarizeWithAI(url: string, title: string, body: string): Promise<string> {
-    // 웹 클리퍼 전용 모델로 설정을 오버라이드
-    const overriddenSettings = {
-      ...this.plugin.settings,
-      chatModel: this.plugin.settings.webClipModel || this.plugin.settings.chatModel,
-    };
-    const client = createAiClient(overriddenSettings);
+    // 별도 웹 요약 모델 없이, 설정에서 선택한 LLM 클라이언트를 그대로 사용한다.
+    const client = this.plugin.aiClient;
     const lang = this.plugin.settings.language;
     const langName = lang === "ko" ? "Korean (한국어)" : lang === "ja" ? "Japanese (日本語)" : "English";
 

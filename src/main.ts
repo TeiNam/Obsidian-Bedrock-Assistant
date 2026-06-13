@@ -17,12 +17,40 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
+import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
 const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
 const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
+
+// 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa + time).
+// 설정 파일이 없을 때 편집창에 미리 채워주는 용도이며, 저장 전까지는 자동 연결되지 않는다.
+// API 키가 필요한 서버는 "your api key" 플레이스홀더를 실제 키로 교체해야 한다.
+const DEFAULT_MCP_CONFIG = {
+  mcpServers: {
+    fetch: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "mcp/fetch"],
+      autoApprove: ["fetch"],
+    },
+    "brave-search": {
+      command: "docker",
+      args: ["run", "-i", "--rm", "-e", "BRAVE_API_KEY", "docker.io/mcp/brave-search"],
+      env: { BRAVE_API_KEY: "your api key" },
+    },
+    exa: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "-e", "EXA_API_KEY", "mcp/exa"],
+      env: { EXA_API_KEY: "your api key" },
+    },
+    time: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "mcp/time"],
+    },
+  },
+};
 
 export default class GeminiAssistantPlugin extends Plugin {
   settings!: GeminiAssistantSettings;
@@ -187,6 +215,16 @@ export default class GeminiAssistantPlugin extends Plugin {
     // todoFolder 값을 plannerFolder로 승계한다. (병합 전 원본에 적용해야 키 존재 여부 판별 가능)
     const migrated = migratePlannerSettings(loaded ?? {});
     const raw = Object.assign({}, DEFAULT_SETTINGS, migrated);
+
+    // 마이그레이션: 시스템 프롬프트는 이제 내장 기본 프롬프트(BASE_SYSTEM_PROMPT)를 항상 사용하고,
+    // 설정의 systemPrompt는 "추가 지침"으로만 동작한다. 기존 사용자가 과거 기본 프롬프트를
+    // 그대로 저장해 둔 경우(직접 커스터마이징한 적 없음) 빈 문자열로 초기화하여 중복을 방지한다.
+    if (
+      typeof raw.systemPrompt === "string" &&
+      LEGACY_DEFAULT_SYSTEM_PROMPTS.includes(raw.systemPrompt.trim())
+    ) {
+      raw.systemPrompt = "";
+    }
 
     // 마이그레이션: data.json에 암호화된 키가 남아있으면 로컬로 이전 후 제거
     let hasMigratedKeys = false;
@@ -559,7 +597,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     } catch {
       // 파일 없으면 기본값
     }
-    return JSON.stringify({ mcpServers: {} }, null, 2);
+    return JSON.stringify(DEFAULT_MCP_CONFIG, null, 2);
   }
 
 

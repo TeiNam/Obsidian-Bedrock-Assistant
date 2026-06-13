@@ -67,6 +67,7 @@ import {
   encryptSettings,
   decryptSettings,
   isEncrypted,
+  stripSensitiveFields,
 } from "./safe-storage";
 
 // ============================================
@@ -98,6 +99,8 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
       geminiApiKey: "test-gemini-key",
       awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
       awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      // OpenAI API 키도 민감 필드이므로 암호화 대상 (Req 3.1)
+      openaiApiKey: "sk-test-openai-key",
     };
 
     const encrypted = encryptSettings(settings);
@@ -186,6 +189,8 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
           geminiApiKey: value,
           awsAccessKeyId: value,
           awsSecretAccessKey: value,
+          // openaiApiKey도 SENSITIVE_FIELDS에 포함되므로 동일 값 설정 (Req 3.1)
+          openaiApiKey: value,
         };
 
         // 암호화 → 복호화
@@ -221,6 +226,77 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
           expect(decrypted.geminiApiKey).toBe(geminiKey);
           expect(decrypted.awsAccessKeyId).toBe(accessKey);
           expect(decrypted.awsSecretAccessKey).toBe(secretKey);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ============================================
+// 단위 테스트: SENSITIVE_FIELDS 멤버십 (multi-provider-ai-backends)
+// ============================================
+// OpenAI API 키는 민감 필드에 포함되어야 하고(Req 3.1),
+// Ollama 서버 base URL은 비민감이므로 포함되지 않아야 한다(Req 3.5).
+
+describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
+  it("openaiApiKey를 포함한다 (OpenAI 자격증명, Req 3.1)", () => {
+    expect(SENSITIVE_FIELDS).toContain("openaiApiKey");
+  });
+
+  it("ollamaBaseUrl을 포함하지 않는다 (비민감, data.json 일반 저장 — Req 3.5)", () => {
+    expect(SENSITIVE_FIELDS).not.toContain("ollamaBaseUrl");
+  });
+});
+
+// ============================================
+// Property 4: 민감 필드 strip 일관성
+// ============================================
+
+/**
+ * Property 4: 민감 필드 strip 일관성
+ *
+ * 임의의 설정 객체에 대해, stripSensitiveFields 결과는
+ * openaiApiKey를 포함한 모든 SENSITIVE_FIELDS를 빈 문자열로 만들고,
+ * 비민감 필드인 ollamaBaseUrl 값은 원본 그대로 보존한다.
+ *
+ * Validates: Requirements 3.1, 3.3, 3.5
+ */
+describe("Property 4: 민감 필드 strip 일관성", () => {
+  // Feature: multi-provider-ai-backends, Property 4: 민감 필드 strip 일관성
+  it("모든 SENSITIVE_FIELDS는 빈 문자열로 제거되고, 비민감 ollamaBaseUrl은 원본 그대로 보존된다", () => {
+    fc.assert(
+      fc.property(
+        // 각 민감 필드(OpenAI/Gemini/AWS 키)에 임의 값을 부여
+        fc.string({ minLength: 1, maxLength: 80 }),
+        fc.string({ minLength: 1, maxLength: 80 }),
+        fc.string({ minLength: 1, maxLength: 80 }),
+        fc.string({ minLength: 1, maxLength: 80 }),
+        // 비민감 필드 ollamaBaseUrl 값 (빈 문자열 포함 가능)
+        fc.string({ maxLength: 120 }),
+        (geminiKey, accessKey, secretKey, openaiKey, ollamaUrl) => {
+          const settings: GeminiAssistantSettings = {
+            ...DEFAULT_SETTINGS,
+            geminiApiKey: geminiKey,
+            awsAccessKeyId: accessKey,
+            awsSecretAccessKey: secretKey,
+            openaiApiKey: openaiKey,
+            ollamaBaseUrl: ollamaUrl,
+          };
+
+          const stripped = stripSensitiveFields(settings);
+          const strippedRecord = stripped as unknown as Record<string, unknown>;
+
+          // 모든 민감 필드는 빈 문자열로 제거되어야 함 (Req 3.1, 3.3)
+          for (const field of SENSITIVE_FIELDS) {
+            expect(strippedRecord[field]).toBe("");
+          }
+
+          // 비민감 필드 ollamaBaseUrl은 원본 그대로 보존되어야 함 (Req 3.5)
+          expect(stripped.ollamaBaseUrl).toBe(ollamaUrl);
+
+          // 원본 객체는 변경되지 않아야 함 (불변성 보장)
+          expect(settings.openaiApiKey).toBe(openaiKey);
         },
       ),
       { numRuns: 100 },

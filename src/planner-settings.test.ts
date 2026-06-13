@@ -211,29 +211,18 @@ describe("Property 18: i18n 키 완전성", () => {
   // 지원 언어 (Req 4.7: en, ko, ja 세 언어 제공)
   const supportedLang = fc.constantFrom<"en" | "ko" | "ja">("en", "ko", "ja");
 
-  // settings-tab I18N 테이블에서 비어 있지 않은 "문자열"이어야 하는 신규 키들
-  // (Daily Planner 폴더 레이블/설명, TimeBox 템플릿 레이블/설명/플레이스홀더)
-  const SETTINGS_STRING_KEYS = [
-    "plannerFolder",
-    "plannerFolderDesc",
-    "timeboxTemplate",
-    "timeboxTemplateDesc",
-    "timeboxTemplatePlaceholder",
-  ] as const;
+  // settings-tab I18N 테이블에서 비어 있지 않은 "문자열"이어야 하는 To-Do 폴더 키들
+  // (TimeBox 제거 + To-Do 평면 폴더 전환에 맞춰 To-Do 폴더 레이블/설명만 검증)
+  const SETTINGS_STRING_KEYS = ["todoFolder", "todoFolderDesc"] as const;
 
-  // chat-view VIEW_I18N 테이블의 TimeBox 관련 키 중 "문자열" 값 키
-  const VIEW_STRING_KEYS = [
-    "createTimebox",
-    "timeboxNoTodo",
-    "timeboxFallback",
-    "timeboxInProgress",
-  ] as const;
+  // chat-view VIEW_I18N 테이블의 To-Do 관련 키 중 "문자열" 값 키
+  const VIEW_STRING_KEYS = ["createTodo"] as const;
 
-  // chat-view VIEW_I18N 테이블의 TimeBox 관련 키 중 "함수" 값 키 (인자를 받아 문자열 반환)
+  // chat-view VIEW_I18N 테이블의 To-Do 관련 키 중 "함수" 값 키 (인자를 받아 문자열 반환)
   const VIEW_FN_KEYS = [
-    "timeboxExists",
-    "timeboxCreated",
-    "timeboxError",
+    "todoExists",
+    "todoCreated",
+    "todoError",
   ] as const;
 
   // 비어 있지 않은 문자열인지 검사하는 헬퍼
@@ -242,10 +231,10 @@ describe("Property 18: i18n 키 완전성", () => {
     expect((value as string).trim().length, ctx).toBeGreaterThan(0);
   }
 
-  // 각 지원 언어에 대해 settings-tab I18N 테이블이 신규 키를 모두 보유하고
+  // 각 지원 언어에 대해 settings-tab I18N 테이블이 To-Do 폴더 키를 모두 보유하고
   // 각 값이 비어 있지 않은 문자열인지 검증한다.
   // Validates: Requirements 4.7
-  it("settings-tab I18N: 모든 언어가 Daily Planner/TimeBox 신규 키를 비어 있지 않은 문자열로 보유", () => {
+  it("settings-tab I18N: 모든 언어가 To-Do 폴더 키를 비어 있지 않은 문자열로 보유", () => {
     fc.assert(
       fc.property(supportedLang, (lang) => {
         const t = I18N[lang] as Record<string, unknown>;
@@ -258,11 +247,11 @@ describe("Property 18: i18n 키 완전성", () => {
     );
   });
 
-  // 각 지원 언어에 대해 chat-view VIEW_I18N 테이블이 TimeBox 관련 키를 모두 보유하는지 검증한다.
+  // 각 지원 언어에 대해 chat-view VIEW_I18N 테이블이 To-Do 관련 키를 모두 보유하는지 검증한다.
   // 문자열 값 키는 비어 있지 않은 문자열이어야 하고,
   // 함수 값 키는 함수이며 샘플 인자로 호출하면 비어 있지 않은 문자열을 반환해야 한다.
   // Validates: Requirements 4.7
-  it("chat-view VIEW_I18N: 모든 언어가 TimeBox 관련 키(문자열/함수)를 비어 있지 않게 보유", () => {
+  it("chat-view VIEW_I18N: 모든 언어가 To-Do 관련 키(문자열/함수)를 비어 있지 않게 보유", () => {
     fc.assert(
       fc.property(supportedLang, (lang) => {
         const t = VIEW_I18N[lang] as Record<string, unknown>;

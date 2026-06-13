@@ -1,5 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
+import type { CustomSkill } from "./types";
 import { SKILLS } from "./skills";
 import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
@@ -8,20 +9,21 @@ import { VIEW_I18N } from "./chat-view-i18n";
 import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 import { normalizePlannerSetting } from "./planner-settings";
+// OpenAI/Ollama base URL 검증 (Req 2.10): onChange 시점 형식 검증에 사용
+import { isValidBaseUrl } from "./provider-utils";
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 
-// Daily Planner 설정 기본값 (빈/공백 입력 정규화에 사용)
-const PLANNER_FOLDER_DEFAULT = "Daily Planner";
-const TIMEBOX_TEMPLATE_DEFAULT = "TimeBox Daily";
+// To-Do 폴더 기본값 (빈/공백 입력 정규화에 사용)
+const TODO_FOLDER_DEFAULT = "ToDo";
 
 // 설정 탭 다국어 레이블
 // (테스트에서 i18n 키 완전성 검증을 위해 export — 런타임 동작 변화 없음, 추가적 export일 뿐)
 export const I18N = {
   en: {
     title: BRANDING.settingsTitle.en,
-    pluginDesc: "An AI assistant sidebar for Obsidian with dual backend support — AWS Bedrock and Google Gemini. Chat with AI models, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools — all from within Obsidian.",
+    pluginDesc: "An AI assistant sidebar to run your whole Obsidian vault. Pick your backend — AWS Bedrock, Google Gemini, OpenAI, or Ollama — then chat with AI, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools, all from within Obsidian.",
     readmeLabel: "📖 Documentation",
     readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
@@ -50,6 +52,29 @@ export const I18N = {
     bedrockChatModelDesc: "Bedrock chat model ID",
     bedrockEmbeddingModelLabel: "Bedrock Embedding Model",
     bedrockEmbeddingModelDesc: "Bedrock embedding model ID (used for vault document indexing)",
+    // OpenAI 백엔드 설정 (Req 2.1, 13)
+    openaiAuth: "OpenAI",
+    openaiApiKey: "OpenAI API Key",
+    openaiApiKeyDesc: "Your OpenAI API key",
+    openaiApiKeyPlaceholder: "Enter OpenAI API key",
+    openaiBaseUrl: "Base URL (optional)",
+    openaiBaseUrlDesc: "OpenAI-compatible endpoint including /v1 (leave empty for the official OpenAI API)",
+    openaiBaseUrlPlaceholder: "https://api.openai.com/v1",
+    openaiChatModel: "OpenAI Chat Model",
+    openaiChatModelDesc: "OpenAI chat model ID",
+    openaiEmbeddingModel: "OpenAI Embedding Model",
+    openaiEmbeddingModelDesc: "OpenAI embedding model ID (used for vault document indexing)",
+    // Ollama 백엔드 설정 (Req 2.2, 13)
+    ollamaServer: "Ollama",
+    ollamaBaseUrl: "Server Base URL",
+    ollamaBaseUrlDesc: "Ollama server address (leave empty for http://localhost:11434)",
+    ollamaBaseUrlPlaceholder: "http://localhost:11434",
+    ollamaChatModel: "Ollama Chat Model",
+    ollamaChatModelDesc: "Ollama chat model ID",
+    ollamaEmbeddingModel: "Ollama Embedding Model",
+    ollamaEmbeddingModelDesc: "Ollama embedding model ID (used for vault document indexing)",
+    // base URL 형식 오류 (Req 2.10)
+    baseUrlInvalid: "Invalid base URL. It must start with http:// or https://",
     modelSettings: "Model Settings",
     chatModel: "Chat Model",
     chatModelDesc: "Gemini model ID",
@@ -61,7 +86,7 @@ export const I18N = {
     temperature: "Temperature",
     temperatureDesc: "Response creativity (0.0 ~ 1.0)",
     systemPrompt: "System Prompt",
-    systemPromptDesc: "Defines the AI assistant's default behavior",
+    systemPromptDesc: "Extra instructions appended to the built-in base prompt. Leave empty to use only the built-in prompt.",
     systemPromptPlaceholder: "Enter system prompt...",
     systemPromptEdit: "Edit",
     systemPromptSave: "Save",
@@ -93,20 +118,12 @@ export const I18N = {
     templateFolderDesc: "Vault folder path for storing templates",
     chatFontSize: "Chat Font Size",
     chatFontSizeDesc: "Font size for the chat area (px)",
-    codeBlock: "Code Block",
-    codeBlockDesc: "When the AI writes code blocks with a language specified (e.g. ```python), the Code Styler plugin automatically applies syntax highlighting, headers, and icons.",
     codeStylerInstall: "Install Code Styler",
     codeStylerInfo: "Install the Code Styler plugin to enhance code block rendering with language-specific styling.",
+    recommendedPlugins: "Recommended Plugins",
     todo: "To-Do",
     todoFolder: "To-Do Folder",
-    todoFolderDesc: "Vault folder path for storing to-do lists",
-    // Daily Planner 설정 (Req 4.1, 4.2)
-    plannerFolder: "Daily Planner",
-    plannerFolderDesc: "Vault folder path for the Daily Planner (date folders are created inside it)",
-    // TimeBox 템플릿 설정 (Req 4.3)
-    timeboxTemplate: "TimeBox Template",
-    timeboxTemplateDesc: "Template file name in the Templates folder (without .md) used for TimeBox documents. Variables: {{date}}.",
-    timeboxTemplatePlaceholder: "TimeBox Daily",
+    todoFolderDesc: "Vault folder path for storing To-Do notes (saved flat as YYYY-MM-DD To-Do.md)",
     todoTasksInstall: "Install Tasks Plugin",
     todoTasksInfo: "Install the Tasks plugin to enable advanced task management with due dates, recurring tasks, and queries.",
     todoTemplate: "To-Do Template",
@@ -120,15 +137,32 @@ export const I18N = {
     archiveCleanFolder: "Cleanup Folder",
     archiveCleanFolderDesc: "Folder to clean up old archived files from",
     archiveCleanDays: "Delete After (days)",
-    archiveCleanDaysDesc: "Delete archived files older than this many days when using the Clean Archive button",
+    archiveCleanDaysDesc: "Delete files in the archive folder older than this many days when using the Clean Archive button",
     archiveCleanBtn: "Clean Archive",
     webClip: "Web Clipper",
     webClipFolder: "Save Folder",
     webClipFolderDesc: "Folder to save web page summaries",
-    webClipModel: "AI Model",
-    webClipModelDesc: "Model used for web page translation and summarization",
-    skills: "Obsidian Skills",
-    skillsDesc: "Enabled skills add Obsidian knowledge to the system prompt for accurate syntax usage.",
+    skills: "Skills",
+    skillsDesc: "Enabled skills add knowledge/instructions to the system prompt. Built-in Obsidian skills are always on.",
+    skillAdd: "Add Skill",
+    skillAddDesc: "Add a custom skill. Its content is injected into the system prompt when enabled.",
+    skillEdit: "Edit",
+    skillDelete: "Delete",
+    skillModalNew: "New Skill",
+    skillModalEdit: "Edit Skill",
+    skillNameLabel: "Name",
+    skillNamePlaceholder: "e.g. Korean Writing Polish",
+    skillDescLabel: "What it does",
+    skillDescPlaceholder: "Describe what this skill should do (used for AI generation)",
+    skillContentLabel: "Content (Markdown)",
+    skillContentPlaceholder: "Click Generate to create this with AI, or write it yourself in Markdown...",
+    skillGenerate: "Generate with AI",
+    skillGenerating: "Generating...",
+    skillGenerateNeedInput: "Enter a name and what the skill should do first.",
+    skillGenerateFailed: "Failed to generate skill:",
+    skillSave: "Save",
+    skillCancel: "Cancel",
+    skillNameRequired: "Please enter a name and content.",
     mcpServers: "MCP Servers",
     mcpNoServers: "No MCP servers configured.",
     mcpManage: "Manage MCP Servers",
@@ -150,10 +184,13 @@ export const I18N = {
     mcpStatusDisconnected: (name: string) => `${name} — disconnected`,
     mcpStatusNone: "No servers connected.",
     folderSelectPlaceholder: "Select a folder...",
-    confirmToolExecution: "Confirm Destructive Tools",
-    confirmToolExecutionDesc: "Show a confirmation dialog before executing destructive tools (edit, delete, move, create)",
+    confirmToolExecution: "Confirm Note Changes",
+    confirmToolExecutionDesc: "Show a confirmation dialog before tools that create, edit, delete, or move notes",
+    secAppearance: "Appearance",
+    secChat: "Chat",
+    secVault: "Vault",
     mcpTimeout: "MCP Tool Timeout",
-    mcpTimeoutDesc: "Timeout in seconds for MCP tool requests (10–120)",
+    mcpTimeoutDesc: "Timeout in seconds for MCP tool requests (1–60)",
     // Graph RAG 검색 설정 I18N 키 (Req 9)
     graphRagSearch: "Graph RAG Search",
     graphTraversalDepth: "Graph Traversal Depth",
@@ -170,7 +207,7 @@ export const I18N = {
   },
   ko: {
     title: BRANDING.settingsTitle.ko,
-    pluginDesc: "AWS Bedrock와 Google Gemini 듀얼 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바입니다. AI 모델과 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 Obsidian 안에서 가능합니다.",
+    pluginDesc: "옵시디언 볼트 전반을 AI로 다루는 어시스턴트 사이드바입니다. 백엔드(AWS Bedrock, Google Gemini, OpenAI, Ollama)를 선택해 AI와 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 옵시디언 안에서 할 수 있습니다.",
     readmeLabel: "📖 사용 가이드",
     readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
@@ -199,6 +236,29 @@ export const I18N = {
     bedrockChatModelDesc: "Bedrock 채팅 모델 ID",
     bedrockEmbeddingModelLabel: "Bedrock 임베딩 모델",
     bedrockEmbeddingModelDesc: "Bedrock 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
+    // OpenAI 백엔드 설정 (Req 2.1, 13)
+    openaiAuth: "OpenAI",
+    openaiApiKey: "OpenAI API 키",
+    openaiApiKeyDesc: "OpenAI API 키",
+    openaiApiKeyPlaceholder: "OpenAI API 키 입력",
+    openaiBaseUrl: "Base URL (선택)",
+    openaiBaseUrlDesc: "OpenAI 호환 엔드포인트 (/v1 포함). 비우면 OpenAI 공식 API를 사용합니다",
+    openaiBaseUrlPlaceholder: "https://api.openai.com/v1",
+    openaiChatModel: "OpenAI 채팅 모델",
+    openaiChatModelDesc: "OpenAI 채팅 모델 ID",
+    openaiEmbeddingModel: "OpenAI 임베딩 모델",
+    openaiEmbeddingModelDesc: "OpenAI 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
+    // Ollama 백엔드 설정 (Req 2.2, 13)
+    ollamaServer: "Ollama",
+    ollamaBaseUrl: "서버 Base URL",
+    ollamaBaseUrlDesc: "Ollama 서버 주소 (비우면 http://localhost:11434 사용)",
+    ollamaBaseUrlPlaceholder: "http://localhost:11434",
+    ollamaChatModel: "Ollama 채팅 모델",
+    ollamaChatModelDesc: "Ollama 채팅 모델 ID",
+    ollamaEmbeddingModel: "Ollama 임베딩 모델",
+    ollamaEmbeddingModelDesc: "Ollama 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
+    // base URL 형식 오류 (Req 2.10)
+    baseUrlInvalid: "잘못된 base URL입니다. http:// 또는 https://로 시작해야 합니다",
     modelSettings: "모델 설정",
     chatModel: "채팅 모델",
     chatModelDesc: "Gemini 모델 ID",
@@ -210,7 +270,7 @@ export const I18N = {
     temperature: "Temperature",
     temperatureDesc: "응답 창의성 (0.0 ~ 1.0)",
     systemPrompt: "시스템 프롬프트",
-    systemPromptDesc: "AI 어시스턴트의 기본 동작을 정의하는 프롬프트",
+    systemPromptDesc: "내장 기본 프롬프트에 덧붙일 추가 지침입니다. 비워두면 내장 기본 프롬프트만 사용합니다.",
     systemPromptPlaceholder: "시스템 프롬프트를 입력하세요...",
     systemPromptEdit: "편집",
     systemPromptSave: "저장",
@@ -242,20 +302,12 @@ export const I18N = {
     templateFolderDesc: "템플릿을 저장할 볼트 내 폴더 경로",
     chatFontSize: "채팅 폰트 크기",
     chatFontSizeDesc: "채팅 영역의 글자 크기 (px)",
-    codeBlock: "코드 블록",
-    codeBlockDesc: "AI가 코드 블록에 언어를 명시하면 (예: ```python) Code Styler 플러그인이 자동으로 구문 강조, 헤더, 아이콘 등을 적용합니다.",
     codeStylerInstall: "Code Styler 설치",
     codeStylerInfo: "Code Styler 플러그인을 설치하면 코드 블록이 언어별 스타일로 더 보기 좋게 렌더링됩니다.",
+    recommendedPlugins: "추천 플러그인",
     todo: "To-Do",
     todoFolder: "To-Do 폴더",
-    todoFolderDesc: "To-Do 리스트를 저장할 볼트 내 폴더 경로",
-    // Daily Planner 설정 (Req 4.1, 4.2)
-    plannerFolder: "Daily Planner",
-    plannerFolderDesc: "Daily Planner를 저장할 볼트 내 폴더 경로 (이 폴더 안에 날짜 폴더가 생성됩니다)",
-    // TimeBox 템플릿 설정 (Req 4.3)
-    timeboxTemplate: "TimeBox 템플릿",
-    timeboxTemplateDesc: "TimeBox 문서 생성에 사용할 템플릿 폴더 내 파일명 (.md 제외). 사용 가능 변수: {{date}}.",
-    timeboxTemplatePlaceholder: "TimeBox Daily",
+    todoFolderDesc: "To-Do 노트를 저장할 볼트 내 폴더 경로 (파일은 YYYY-MM-DD To-Do.md 형식으로 평면 저장)",
     todoTasksInstall: "Tasks 플러그인 설치",
     todoTasksInfo: "Tasks 플러그인을 설치하면 마감일, 반복 작업, 쿼리 등 고급 할 일 관리 기능을 사용할 수 있습니다.",
     todoTemplate: "To-Do 템플릿",
@@ -269,15 +321,32 @@ export const I18N = {
     archiveCleanFolder: "비우기 대상 폴더",
     archiveCleanFolderDesc: "아카이브 비우기 버튼으로 삭제할 파일이 있는 폴더",
     archiveCleanDays: "삭제 기준 (일)",
-    archiveCleanDaysDesc: "아카이브 비우기 버튼 사용 시 이 일수를 초과한 아카이브 파일을 삭제합니다",
+    archiveCleanDaysDesc: "아카이브 비우기 버튼 사용 시 아카이브 폴더에서 이 일수를 초과한 파일을 삭제합니다",
     archiveCleanBtn: "아카이브 비우기",
     webClip: "웹 클리퍼",
     webClipFolder: "저장 폴더",
     webClipFolderDesc: "웹 페이지 요약을 저장할 폴더",
-    webClipModel: "AI 모델",
-    webClipModelDesc: "웹 페이지 번역 및 요약에 사용할 모델",
-    skills: "Obsidian 스킬",
-    skillsDesc: "활성화된 스킬의 지식이 시스템 프롬프트에 추가되어 AI가 Obsidian 문법을 정확하게 사용합니다.",
+    skills: "스킬",
+    skillsDesc: "활성화된 스킬의 지식/지침이 시스템 프롬프트에 추가됩니다. 내장 Obsidian 스킬은 항상 켜져 있습니다.",
+    skillAdd: "스킬 추가",
+    skillAddDesc: "커스텀 스킬을 추가합니다. 활성화하면 내용이 시스템 프롬프트에 주입됩니다.",
+    skillEdit: "편집",
+    skillDelete: "삭제",
+    skillModalNew: "새 스킬",
+    skillModalEdit: "스킬 편집",
+    skillNameLabel: "이름",
+    skillNamePlaceholder: "예: 한국어 윤문 다듬기",
+    skillDescLabel: "어떤 일을 하나요?",
+    skillDescPlaceholder: "이 스킬이 어떤 일을 하는지 적어주세요 (AI 생성에 사용됩니다)",
+    skillContentLabel: "내용 (마크다운)",
+    skillContentPlaceholder: "생성하기를 누르면 AI가 작성합니다. 직접 마크다운으로 작성해도 됩니다...",
+    skillGenerate: "AI로 생성하기",
+    skillGenerating: "생성 중...",
+    skillGenerateNeedInput: "먼저 이름과 '어떤 일을 하는지'를 입력하세요.",
+    skillGenerateFailed: "스킬 생성에 실패했습니다:",
+    skillSave: "저장",
+    skillCancel: "취소",
+    skillNameRequired: "이름과 내용을 입력하세요.",
     mcpServers: "MCP 서버",
     mcpNoServers: "설정된 MCP 서버가 없습니다.",
     mcpManage: "MCP 서버 관리",
@@ -299,10 +368,13 @@ export const I18N = {
     mcpStatusDisconnected: (name: string) => `${name} — 연결 끊김`,
     mcpStatusNone: "연결된 서버가 없습니다.",
     folderSelectPlaceholder: "폴더를 선택하세요...",
-    confirmToolExecution: "파괴적 도구 실행 확인",
-    confirmToolExecutionDesc: "파괴적 도구(편집, 삭제, 이동, 생성) 실행 전 확인 대화상자를 표시합니다",
+    confirmToolExecution: "노트 변경 확인",
+    confirmToolExecutionDesc: "노트를 생성·편집·삭제·이동하는 도구 실행 전 확인 대화상자를 표시합니다",
+    secAppearance: "모양",
+    secChat: "대화",
+    secVault: "볼트 관리",
     mcpTimeout: "MCP 도구 타임아웃",
-    mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (10~120초)",
+    mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (1~60초)",
     // Graph RAG 검색 설정 I18N 키 (Req 9)
     graphRagSearch: "Graph RAG 검색",
     graphTraversalDepth: "그래프 순회 깊이",
@@ -319,7 +391,7 @@ export const I18N = {
   },
   ja: {
     title: BRANDING.settingsTitle.ja,
-    pluginDesc: "AWS BedrockとGoogle Geminiのデュアルバックエンドに対応したObsidian AIアシスタントサイドバーです。AIモデルとチャット、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で完結します。",
+    pluginDesc: "Obsidianボルト全体をAIで扱えるアシスタントサイドバーです。バックエンド（AWS Bedrock、Google Gemini、OpenAI、Ollama）を選んでAIと対話し、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で行えます。",
     readmeLabel: "📖 ドキュメント",
     readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
@@ -348,6 +420,29 @@ export const I18N = {
     bedrockChatModelDesc: "BedrockチャットモデルID",
     bedrockEmbeddingModelLabel: "Bedrock埋め込みモデル",
     bedrockEmbeddingModelDesc: "Bedrock埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
+    // OpenAI バックエンド設定 (Req 2.1, 13)
+    openaiAuth: "OpenAI",
+    openaiApiKey: "OpenAI APIキー",
+    openaiApiKeyDesc: "OpenAI APIキー",
+    openaiApiKeyPlaceholder: "OpenAI APIキーを入力",
+    openaiBaseUrl: "Base URL（任意）",
+    openaiBaseUrlDesc: "OpenAI互換エンドポイント（/v1を含む）。空の場合はOpenAI公式APIを使用します",
+    openaiBaseUrlPlaceholder: "https://api.openai.com/v1",
+    openaiChatModel: "OpenAIチャットモデル",
+    openaiChatModelDesc: "OpenAIチャットモデルID",
+    openaiEmbeddingModel: "OpenAI埋め込みモデル",
+    openaiEmbeddingModelDesc: "OpenAI埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
+    // Ollama バックエンド設定 (Req 2.2, 13)
+    ollamaServer: "Ollama",
+    ollamaBaseUrl: "サーバー Base URL",
+    ollamaBaseUrlDesc: "Ollamaサーバーアドレス（空の場合はhttp://localhost:11434を使用）",
+    ollamaBaseUrlPlaceholder: "http://localhost:11434",
+    ollamaChatModel: "Ollamaチャットモデル",
+    ollamaChatModelDesc: "OllamaチャットモデルID",
+    ollamaEmbeddingModel: "Ollama埋め込みモデル",
+    ollamaEmbeddingModelDesc: "Ollama埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
+    // base URL 形式エラー (Req 2.10)
+    baseUrlInvalid: "無効なbase URLです。http:// または https:// で始まる必要があります",
     modelSettings: "モデル設定",
     chatModel: "チャットモデル",
     chatModelDesc: "GeminiモデルID",
@@ -359,7 +454,7 @@ export const I18N = {
     temperature: "Temperature",
     temperatureDesc: "応答の創造性 (0.0 ~ 1.0)",
     systemPrompt: "システムプロンプト",
-    systemPromptDesc: "AIアシスタントのデフォルト動作を定義します",
+    systemPromptDesc: "内蔵の基本プロンプトに追加する指示です。空欄の場合は内蔵プロンプトのみを使用します。",
     systemPromptPlaceholder: "システムプロンプトを入力...",
     systemPromptEdit: "編集",
     systemPromptSave: "保存",
@@ -391,20 +486,12 @@ export const I18N = {
     templateFolderDesc: "テンプレートを保存するボルト内のフォルダパス",
     chatFontSize: "チャットフォントサイズ",
     chatFontSizeDesc: "チャットエリアのフォントサイズ (px)",
-    codeBlock: "コードブロック",
-    codeBlockDesc: "AIが言語指定付きのコードブロック（例: ```python）を書くと、Code Stylerプラグインが自動的にシンタックスハイライト、ヘッダー、アイコンを適用します。",
     codeStylerInstall: "Code Stylerをインストール",
     codeStylerInfo: "Code Stylerプラグインをインストールして、言語別スタイリングでコードブロックの表示を強化します。",
+    recommendedPlugins: "おすすめプラグイン",
     todo: "To-Do",
     todoFolder: "To-Doフォルダ",
-    todoFolderDesc: "To-Doリストを保存するボルト内のフォルダパス",
-    // Daily Planner 設定 (Req 4.1, 4.2)
-    plannerFolder: "Daily Planner",
-    plannerFolderDesc: "Daily Planner を保存するボルト内のフォルダパス（このフォルダ内に日付フォルダが作成されます）",
-    // TimeBox テンプレート設定 (Req 4.3)
-    timeboxTemplate: "TimeBoxテンプレート",
-    timeboxTemplateDesc: "TimeBoxドキュメントの生成に使用するテンプレートフォルダ内のファイル名（.md不要）。変数: {{date}}。",
-    timeboxTemplatePlaceholder: "TimeBox Daily",
+    todoFolderDesc: "To-Doノートを保存するボルト内のフォルダパス（ファイルは YYYY-MM-DD To-Do.md 形式でフラットに保存）",
     todoTasksInstall: "Tasksプラグインをインストール",
     todoTasksInfo: "Tasksプラグインをインストールして、期限、繰り返しタスク、クエリなどの高度なタスク管理を有効にします。",
     todoTemplate: "To-Doテンプレート",
@@ -418,15 +505,32 @@ export const I18N = {
     archiveCleanFolder: "整理対象フォルダ",
     archiveCleanFolderDesc: "アーカイブ整理ボタンで削除するファイルがあるフォルダ",
     archiveCleanDays: "削除基準（日数）",
-    archiveCleanDaysDesc: "アーカイブ整理ボタン使用時、この日数を超えたアーカイブファイルを削除します",
+    archiveCleanDaysDesc: "アーカイブ整理ボタン使用時、アーカイブフォルダ内でこの日数を超えたファイルを削除します",
     archiveCleanBtn: "アーカイブ整理",
     webClip: "Webクリッパー",
     webClipFolder: "保存フォルダ",
     webClipFolderDesc: "Webページ要約を保存するフォルダ",
-    webClipModel: "AIモデル",
-    webClipModelDesc: "Webページの翻訳・要約に使用するモデル",
-    skills: "Obsidianスキル",
-    skillsDesc: "有効なスキルの知識がシステムプロンプトに追加され、AIがObsidian構文を正確に使用します。",
+    skills: "スキル",
+    skillsDesc: "有効なスキルの知識・指示がシステムプロンプトに追加されます。内蔵のObsidianスキルは常に有効です。",
+    skillAdd: "スキルを追加",
+    skillAddDesc: "カスタムスキルを追加します。有効にすると内容がシステムプロンプトに注入されます。",
+    skillEdit: "編集",
+    skillDelete: "削除",
+    skillModalNew: "新しいスキル",
+    skillModalEdit: "スキルを編集",
+    skillNameLabel: "名前",
+    skillNamePlaceholder: "例: 韓国語の推敲",
+    skillDescLabel: "何をするスキルですか？",
+    skillDescPlaceholder: "このスキルが何をするか記述してください（AI生成に使用されます）",
+    skillContentLabel: "内容（マークダウン）",
+    skillContentPlaceholder: "「生成」を押すとAIが作成します。自分でマークダウンで書くこともできます...",
+    skillGenerate: "AIで生成",
+    skillGenerating: "生成中...",
+    skillGenerateNeedInput: "先に名前と「何をするスキルか」を入力してください。",
+    skillGenerateFailed: "スキルの生成に失敗しました:",
+    skillSave: "保存",
+    skillCancel: "キャンセル",
+    skillNameRequired: "名前と内容を入力してください。",
     mcpServers: "MCPサーバー",
     mcpNoServers: "MCPサーバーが設定されていません。",
     mcpManage: "MCPサーバー管理",
@@ -448,10 +552,13 @@ export const I18N = {
     mcpStatusDisconnected: (name: string) => `${name} — 切断`,
     mcpStatusNone: "接続されたサーバーがありません。",
     folderSelectPlaceholder: "フォルダを選択...",
-    confirmToolExecution: "破壊的ツールの実行確認",
-    confirmToolExecutionDesc: "破壊的ツール（編集、削除、移動、作成）の実行前に確認ダイアログを表示します",
+    confirmToolExecution: "ノート変更の確認",
+    confirmToolExecutionDesc: "ノートを作成・編集・削除・移動するツールの実行前に確認ダイアログを表示します",
+    secAppearance: "外観",
+    secChat: "チャット",
+    secVault: "ボルト管理",
     mcpTimeout: "MCPツールタイムアウト",
-    mcpTimeoutDesc: "MCPツールリクエストのタイムアウト（10〜120秒）",
+    mcpTimeoutDesc: "MCPツールリクエストのタイムアウト（1〜60秒）",
     // Graph RAG 検索設定 I18N キー (Req 9)
     graphRagSearch: "Graph RAG 検索",
     graphTraversalDepth: "グラフ探索の深さ",
@@ -495,6 +602,14 @@ export class GeminiSettingTab extends PluginSettingTab {
     containerEl.empty();
     const lang = this.plugin.settings.language;
     const t = I18N[lang] || I18N.en;
+    // 신규 백엔드 라벨용 키 단위 en 폴백 헬퍼 (Req 13.3):
+    // 현재 언어에 해당 키가 없으면 영어(en) 라벨로 폴백한다.
+    const tk = (key: string): string => {
+      const cur = (I18N[lang] as Record<string, unknown>)[key];
+      if (typeof cur === "string") return cur;
+      const en = (I18N.en as Record<string, unknown>)[key];
+      return typeof en === "string" ? en : "";
+    };
 
     // 설정 페이지 타이틀을 현재 브랜딩에서 동적으로 가져옴 (심사 기준: setHeading 사용)
     new Setting(containerEl).setName(BRANDING.settingsTitle[lang] || BRANDING.settingsTitle.en).setHeading();
@@ -571,13 +686,22 @@ export class GeminiSettingTab extends PluginSettingTab {
         dropdown
           .addOption("gemini", "Gemini")
           .addOption("bedrock", "Bedrock")
+          .addOption("openai", "OpenAI")
+          .addOption("ollama", "Ollama")
           .setValue(this.plugin.settings.aiBackend)
           .onChange(async (value) => {
-            this.plugin.settings.aiBackend = value as "bedrock" | "gemini";
+            // 4값 union으로 캐스팅 (Req 1.1)
+            this.plugin.settings.aiBackend = value as "bedrock" | "gemini" | "openai" | "ollama";
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
-            this.display(); // UI 재렌더링
+            // 열려있는 채팅 뷰의 모델 목록 캐시를 비워 새 백엔드 모델로 다시 로드시킨다
+            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
+            for (const leaf of leaves) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (leaf.view as any).refreshModelList?.();
+            }
+            this.display(); // UI 재렌더링 (표시 필드 집합 갱신 — Req 12.5)
           })
       );
 
@@ -604,7 +728,7 @@ export class GeminiSettingTab extends PluginSettingTab {
         });
       // 눈 버튼 추가
       this.addToggleVisibilityButton(apiKeySetting.controlEl);
-    } else {
+    } else if (this.plugin.settings.aiBackend === "bedrock") {
       // Bedrock (AWS) 자격증명 설정
       new Setting(containerEl).setName("AWS Bedrock").setHeading();
 
@@ -658,6 +782,53 @@ export class GeminiSettingTab extends PluginSettingTab {
               this.scheduleModelReload();
             })
         );
+    } else if (this.plugin.settings.aiBackend === "openai") {
+      // OpenAI 자격증명 설정 (Req 12.1): API 키(마스킹) + 선택적 base URL
+      new Setting(containerEl).setName(tk("openaiAuth")).setHeading();
+
+      // OpenAI API 키 — 기존 password + 눈 버튼 마스킹 패턴 재사용 (Req 3.7)
+      const openaiKeySetting = new Setting(containerEl)
+        .setName(tk("openaiApiKey"))
+        .setDesc(tk("openaiApiKeyDesc"))
+        .addText((text) => {
+          text
+            .setPlaceholder(tk("openaiApiKeyPlaceholder"))
+            .setValue(this.plugin.settings.openaiApiKey)
+            .onChange(async (value) => {
+              this.plugin.settings.openaiApiKey = value.trim();
+              await this.plugin.saveSettings();
+              // API 키 변경 시 모델 목록 재로드 예약
+              this.scheduleModelReload();
+            });
+          text.inputEl.type = "password";
+          text.inputEl.addClass("ba-secret-input");
+        });
+      this.addToggleVisibilityButton(openaiKeySetting.controlEl);
+
+      // 선택적 base URL — onChange에서 형식 검증, 실패 시 Notice + 이전 유효값 유지 (Req 2.10)
+      this.addBaseUrlSetting(
+        containerEl,
+        tk("openaiBaseUrl"),
+        tk("openaiBaseUrlDesc"),
+        tk("openaiBaseUrlPlaceholder"),
+        () => this.plugin.settings.openaiBaseUrl,
+        (v) => { this.plugin.settings.openaiBaseUrl = v; },
+        tk("baseUrlInvalid"),
+      );
+    } else if (this.plugin.settings.aiBackend === "ollama") {
+      // Ollama 서버 설정 (Req 12.2): 서버 base URL (API 키 없음)
+      new Setting(containerEl).setName(tk("ollamaServer")).setHeading();
+
+      // 서버 base URL — onChange에서 형식 검증, 실패 시 Notice + 이전 유효값 유지 (Req 2.10)
+      this.addBaseUrlSetting(
+        containerEl,
+        tk("ollamaBaseUrl"),
+        tk("ollamaBaseUrlDesc"),
+        tk("ollamaBaseUrlPlaceholder"),
+        () => this.plugin.settings.ollamaBaseUrl,
+        (v) => { this.plugin.settings.ollamaBaseUrl = v; },
+        tk("baseUrlInvalid"),
+      );
     }
 
     // 조건부 모델 설정: 백엔드별 모델 드롭다운 표시
@@ -705,7 +876,7 @@ export class GeminiSettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             })
         );
-    } else {
+    } else if (this.plugin.settings.aiBackend === "bedrock") {
       // Bedrock 채팅 모델 드롭다운
       new Setting(containerEl)
         .setName(t.bedrockChatModelLabel)
@@ -749,20 +920,63 @@ export class GeminiSettingTab extends PluginSettingTab {
             this.plugin.settings.bedrockEmbeddingModel = value;
             await this.plugin.saveSettings();
           });
-          // 비동기로 모델 목록 로드 후 드롭다운 갱신
+          // 비동기로 임베딩 모델 목록 로드 후 드롭다운 갱신 (kind="embedding")
           (async () => {
             try {
-              const models = await this.plugin.aiClient.listModels();
+              const models = await this.plugin.aiClient.listModels("embedding");
+              // 빈 목록/오류 시 현재값 유지 (Req 7.9)
+              if (!models || models.length === 0) return;
+              const cur = this.plugin.settings.bedrockEmbeddingModel;
               dropdown.selectEl.empty();
               for (const m of models) {
                 dropdown.addOption(m.modelId, m.modelName || m.modelId);
               }
-              dropdown.setValue(this.plugin.settings.bedrockEmbeddingModel);
+              // 현재 설정 ID가 목록에 없으면 현재값을 옵션으로 추가하여 선택 유지 (Req 7.9.1)
+              if (cur && !models.some((m) => m.modelId === cur)) {
+                dropdown.addOption(cur, cur);
+              }
+              dropdown.setValue(cur);
             } catch {
               // 모델 로드 실패 시 현재값 유지
             }
           })();
         });
+    } else if (this.plugin.settings.aiBackend === "openai") {
+      // OpenAI 채팅/임베딩 모델 드롭다운 (Req 12.1, 12.3)
+      this.addProviderModelDropdown(
+        containerEl,
+        tk("openaiChatModel"),
+        tk("openaiChatModelDesc"),
+        () => this.plugin.settings.openaiChatModel,
+        (v) => { this.plugin.settings.openaiChatModel = v; },
+        "chat",
+      );
+      this.addProviderModelDropdown(
+        containerEl,
+        tk("openaiEmbeddingModel"),
+        tk("openaiEmbeddingModelDesc"),
+        () => this.plugin.settings.openaiEmbeddingModel,
+        (v) => { this.plugin.settings.openaiEmbeddingModel = v; },
+        "embedding",
+      );
+    } else if (this.plugin.settings.aiBackend === "ollama") {
+      // Ollama 채팅/임베딩 모델 드롭다운 (Req 12.2, 12.3)
+      this.addProviderModelDropdown(
+        containerEl,
+        tk("ollamaChatModel"),
+        tk("ollamaChatModelDesc"),
+        () => this.plugin.settings.ollamaChatModel,
+        (v) => { this.plugin.settings.ollamaChatModel = v; },
+        "chat",
+      );
+      this.addProviderModelDropdown(
+        containerEl,
+        tk("ollamaEmbeddingModel"),
+        tk("ollamaEmbeddingModelDesc"),
+        () => this.plugin.settings.ollamaEmbeddingModel,
+        (v) => { this.plugin.settings.ollamaEmbeddingModel = v; },
+        "embedding",
+      );
     }
 
     // 생성 설정
@@ -808,7 +1022,33 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     // 사용자 경험 설정
-    new Setting(containerEl).setName(t.ux).setHeading();
+    // === 모양 (Appearance) ===
+    new Setting(containerEl).setName(t.secAppearance).setHeading();
+
+    new Setting(containerEl)
+      .setName(t.chatFontSize)
+      .setDesc(t.chatFontSizeDesc)
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.inputEl.min = "10";
+        text.inputEl.max = "24";
+        text.setValue(String(this.plugin.settings.chatFontSize));
+        text.onChange(async (value) => {
+          const parsed = parseInt(value, 10);
+          if (!Number.isFinite(parsed)) return; // 빈/잘못된 입력 무시
+          const clamped = Math.max(10, Math.min(24, parsed));
+          this.plugin.settings.chatFontSize = clamped;
+          await this.plugin.saveSettings();
+          // 열려있는 채팅 뷰에 즉시 반영
+          const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
+          for (const leaf of leaves) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (leaf.view as any).applyFontSize?.();
+          }
+          // 범위를 벗어난 입력은 보정된 값으로 표시 갱신
+          if (clamped !== parsed) text.setValue(String(clamped));
+        });
+      });
 
     new Setting(containerEl)
       .setName(t.greeting)
@@ -822,39 +1062,8 @@ export class GeminiSettingTab extends PluginSettingTab {
           })
       );
 
-    // P.A.R.A 환경 설정
-    new Setting(containerEl)
-      .setName(t.paraSetup)
-      .setDesc(t.paraSetupDesc)
-      .addButton((btn) =>
-        btn
-          .setButtonText(t.paraSetupBtn)
-          .onClick(() => {
-            new ParaModal(this.app, this.plugin, {
-              paraModalTitle: t.paraModalTitle,
-              paraModalRunning: t.paraModalRunning,
-              paraModalDone: t.paraModalDone,
-              paraModalCreated: t.paraModalCreated,
-              paraModalMoved: t.paraModalMoved,
-              paraModalSkipped: t.paraModalSkipped,
-              paraModalErrors: t.paraModalErrors,
-              paraModalNoFiles: t.paraModalNoFiles,
-              paraModalClose: t.paraModalClose,
-            }).open();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName(t.confirmToolExecution)
-      .setDesc(t.confirmToolExecutionDesc)
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.confirmToolExecution)
-          .onChange(async (value) => {
-            this.plugin.settings.confirmToolExecution = value;
-            await this.plugin.saveSettings();
-          })
-      );
+    // === 대화 (Chat) ===
+    new Setting(containerEl).setName(t.secChat).setHeading();
 
     new Setting(containerEl)
       .setName(t.autoAttach)
@@ -881,6 +1090,18 @@ export class GeminiSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(t.confirmToolExecution)
+      .setDesc(t.confirmToolExecutionDesc)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.confirmToolExecution)
+          .onChange(async (value) => {
+            this.plugin.settings.confirmToolExecution = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName(t.clearHistory)
       .setDesc(t.clearHistoryDesc)
       .addButton((btn) =>
@@ -892,11 +1113,15 @@ export class GeminiSettingTab extends PluginSettingTab {
             // 열려있는 채팅 뷰도 초기화
             const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of leaves) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (leaf.view as any).clearChat?.();
             }
             new Notice(t.clearHistoryConfirm);
           })
       );
+
+    // === 볼트 관리 (Vault) ===
+    new Setting(containerEl).setName(t.secVault).setHeading();
 
     new Setting(containerEl)
       .setName(t.templateFolder)
@@ -920,22 +1145,25 @@ export class GeminiSettingTab extends PluginSettingTab {
         })
       );
 
+    // P.A.R.A 환경 설정
     new Setting(containerEl)
-      .setName(t.chatFontSize)
-      .setDesc(t.chatFontSizeDesc)
-      .addSlider((slider) =>
-        slider
-          .setLimits(10, 24, 1)
-          .setValue(this.plugin.settings.chatFontSize)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.chatFontSize = value;
-            await this.plugin.saveSettings();
-            // 열려있는 채팅 뷰에 즉시 반영
-            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-            for (const leaf of leaves) {
-              (leaf.view as any).applyFontSize?.();
-            }
+      .setName(t.paraSetup)
+      .setDesc(t.paraSetupDesc)
+      .addButton((btn) =>
+        btn
+          .setButtonText(t.paraSetupBtn)
+          .onClick(() => {
+            new ParaModal(this.app, this.plugin, {
+              paraModalTitle: t.paraModalTitle,
+              paraModalRunning: t.paraModalRunning,
+              paraModalDone: t.paraModalDone,
+              paraModalCreated: t.paraModalCreated,
+              paraModalMoved: t.paraModalMoved,
+              paraModalSkipped: t.paraModalSkipped,
+              paraModalErrors: t.paraModalErrors,
+              paraModalNoFiles: t.paraModalNoFiles,
+              paraModalClose: t.paraModalClose,
+            }).open();
           })
       );
 
@@ -1013,39 +1241,22 @@ export class GeminiSettingTab extends PluginSettingTab {
           })
       );
 
-    // 코드 블록 설정
-    new Setting(containerEl).setName(t.codeBlock).setHeading();
-    const codeBlockBox = containerEl.createDiv({ cls: "ba-about-box" });
-    codeBlockBox.createEl("p", {
-      text: t.codeBlockDesc,
-      cls: "ba-about-desc",
-    });
-
-    const codeStylerSetting = new Setting(containerEl)
-      .setName(t.codeStylerInstall)
-      .setDesc(t.codeStylerInfo);
-    codeStylerSetting.addButton((btn) =>
-      btn.setButtonText(t.codeStylerInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=code-styler");
-      })
-    );
-
-    // Daily Planner 설정 (Req 4.1 — 폴더 항목 레이블을 "Daily Planner"로 표시)
+    // To-Do 설정 (평면 폴더 구조)
     new Setting(containerEl).setName(t.todo).setHeading();
 
-    // 플래너 폴더 항목 (Req 4.1, 4.2, 4.5, 4.8)
+    // To-Do 폴더 항목 (평면 구조: {todoFolder}/YYYY-MM-DD To-Do.md)
     new Setting(containerEl)
-      .setName(t.plannerFolder)
-      .setDesc(t.plannerFolderDesc)
+      .setName(t.todoFolder)
+      .setDesc(t.todoFolderDesc)
       .addText((text) =>
         text
-          .setPlaceholder(PLANNER_FOLDER_DEFAULT)
-          .setValue(this.plugin.settings.plannerFolder)
+          .setPlaceholder(TODO_FOLDER_DEFAULT)
+          .setValue(this.plugin.settings.todoFolder)
           .onChange(async (value) => {
-            // 빈/공백 입력 시 기본값 적용 (Req 4.5)
-            const normalized = normalizePlannerSetting(value, PLANNER_FOLDER_DEFAULT);
-            this.plugin.settings.plannerFolder = normalized;
-            await this.plugin.saveSettings(); // 즉시 저장 (Req 4.8)
+            // 빈/공백 입력 시 기본값 적용
+            const normalized = normalizePlannerSetting(value, TODO_FOLDER_DEFAULT);
+            this.plugin.settings.todoFolder = normalized;
+            await this.plugin.saveSettings(); // 즉시 저장
             // 정규화 결과가 입력과 다르면(공백/빈 입력) 표시값을 갱신
             if (normalized !== value) text.setValue(normalized);
           })
@@ -1053,7 +1264,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
           new FolderSuggestModal(this.app, async (folder) => {
-            this.plugin.settings.plannerFolder = normalizePlannerSetting(folder, PLANNER_FOLDER_DEFAULT);
+            this.plugin.settings.todoFolder = normalizePlannerSetting(folder, TODO_FOLDER_DEFAULT);
             await this.plugin.saveSettings();
             this.display();
           }, t.folderSelectPlaceholder).open();
@@ -1072,33 +1283,6 @@ export class GeminiSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
-
-    // TimeBox 템플릿 항목 (Req 4.3, 4.6, 4.8)
-    new Setting(containerEl)
-      .setName(t.timeboxTemplate)
-      .setDesc(t.timeboxTemplateDesc)
-      .addText((text) =>
-        text
-          .setPlaceholder(t.timeboxTemplatePlaceholder)
-          .setValue(this.plugin.settings.timeboxTemplateName)
-          .onChange(async (value) => {
-            // 빈/공백 입력 시 기본값 적용 (Req 4.6)
-            const normalized = normalizePlannerSetting(value, TIMEBOX_TEMPLATE_DEFAULT);
-            this.plugin.settings.timeboxTemplateName = normalized;
-            await this.plugin.saveSettings(); // 즉시 저장 (Req 4.8)
-            // 정규화 결과가 입력과 다르면(공백/빈 입력) 표시값을 갱신
-            if (normalized !== value) text.setValue(normalized);
-          })
-      );
-
-    const tasksSetting = new Setting(containerEl)
-      .setName(t.todoTasksInstall)
-      .setDesc(t.todoTasksInfo);
-    tasksSetting.addButton((btn) =>
-      btn.setButtonText(t.todoTasksInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=obsidian-tasks-plugin");
-      })
-    );
 
     new Setting(containerEl)
       .setName(t.todoArchiveFolder)
@@ -1138,31 +1322,7 @@ export class GeminiSettingTab extends PluginSettingTab {
           })
       );
 
-    // 아카이브 비우기 설정
-    new Setting(containerEl).setName(t.archiveClean).setHeading();
-
-    new Setting(containerEl)
-      .setName(t.archiveCleanFolder)
-      .setDesc(t.archiveCleanFolderDesc)
-      .addText((text) =>
-        text
-          .setPlaceholder("ToDo/Archive")
-          .setValue(this.plugin.settings.archiveCleanFolder)
-          .onChange(async (value) => {
-            this.plugin.settings.archiveCleanFolder = value.trim() || "ToDo/Archive";
-            await this.plugin.saveSettings();
-          })
-      )
-      .addButton((btn) =>
-        btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
-            this.plugin.settings.archiveCleanFolder = folder;
-            await this.plugin.saveSettings();
-            this.display();
-          }, t.folderSelectPlaceholder).open();
-        })
-      );
-
+    // 아카이브 비우기: 별도 폴더 없이 위의 "아카이브 폴더"를 기준으로 동작한다.
     new Setting(containerEl)
       .setName(t.archiveCleanDays)
       .setDesc(t.archiveCleanDaysDesc)
@@ -1213,45 +1373,14 @@ export class GeminiSettingTab extends PluginSettingTab {
         })
       );
 
-    // 웹 클리퍼 모델 선택 (채팅 모델 목록에서 선택)
-    const webClipModelSetting = new Setting(containerEl)
-      .setName(t.webClipModel)
-      .setDesc(t.webClipModelDesc)
-      .addDropdown((dropdown) => {
-        // 현재 설정값을 기본 옵션으로 추가
-        const current = this.plugin.settings.webClipModel;
-        dropdown.addOption(current, current);
-        dropdown.setValue(current);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.webClipModel = value;
-          await this.plugin.saveSettings();
-        });
-
-        // 비동기로 모델 목록 로드 후 드롭다운 갱신
-        (async () => {
-          try {
-            const models = await this.plugin.aiClient.listModels();
-            // 기존 옵션 제거 후 재구성
-            dropdown.selectEl.empty();
-            for (const m of models) {
-              dropdown.addOption(m.modelId, m.modelName || m.modelId);
-            }
-            dropdown.setValue(this.plugin.settings.webClipModel);
-          } catch {
-            // 모델 로드 실패 시 현재값 유지
-          }
-        })();
-      });
-
     // Obsidian 스킬 설정
+    // 내장(builtin) 스킬은 항상 활성화되며 목록에 노출하지 않는다.
+    // 번들 토글 스킬(예: 한국어 윤문)과 사용자 커스텀 스킬을 토글로 표시한다.
     new Setting(containerEl).setName(t.skills).setHeading();
-    const skillsBox = containerEl.createDiv({ cls: "ba-about-box" });
-    skillsBox.createEl("p", {
-      text: t.skillsDesc,
-      cls: "ba-about-desc",
-    });
 
-    for (const skill of SKILLS) {
+    // 1) 번들 토글 스킬 (builtin이 아닌 내장 제공 스킬)
+    const bundledToggleable = SKILLS.filter((s) => !s.builtin);
+    for (const skill of bundledToggleable) {
       new Setting(containerEl)
         .setName(skill.name)
         .setDesc(this.plugin.settings.language === "en" ? skill.descriptionEn : skill.description)
@@ -1271,26 +1400,50 @@ export class GeminiSettingTab extends PluginSettingTab {
         );
     }
 
-    // MCP 서버 설정
-    new Setting(containerEl).setName(t.mcpServers).setHeading();
-
-    // MCP 도구 타임아웃 슬라이더
-    new Setting(containerEl)
-      .setName(t.mcpTimeout)
-      .setDesc(t.mcpTimeoutDesc)
-      .addSlider((slider) =>
-        slider
-          .setLimits(10, 120, 5)
-          .setValue(this.plugin.settings.mcpTimeout)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.mcpTimeout = value;
+    // 2) 사용자 커스텀 스킬 (A안: 설정에 저장, 토글 + 편집 + 삭제)
+    for (const skill of this.plugin.settings.customSkills) {
+      new Setting(containerEl)
+        .setName(skill.name || skill.id)
+        .setDesc(skill.description || "")
+        .addToggle((toggle) =>
+          toggle.setValue(skill.enabled).onChange(async (value) => {
+            skill.enabled = value;
             await this.plugin.saveSettings();
-            // 실행 중인 MCP 서버에 즉시 반영
-            this.plugin.mcpManager.setTimeout(value);
           })
+        )
+        .addExtraButton((btn) =>
+          btn
+            .setIcon("pencil")
+            .setTooltip(t.skillEdit)
+            .onClick(() => {
+              new SkillEditModal(this.app, this.plugin, t, skill, () => this.display()).open();
+            })
+        )
+        .addExtraButton((btn) =>
+          btn
+            .setIcon("trash")
+            .setTooltip(t.skillDelete)
+            .onClick(async () => {
+              const idx = this.plugin.settings.customSkills.indexOf(skill);
+              if (idx >= 0) this.plugin.settings.customSkills.splice(idx, 1);
+              await this.plugin.saveSettings();
+              this.display();
+            })
+        );
+    }
+
+    // 3) 스킬 추가 버튼
+    new Setting(containerEl)
+      .setName(t.skillAdd)
+      .setDesc(t.skillAddDesc)
+      .addButton((btn) =>
+        btn.setButtonText(t.skillAdd).setCta().onClick(() => {
+          new SkillEditModal(this.app, this.plugin, t, null, () => this.display()).open();
+        })
       );
 
+    // MCP 서버 설정
+    new Setting(containerEl).setName(t.mcpServers).setHeading();
 
     new Setting(containerEl)
       .setName(t.mcpManage)
@@ -1324,6 +1477,135 @@ export class GeminiSettingTab extends PluginSettingTab {
         cls: "setting-item-description ba-mcp-status-list",
       });
     }
+
+    // MCP 도구 타임아웃 (MCP 서버 관리 아래에 배치, 숫자 입력 1~60초)
+    new Setting(containerEl)
+      .setName(t.mcpTimeout)
+      .setDesc(t.mcpTimeoutDesc)
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.inputEl.min = "1";
+        text.inputEl.max = "60";
+        text.setValue(String(this.plugin.settings.mcpTimeout));
+        text.onChange(async (value) => {
+          const parsed = parseInt(value, 10);
+          if (!Number.isFinite(parsed)) return; // 빈/잘못된 입력은 무시
+          const clamped = Math.max(1, Math.min(60, parsed));
+          this.plugin.settings.mcpTimeout = clamped;
+          await this.plugin.saveSettings();
+          // 실행 중인 MCP 서버에 즉시 반영
+          this.plugin.mcpManager.setTimeout(clamped);
+          // 범위를 벗어난 입력은 보정된 값으로 표시 갱신
+          if (clamped !== parsed) text.setValue(String(clamped));
+        });
+      });
+
+    // 추천 플러그인 설치 안내 (설정 화면 맨 아래로 이동)
+    new Setting(containerEl).setName(t.recommendedPlugins).setHeading();
+
+    const codeStylerSetting = new Setting(containerEl)
+      .setName(t.codeStylerInstall)
+      .setDesc(t.codeStylerInfo);
+    codeStylerSetting.addButton((btn) =>
+      btn.setButtonText(t.codeStylerInstall).onClick(() => {
+        window.open("obsidian://show-plugin?id=code-styler");
+      })
+    );
+
+    const tasksSetting = new Setting(containerEl)
+      .setName(t.todoTasksInstall)
+      .setDesc(t.todoTasksInfo);
+    tasksSetting.addButton((btn) =>
+      btn.setButtonText(t.todoTasksInstall).onClick(() => {
+        window.open("obsidian://show-plugin?id=obsidian-tasks-plugin");
+      })
+    );
+  }
+
+  // base URL 입력 설정 추가 (OpenAI/Ollama 공용)
+  // onChange에서 isValidBaseUrl로 형식을 검증하여, 유효하지 않으면 Notice 오류를 띄우고
+  // 값을 Settings_Store에 영속하지 않는다(이전 유효값 유지 — Req 2.10).
+  private addBaseUrlSetting(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    placeholder: string,
+    getCurrent: () => string,
+    setValue: (v: string) => void,
+    invalidMsg: string,
+  ): void {
+    new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addText((text) =>
+        text
+          .setPlaceholder(placeholder)
+          .setValue(getCurrent())
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            // 형식 검증 실패 시: 영속하지 않고 이전 유효값 유지 (Req 2.10)
+            if (!isValidBaseUrl(trimmed)) {
+              new Notice(invalidMsg);
+              return;
+            }
+            setValue(trimmed);
+            await this.plugin.saveSettings();
+            // base URL 변경 시 모델 목록 재로드 예약
+            this.scheduleModelReload();
+          })
+      );
+  }
+
+  // 공급자 모델 드롭다운 추가 (채팅/임베딩 공용)
+  // 기존 채팅 드롭다운 패턴 재사용: 현재값을 기본 옵션으로 추가 → listModels(kind) 결과로 채움
+  // → 실패/빈 목록 시 현재값 유지(Req 7.9, 12.4), 정상 목록이나 현재 ID 미존재 시에도 현재값 유지(Req 7.9.1)
+  private addProviderModelDropdown(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    getCurrent: () => string,
+    setValue: (v: string) => void,
+    kind: "chat" | "embedding",
+  ): void {
+    new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addDropdown((dropdown) => {
+        // 현재 설정값을 기본 옵션으로 추가
+        const current = getCurrent();
+        if (current) {
+          dropdown.addOption(current, current);
+        }
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          setValue(value);
+          await this.plugin.saveSettings();
+        });
+        // 비동기로 모델 목록 로드 후 드롭다운 갱신
+        (async () => {
+          try {
+            const models = await this.plugin.aiClient.listModels(kind);
+            // 빈 목록이면 현재값 유지 (Req 7.9, 12.4)
+            if (!models || models.length === 0) {
+              return;
+            }
+            dropdown.selectEl.empty();
+            const cur = getCurrent();
+            let hasCurrent = false;
+            for (const m of models) {
+              dropdown.addOption(m.modelId, m.modelName || m.modelId);
+              if (m.modelId === cur) hasCurrent = true;
+            }
+            // 정상 목록이지만 현재 설정 ID가 목록에 없으면 현재값을 옵션으로 유지 (Req 7.9.1)
+            if (cur && !hasCurrent) {
+              dropdown.addOption(cur, cur);
+            }
+            dropdown.setValue(cur);
+          } catch {
+            // 모델 로드 실패 시 현재값 유지 (Req 7.9, 12.4)
+          }
+        })();
+      });
   }
 
   // 비밀 입력 필드 옆에 눈 아이콘 토글 버튼 추가
@@ -1393,6 +1675,169 @@ class SystemPromptModal extends Modal {
     });
 
     setTimeout(() => textarea.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+// 커스텀 스킬 추가/편집 모달 (A안)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+class SkillEditModal extends Modal {
+  private plugin: GeminiAssistantPlugin;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private t: Record<string, any>;
+  private existing: CustomSkill | null;
+  private onSaved: () => void;
+
+  constructor(
+    app: App,
+    plugin: GeminiAssistantPlugin,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    t: Record<string, any>,
+    existing: CustomSkill | null,
+    onSaved: () => void
+  ) {
+    super(app);
+    this.plugin = plugin;
+    this.t = t;
+    this.existing = existing;
+    this.onSaved = onSaved;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass("ba-sysprompt-modal");
+
+    contentEl.createEl("h2", {
+      text: this.existing ? this.t.skillModalEdit : this.t.skillModalNew,
+    });
+
+    // 이름 입력
+    contentEl.createEl("label", { text: this.t.skillNameLabel, cls: "ba-about-desc" });
+    const nameInput = contentEl.createEl("input", {
+      attr: { type: "text", placeholder: this.t.skillNamePlaceholder },
+    });
+    nameInput.style.width = "100%";
+    nameInput.value = this.existing?.name ?? "";
+
+    // 설명 입력 (어떤 일을 하는지) — 세로로 조금 넉넉하게
+    contentEl.createEl("label", { text: this.t.skillDescLabel, cls: "ba-about-desc" });
+    const descInput = contentEl.createEl("textarea", {
+      attr: { placeholder: this.t.skillDescPlaceholder },
+    });
+    descInput.style.width = "100%";
+    descInput.rows = 4;
+    descInput.value = this.existing?.description ?? "";
+
+    // "AI로 생성하기" 버튼 — 입력창과 내용 영역 사이에 위아래 여백을 두어 분리
+    const genRow = contentEl.createDiv();
+    genRow.style.display = "flex";
+    genRow.style.justifyContent = "center";
+    genRow.style.margin = "20px 0";
+    const genBtn = genRow.createEl("button", { text: this.t.skillGenerate });
+
+    // 내용(마크다운) 라벨 — 좌측 끝에 두되 살짝 안쪽으로 들여쓰기
+    const contentLabel = contentEl.createEl("label", {
+      text: this.t.skillContentLabel,
+      cls: "ba-about-desc",
+    });
+    contentLabel.style.display = "block";
+    contentLabel.style.paddingLeft = "4px";
+    contentLabel.style.marginBottom = "6px";
+
+    const textarea = contentEl.createEl("textarea", {
+      cls: "ba-sysprompt-textarea",
+      attr: { placeholder: this.t.skillContentPlaceholder },
+    });
+    textarea.value = this.existing?.content ?? "";
+    textarea.rows = 14;
+
+    // 생성하기: 이름 + 설명(어떤 일을 하는지)을 LLM에 전달해 스킬 본문(마크다운)을 작성
+    genBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      const purpose = descInput.value.trim();
+      if (!name || !purpose) {
+        new Notice(this.t.skillGenerateNeedInput);
+        return;
+      }
+      genBtn.disabled = true;
+      const label = genBtn.textContent;
+      genBtn.textContent = this.t.skillGenerating;
+      try {
+        const sys =
+          "You are an expert prompt engineer. Write a concise, well-structured 'skill' instruction document in Markdown that will be injected into an AI assistant's system prompt to guide its behavior for a specific task. " +
+          "Output ONLY the Markdown content with no preamble and no surrounding code fences. " +
+          "Write in the same language as the user's input. " +
+          "Include: an H1 title, a short 'purpose / when to apply' section, concrete actionable rules or steps, and 1-2 brief examples if helpful. Keep it focused and not overly long.";
+        const user = `Skill name: ${name}\nWhat this skill should do:\n${purpose}`;
+        const result = await this.plugin.aiClient.converseLight(user, sys, 2000);
+        textarea.value = (result.text || "").trim();
+      } catch (e) {
+        new Notice(
+          `${this.t.skillGenerateFailed} ${e instanceof Error ? e.message : String(e)}`
+        );
+      } finally {
+        genBtn.disabled = false;
+        if (label) genBtn.textContent = label;
+      }
+    });
+
+    const btnRow = contentEl.createDiv({ cls: "ba-sysprompt-btn-row" });
+    const cancelBtn = btnRow.createEl("button", { text: this.t.skillCancel });
+    cancelBtn.addEventListener("click", () => this.close());
+
+    const saveBtn = btnRow.createEl("button", { text: this.t.skillSave, cls: "mod-cta" });
+    saveBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      const content = textarea.value.trim();
+      if (!name || !content) {
+        new Notice(this.t.skillNameRequired);
+        return;
+      }
+      if (this.existing) {
+        // 편집: 기존 항목 갱신 (id/enabled 유지)
+        this.existing.name = name;
+        this.existing.description = descInput.value.trim();
+        this.existing.content = content;
+      } else {
+        // 신규 추가: 고유 id 생성 후 enabled=true로 추가
+        const id = this.makeUniqueId(name);
+        this.plugin.settings.customSkills.push({
+          id,
+          name,
+          description: descInput.value.trim(),
+          content,
+          enabled: true,
+        });
+      }
+      await this.plugin.saveSettings();
+      this.close();
+      this.onSaved();
+    });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  // 이름에서 slug형 고유 id를 생성한다(중복 시 -2, -3 ... 접미사).
+  private makeUniqueId(name: string): string {
+    const base =
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9가-힣]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "skill";
+    const existingIds = new Set([
+      ...SKILLS.map((s) => s.id),
+      ...this.plugin.settings.customSkills.map((s) => s.id),
+    ]);
+    let id = base;
+    let n = 2;
+    while (existingIds.has(id)) {
+      id = `${base}-${n++}`;
+    }
+    return id;
   }
 
   onClose(): void {

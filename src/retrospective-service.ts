@@ -59,36 +59,36 @@ export function buildTodoPath(todoFolder: string, date?: Date): string {
 // ============================================
 
 /**
- * 오늘자 To-Do 파일을 새 Date_Folder 구조 우선, Legacy 평면 구조 폴백으로 해석한다.
+ * 오늘자 To-Do 파일을 평면 신규 구조 우선, Legacy 평면 구조 폴백으로 해석한다.
  *
  * 처리 순서:
- * 1) 새 구조 `buildTodoDocPath(plannerFolder, date)` 가 TFile로 존재하면 반환 (Req 9.1)
- * 2) 없으면 Legacy `buildTodoPath(legacyFolder, date)` 가 TFile로 존재하면 반환 (Req 9.2)
- * 3) 둘 다 없으면 null 반환 (Req 9.3 → 호출부에서 사용자 알림)
+ * 1) 평면 신규 `buildTodoDocPath(folder, date)`(= `{folder}/YYYY-MM-DD To-Do.md`)가 TFile로 존재하면 반환
+ * 2) 없으면 Legacy `buildTodoPath(legacyFolder, date)`(= `{folder}/YYYY-MM-DD.md`)가 TFile로 존재하면 반환
+ * 3) 둘 다 없으면 null 반환 (호출부에서 사용자 알림)
  *
  * @param app - Obsidian App 인스턴스 (볼트 접근용)
- * @param plannerFolder - 새 구조 Planner 루트 폴더 경로
+ * @param todoFolder - 평면 신규 To-Do 폴더 경로
  * @param legacyFolder - Legacy 평면 구조 To-Do 폴더 경로
  * @param date - 대상 날짜 (오늘)
  * @returns 해석된 To-Do 파일(TFile) 또는 null
  */
 export function resolveTodayTodoFile(
   app: App,
-  plannerFolder: string,
+  todoFolder: string,
   legacyFolder: string,
   date: Date,
 ): TFile | null {
-  // 1. 새 구조 우선 탐색 (Req 9.1)
-  const newPath = buildTodoDocPath(plannerFolder, date);
+  // 1. 평면 신규 구조 우선 탐색
+  const newPath = buildTodoDocPath(todoFolder, date);
   const newFile = app.vault.getAbstractFileByPath(newPath);
   if (newFile instanceof TFile) return newFile;
 
-  // 2. Legacy 평면 구조 폴백 (Req 9.2)
+  // 2. Legacy 평면 구조 폴백
   const legacyPath = buildTodoPath(legacyFolder, date);
   const legacyFile = app.vault.getAbstractFileByPath(legacyPath);
   if (legacyFile instanceof TFile) return legacyFile;
 
-  // 3. 둘 다 없음 (Req 9.3)
+  // 3. 둘 다 없음
   return null;
 }
 
@@ -329,12 +329,12 @@ export async function generateRetrospective(
 ): Promise<RetrospectiveResult> {
   const { app, settings, aiClient } = deps;
 
-  // 1. 오늘자 To-Do 파일 해석 (새 구조 우선, Legacy 폴백)
+  // 1. 오늘자 To-Do 파일 해석 (평면 신규 우선, Legacy 평면 폴백)
   const now = new Date();
   const dateStr = formatDateStr(now);
   const todoFile = resolveTodayTodoFile(
     app,
-    settings.plannerFolder,
+    settings.todoFolder,
     settings.todoFolder,
     now,
   );
@@ -355,7 +355,7 @@ export async function generateRetrospective(
     const filteredFiles = collectTodayFiles(
       allFiles,
       todoPath,
-      settings.archiveCleanFolder,
+      settings.todoArchiveFolder,
       dateStr,
     );
 
