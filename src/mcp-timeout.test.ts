@@ -3,8 +3,8 @@ import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("MCP 타임아웃 설정", () => {
-  it("DEFAULT_SETTINGS에 mcpTimeout 기본값이 30이다", () => {
-    expect(DEFAULT_SETTINGS.mcpTimeout).toBe(30);
+  it("DEFAULT_SETTINGS에 mcpTimeout 기본값이 10이다", () => {
+    expect(DEFAULT_SETTINGS.mcpTimeout).toBe(10);
   });
 
   it("mcpTimeout이 BedrockAssistantSettings 인터페이스에 존재한다", () => {

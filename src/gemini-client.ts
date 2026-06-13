@@ -7,8 +7,9 @@ import type {
   ContentBlock,
   ModelInfo,
 } from "./types";
-import { buildSkillsPrompt } from "./skills";
 import { isAbortError } from "./abort-utils";
+import { supportsTemperature } from "./provider-utils";
+import { buildSystemPrompt } from "./system-prompt";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -26,7 +27,9 @@ export class GeminiClient {
   }
 
   // 사용 가능한 모델 목록 반환
-  async listModels(): Promise<ModelInfo[]> {
+  // kind 인자는 IAiClient 인터페이스 호환을 위한 것이며, Gemini는 본 기능의 임베딩
+  // 드롭다운 범위 밖이므로 kind 값과 무관하게 항상 채팅 모델만 반환한다(기존 동작 보존).
+  async listModels(_kind: "chat" | "embedding" = "chat"): Promise<ModelInfo[]> {
     try {
       const url = `${GEMINI_BASE}/models?key=${this.settings.geminiApiKey}`;
       const resp = await requestUrl({ url, method: "GET" });
@@ -49,9 +52,19 @@ export class GeminiClient {
         });
       }
 
-      // gemini 모델만 필터하고 정렬 (최신 버전 우선)
+      // Gemini 3.x 채팅 모델(pro / flash / flash-lite)만 남긴다.
+      // 이미지 생성(nano banana, *-image), 오디오/TTS/live, 임베딩 등 비채팅 모델은 제외한다.
+      const NON_CHAT = /(image|nano|imagen|tts|audio|live|vision|embedding|aqa|learnlm)/;
       return models
-        .filter((m) => m.modelId.startsWith("gemini-"))
+        .filter((m) => {
+          const id = m.modelId;
+          // 3.x 계열만 (gemini-3-...)
+          if (!/^gemini-3/.test(id)) return false;
+          // 이미지/오디오/임베딩 등 비채팅 모델 제외
+          if (NON_CHAT.test(id)) return false;
+          // pro / flash / flash-lite 계열만 (flash-lite는 flash에 포함됨)
+          return /(pro|flash)/.test(id);
+        })
         .sort((a, b) => b.modelId.localeCompare(a.modelId));
     } catch (e) {
       console.error("모델 목록 조회 실패:", e);
@@ -162,25 +175,39 @@ export class GeminiClient {
     messages: ConverseMessage[],
     tools?: ToolDefinition[],
     onTextDelta?: (text: string) => void,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    webSearch = false
   ): Promise<ConverseResult> {
-    const skillsPrompt = buildSkillsPrompt(this.settings.enabledSkills || []);
-    const fullSystemPrompt = this.settings.systemPrompt + skillsPrompt;
+    const fullSystemPrompt = buildSystemPrompt(this.settings);
 
     const contents = this.convertMessages(messages);
+    const generationConfig: Record<string, unknown> = {
+      maxOutputTokens: this.settings.maxTokens,
+    };
+    // Gemini 3 계열은 temperature 기본값(1.0) 유지 권장 → 생략
+    if (supportsTemperature("gemini", this.settings.chatModel)) {
+      generationConfig.temperature = this.settings.temperature;
+    }
     const body: Record<string, unknown> = {
       contents,
       systemInstruction: { parts: [{ text: fullSystemPrompt }] },
-      generationConfig: {
-        maxOutputTokens: this.settings.maxTokens,
-        temperature: this.settings.temperature,
-      },
+      generationConfig,
     };
 
+    // 도구 목록 구성: 함수 도구(custom tools)와 내장 google_search를 함께 전달할 수 있다.
+    // (Gemini는 built-in 도구와 function calling 조합을 단일 요청에서 지원한다.)
+    const toolList: unknown[] = [];
     if (tools && tools.length > 0) {
-      body.tools = this.convertTools(tools);
+      toolList.push(...this.convertTools(tools));
       // 도구 호출 모드를 AUTO로 설정하여 적극적으로 function calling 수행
       body.tool_config = { function_calling_config: { mode: "AUTO" } };
+    }
+    if (webSearch) {
+      // 네이티브 웹서치(Google Search grounding) 활성화
+      toolList.push({ google_search: {} });
+    }
+    if (toolList.length > 0) {
+      body.tools = toolList;
     }
 
     const model = this.settings.chatModel;
@@ -416,6 +443,12 @@ export class GeminiClient {
     const model = this.settings.chatModel;
     const url = `${GEMINI_BASE}/models/${model}:generateContent?key=${this.settings.geminiApiKey}`;
 
+    // Gemini 3 계열은 temperature 기본값 유지 권장 → 생략
+    const lightGenConfig: Record<string, unknown> = { maxOutputTokens: maxTokens };
+    if (supportsTemperature("gemini", model)) {
+      lightGenConfig.temperature = 0;
+    }
+
     const resp = await requestUrl({
       url,
       method: "POST",
@@ -423,7 +456,7 @@ export class GeminiClient {
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: userText }] }],
         systemInstruction: { parts: [{ text: systemText }] },
-        generationConfig: { maxOutputTokens: maxTokens, temperature: 0 },
+        generationConfig: lightGenConfig,
       }),
     });
 

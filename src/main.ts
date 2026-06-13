@@ -17,12 +17,40 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
+import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
 const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
 const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
+
+// 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa + time).
+// 설정 파일이 없을 때 편집창에 미리 채워주는 용도이며, 저장 전까지는 자동 연결되지 않는다.
+// API 키가 필요한 서버는 "your api key" 플레이스홀더를 실제 키로 교체해야 한다.
+const DEFAULT_MCP_CONFIG = {
+  mcpServers: {
+    fetch: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "mcp/fetch"],
+      autoApprove: ["fetch"],
+    },
+    "brave-search": {
+      command: "docker",
+      args: ["run", "-i", "--rm", "-e", "BRAVE_API_KEY", "docker.io/mcp/brave-search"],
+      env: { BRAVE_API_KEY: "your api key" },
+    },
+    exa: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "-e", "EXA_API_KEY", "mcp/exa"],
+      env: { EXA_API_KEY: "your api key" },
+    },
+    time: {
+      command: "docker",
+      args: ["run", "-i", "--rm", "mcp/time"],
+    },
+  },
+};
 
 export default class GeminiAssistantPlugin extends Plugin {
   settings!: GeminiAssistantSettings;
@@ -188,6 +216,16 @@ export default class GeminiAssistantPlugin extends Plugin {
     const migrated = migratePlannerSettings(loaded ?? {});
     const raw = Object.assign({}, DEFAULT_SETTINGS, migrated);
 
+    // 마이그레이션: 시스템 프롬프트는 이제 내장 기본 프롬프트(BASE_SYSTEM_PROMPT)를 항상 사용하고,
+    // 설정의 systemPrompt는 "추가 지침"으로만 동작한다. 기존 사용자가 과거 기본 프롬프트를
+    // 그대로 저장해 둔 경우(직접 커스터마이징한 적 없음) 빈 문자열로 초기화하여 중복을 방지한다.
+    if (
+      typeof raw.systemPrompt === "string" &&
+      LEGACY_DEFAULT_SYSTEM_PROMPTS.includes(raw.systemPrompt.trim())
+    ) {
+      raw.systemPrompt = "";
+    }
+
     // 마이그레이션: data.json에 암호화된 키가 남아있으면 로컬로 이전 후 제거
     let hasMigratedKeys = false;
     for (const field of SENSITIVE_FIELDS) {
@@ -251,15 +289,21 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.indexer.client = this.aiClient;
   }
 
-  /** 양쪽 백엔드의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
+  /** 2개 백엔드(bedrock/gemini)의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
   private registerBrandingIcons(): void {
-    const bedrock = getBranding("bedrock");
-    const gemini = getBranding("gemini");
-    if (bedrock.icon.svg) addIcon(bedrock.icon.id, bedrock.icon.svg);
-    if (gemini.icon.svg) addIcon(gemini.icon.id, gemini.icon.svg);
+    // bedrock/gemini 두 백엔드 아이콘을 모두 addIcon으로 등록한다.
+    // (하나라도 누락되면 해당 백엔드로 전환 시 아이콘이 표시되지 않는다)
+    const backends: GeminiAssistantSettings["aiBackend"][] = [
+      "bedrock",
+      "gemini",
+    ];
+    for (const backend of backends) {
+      const { icon } = getBranding(backend);
+      if (icon.svg) addIcon(icon.id, icon.svg);
+    }
   }
 
-  /** 백엔드 전환 후 리본 아이콘, 뷰 탭 등 UI 브랜딩을 갱신한다 */
+  /** 백엔드 전환 후 리본 아이콘, 뷰 탭/헤더 등 UI 브랜딩을 갱신한다 */
   refreshBranding(): void {
     // 리본 아이콘 갱신
     if (this.ribbonIconEl) {
@@ -267,10 +311,12 @@ export default class GeminiAssistantPlugin extends Plugin {
       setIcon(this.ribbonIconEl, BRANDING.icon.id);
       this.ribbonIconEl.setAttribute("aria-label", BRANDING.displayName);
     }
-    // 열려있는 뷰의 탭 아이콘/타이틀 갱신
+    // 열려있는 뷰의 헤더(타이틀 아이콘/이름)를 다시 렌더하고 탭 아이콘을 갱신한다.
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     for (const leaf of leaves) {
-      // Obsidian의 leaf 탭 UI를 갱신하기 위해 뷰 상태를 다시 설정
+      // 뷰 내부 헤더(ba-title-icon 등)는 rebuildUI(=onOpen 재실행)로 새 BRANDING을 반영한다.
+      (leaf.view as any).rebuildUI?.();
+      // 탭 헤더 아이콘/타이틀(getIcon/getDisplayText)도 갱신 시도 (미지원 시 no-op)
       (leaf as any).updateHeader?.();
     }
   }
@@ -560,7 +606,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     } catch {
       // 파일 없으면 기본값
     }
-    return JSON.stringify({ mcpServers: {} }, null, 2);
+    return JSON.stringify(DEFAULT_MCP_CONFIG, null, 2);
   }
 
 

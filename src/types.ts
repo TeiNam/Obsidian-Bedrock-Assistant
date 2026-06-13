@@ -1,3 +1,17 @@
+// 사용자 정의(커스텀) 스킬. 설정(data.json)에 저장되며 토글로 활성화한다.
+export interface CustomSkill {
+  /** 고유 ID (소문자/숫자/하이픈) */
+  id: string;
+  /** 표시 이름 */
+  name: string;
+  /** 짧은 설명 */
+  description: string;
+  /** 스킬 본문 (마크다운, 시스템 프롬프트에 주입됨) */
+  content: string;
+  /** 활성화 여부 */
+  enabled: boolean;
+}
+
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {
   language: "en" | "ko" | "ja";
@@ -11,6 +25,8 @@ export interface GeminiAssistantSettings {
   welcomeGreeting: string;
   autoAttachActiveNote: boolean;
   enabledSkills: string[];
+  // 사용자가 직접 추가한 커스텀 스킬 목록 (설정에 저장)
+  customSkills: CustomSkill[];
   // 대화 히스토리 저장 여부
   persistChat: boolean;
   // 템플릿 저장 폴더 경로
@@ -25,9 +41,9 @@ export interface GeminiAssistantSettings {
   todoArchiveFolder: string;
   // To-Do 아카이브 기준 일수
   todoArchiveDays: number;
-  // Daily Planner 루트 폴더 경로 (날짜 폴더를 담는 루트, 신규)
+  // Daily Planner 루트 폴더 경로 (Legacy, 미사용 — 하위호환 유지)
   plannerFolder: string;
-  // TimeBox 템플릿 파일명 (템플릿 폴더 내, .md 제외, 신규)
+  // TimeBox 템플릿 파일명 (Legacy, 미사용 — 하위호환 유지)
   timeboxTemplateName: string;
   // 파괴적 도구 실행 전 확인 모달 표시 여부
   confirmToolExecution: boolean;
@@ -69,14 +85,15 @@ export interface GeminiAssistantSettings {
 export interface IAiClient {
   /** 설정 변경 시 클라이언트 내부 설정 업데이트 */
   updateSettings(settings: GeminiAssistantSettings): void;
-  /** 사용 가능한 모델 목록 반환 */
-  listModels(): Promise<ModelInfo[]>;
+  /** 사용 가능한 모델 목록 반환. kind로 채팅/임베딩 목록을 구분 (optional, 기본 "chat", 하위 호환) */
+  listModels(kind?: "chat" | "embedding"): Promise<ModelInfo[]>;
   /** 스트리밍 채팅 호출 */
   converse(
     messages: ConverseMessage[],
     tools: ToolDefinition[],
     onTextDelta?: (delta: string) => void,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    webSearch?: boolean
   ): Promise<ConverseResult>;
   /** 텍스트 임베딩 생성 */
   getEmbedding(text: string): Promise<number[]>;
@@ -95,11 +112,13 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   embeddingModel: "text-embedding-004",
   maxTokens: 32000,
   temperature: 0.1,
-  systemPrompt:
-    "You are a helpful assistant embedded in Obsidian. You can help with note-taking, searching the vault, and answering questions based on the user's notes. Respond in the same language the user uses. When writing code blocks, always specify the programming language (e.g. ```python, ```javascript, ```sql) so that syntax highlighting and Code Styler plugin can render them properly.",
+  systemPrompt: "",
   welcomeGreeting: "",
   autoAttachActiveNote: true,
-  enabledSkills: ["obsidian-markdown", "obsidian-bases", "json-canvas"],
+  // 내장 스킬은 항상 활성화되므로 기본 enabledSkills는 비워둔다(커스텀 스킬 id만 보관).
+  enabledSkills: [],
+  // 커스텀 스킬 기본값(비어 있음). 사용자가 설정에서 추가한다.
+  customSkills: [],
   persistChat: true,
   templateFolder: "Templates",
   chatFontSize: 14,
@@ -110,7 +129,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   plannerFolder: "Daily Planner",
   timeboxTemplateName: "TimeBox Daily",
   confirmToolExecution: false,
-  mcpTimeout: 30,
+  mcpTimeout: 10,
   webClipFolder: "WebClips",
   webClipModel: "gemini-3.1-flash-lite",
   archiveCleanDays: 90,
@@ -121,7 +140,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   awsSecretAccessKey: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
-  bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
+  bedrockEmbeddingModel: "",
   // Graph RAG 검색 설정 기본값
   graphTraversalDepth: 1,
   chunkMaxSize: 2000,

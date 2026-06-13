@@ -10,7 +10,7 @@ import { needsToolConfirmation } from "./tool-confirm-utils";
 import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
-import { createTodoNote, createTimeboxNote } from "./todo-manager";
+import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
 import { isRetrospectiveCommand } from "./retrospective-command";
@@ -56,9 +56,6 @@ export class ChatView extends ItemView {
   // 웹 서치 토글
   private webSearchEnabled = false;
   private webSearchBtn: HTMLElement | null = null;
-
-  // TimeBox 중복 생성 방지 가드(Req 3.12): 진행 중인 날짜 키 집합
-  private timeboxInFlight: Set<string> = new Set();
 
   // persistHistory 중복 호출 방지 가드 (B2 race condition 수정)
   private persistPending = false;
@@ -164,11 +161,6 @@ export class ChatView extends ItemView {
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
     this.registerDomEvent(todoBtn, "click", () => this.handleCreateTodoNote());
-
-    // TimeBox 생성 버튼 (시계 아이콘, Timebox_Trigger)
-    const timeboxBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTimebox } });
-    setIcon(timeboxBtn, "clock");
-    this.registerDomEvent(timeboxBtn, "click", () => this.handleCreateTimeboxNote());
 
     // 태그 생성 버튼
     const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
@@ -635,7 +627,8 @@ export class ChatView extends ItemView {
                 this.scrollToBottom();
               });
             },
-            this.abortController.signal
+            this.abortController.signal,
+            this.webSearchEnabled
           );
 
           // 스트리밍 완료 후 마크다운으로 최종 렌더링 (스트리밍 wrapper만 교체)
@@ -1120,25 +1113,36 @@ export class ChatView extends ItemView {
   // 모델 선택
   // ============================================
 
-  // 현재 백엔드에 맞는 채팅 모델 ID를 반환
-  private get activeChatModel(): string {
-    return this.plugin.settings.aiBackend === "bedrock"
-      ? this.plugin.settings.bedrockChatModel
-      : this.plugin.settings.chatModel;
+  // 현재 백엔드에 해당하는 채팅 모델 ID를 반환한다.
+  // 모델 선택 박스가 백엔드별 올바른 설정 필드를 읽도록 한다(bedrock/gemini 2종).
+  private getActiveChatModel(): string {
+    const s = this.plugin.settings;
+    switch (s.aiBackend) {
+      case "bedrock":
+        return s.bedrockChatModel;
+      case "gemini":
+      default:
+        return s.chatModel;
+    }
   }
 
-  // 현재 백엔드에 맞는 채팅 모델 ID를 설정
-  private set activeChatModel(modelId: string) {
-    if (this.plugin.settings.aiBackend === "bedrock") {
-      this.plugin.settings.bedrockChatModel = modelId;
-    } else {
-      this.plugin.settings.chatModel = modelId;
+  // 현재 백엔드에 해당하는 채팅 모델 ID를 설정한다.
+  private setActiveChatModel(modelId: string): void {
+    const s = this.plugin.settings;
+    switch (s.aiBackend) {
+      case "bedrock":
+        s.bedrockChatModel = modelId;
+        break;
+      case "gemini":
+      default:
+        s.chatModel = modelId;
+        break;
     }
   }
 
   // 모델 라벨 업데이트 (현재 선택된 모델 표시)
   private updateModelLabel(): void {
-    const modelId = this.activeChatModel;
+    const modelId = this.getActiveChatModel();
     const displayName = this.getModelDisplayName(modelId);
     this.modelLabelEl.setText(displayName);
   }
@@ -1203,7 +1207,7 @@ export class ChatView extends ItemView {
       // 인라인 드롭다운 생성 (위로 열림)
       this.modelDropdownEl = this.modelSelectorEl.createDiv({ cls: "ba-model-dropdown" });
 
-      const currentModelId = this.activeChatModel;
+      const currentModelId = this.getActiveChatModel();
       for (const model of this.cachedModels) {
         const item = this.modelDropdownEl.createDiv({ cls: "ba-model-dropdown-item" });
         if (model.modelId === currentModelId) {
@@ -1215,7 +1219,7 @@ export class ChatView extends ItemView {
           item.createSpan({ cls: "ba-model-dropdown-check", text: "✓" });
         }
         item.addEventListener("click", async () => {
-          this.activeChatModel = model.modelId;
+          this.setActiveChatModel(model.modelId);
           await this.plugin.saveSettings();
           this.updateModelLabel();
           this.closeModelDropdown();
@@ -1291,23 +1295,6 @@ export class ChatView extends ItemView {
     await createTodoNote(this.app, this.plugin, this.t);
   }
 
-  // 오늘 날짜로 TimeBox 노트 생성 (todo-manager.ts로 분리)
-  private async handleCreateTimeboxNote(): Promise<void> {
-    // 중복 생성 방지(Req 3.12): 같은 날짜 키가 진행 중이면 무시
-    const now = new Date();
-    const key = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-    if (this.timeboxInFlight.has(key)) {
-      new Notice(this.t.timeboxInProgress);
-      return;
-    }
-    this.timeboxInFlight.add(key);
-    try {
-      await createTimeboxNote(this.app, this.plugin, this.t);
-    } finally {
-      // 성공/실패와 무관하게 진행 중 키를 해제하여 재시도를 허용한다
-      this.timeboxInFlight.delete(key);
-    }
-  }
   // 현재 노트에 AI 기반 태그 자동 생성
   private async generateTags(): Promise<void> {
     // 현재 열린 마크다운 노트 찾기
@@ -1423,7 +1410,7 @@ export class ChatView extends ItemView {
       if (!this.contextRingEl || !this.contextLabelEl) return;
 
       // 모델별 컨텍스트 윈도우 크기 (토큰)
-      const modelId = this.activeChatModel;
+      const modelId = this.getActiveChatModel();
       const contextWindow = this.getModelContextWindow();
 
       // 현재 사용 중인 토큰 추정
@@ -1513,8 +1500,34 @@ export class ChatView extends ItemView {
     await this.onOpen();
   }
 
+  // 연결된 MCP 중 웹 서치용(fetch/exa/brave) 도구가 하나라도 있는지 확인
+  private hasWebSearchMcp(): boolean {
+    const KEYWORDS = ["fetch", "exa", "brave"];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools = (this.plugin.mcpManager?.getAllTools?.() ?? []) as any[];
+    return tools.some((t) => {
+      const hay = `${t._mcpServer ?? ""} ${t._mcpToolName ?? ""} ${t.name ?? ""}`.toLowerCase();
+      return KEYWORDS.some((k) => hay.includes(k));
+    });
+  }
+
+  // 현재 백엔드가 네이티브 웹서치를 지원하는지 (Gemini = Google Search grounding)
+  private backendHasNativeWebSearch(): boolean {
+    return this.plugin.settings.aiBackend === "gemini";
+  }
+
   // 웹 서치 토글
   private toggleWebSearch(): void {
+    // 켜려는 경우: 네이티브 웹서치(Gemini)도, 웹서치용 MCP(fetch/exa/brave)도 없으면
+    // 알림 후 활성화하지 않는다.
+    if (
+      !this.webSearchEnabled &&
+      !this.backendHasNativeWebSearch() &&
+      !this.hasWebSearchMcp()
+    ) {
+      new Notice(this.t.webSearchNoMcp);
+      return;
+    }
     this.webSearchEnabled = !this.webSearchEnabled;
     if (this.webSearchBtn) {
       if (this.webSearchEnabled) {

@@ -1,6 +1,6 @@
 // Daily Planner 경로·명명·위키링크 순수 모듈
 // ============================================
-// 날짜 문자열, 날짜 폴더 경로, To-Do/TimeBox 문서명, 위키 링크의
+// 날짜 문자열, To-Do 문서명(평면 구조), 위키 링크의
 // 생성과 파싱을 담당하는 순수 함수 모음.
 // Obsidian 의존성은 normalizePath 하나만 사용하며, 모든 함수는 부수효과가 없다.
 // (fast-check 기반 속성 테스트가 가능하도록 부수효과 계층과 분리)
@@ -63,37 +63,17 @@ export function buildDateStr(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * 날짜 폴더 경로: "{plannerFolder}/YYYY-MM-DD" (normalizePath 적용).
- */
-export function buildDateFolder(plannerFolder: string, date: Date): string {
-  return normalizePath(`${plannerFolder}/${buildDateStr(date)}`);
-}
-
 /** To-Do 문서 basename: "YYYY-MM-DD To-Do" */
 export function buildTodoDocBasename(date: Date): string {
   return `${buildDateStr(date)} To-Do`;
 }
 
-/** TimeBox 문서 basename: "YYYY-MM-DD TimeBox" */
-export function buildTimeboxDocBasename(date: Date): string {
-  return `${buildDateStr(date)} TimeBox`;
-}
-
 /**
- * To-Do 문서 경로: "{plannerFolder}/YYYY-MM-DD/YYYY-MM-DD To-Do.md".
+ * To-Do 문서 경로(평면 구조): "{folder}/YYYY-MM-DD To-Do.md".
+ * 날짜 하위폴더 없이 To-Do 루트 폴더에 직접 저장한다.
  */
-export function buildTodoDocPath(plannerFolder: string, date: Date): string {
-  const dateStr = buildDateStr(date);
-  return normalizePath(`${plannerFolder}/${dateStr}/${buildTodoDocBasename(date)}.md`);
-}
-
-/**
- * TimeBox 문서 경로: "{plannerFolder}/YYYY-MM-DD/YYYY-MM-DD TimeBox.md".
- */
-export function buildTimeboxDocPath(plannerFolder: string, date: Date): string {
-  const dateStr = buildDateStr(date);
-  return normalizePath(`${plannerFolder}/${dateStr}/${buildTimeboxDocBasename(date)}.md`);
+export function buildTodoDocPath(folder: string, date: Date): string {
+  return normalizePath(`${folder}/${buildTodoDocBasename(date)}.md`);
 }
 
 // ============================================
@@ -123,11 +103,6 @@ export function parseLegacyBasename(basename: string): Date | null {
 /** To-Do를 가리키는 위키 링크: "[[YYYY-MM-DD To-Do]]" */
 export function buildTodoLink(date: Date): string {
   return `[[${buildTodoDocBasename(date)}]]`;
-}
-
-/** TimeBox를 가리키는 위키 링크: "[[YYYY-MM-DD TimeBox]]" */
-export function buildTimeboxLink(date: Date): string {
-  return `[[${buildTimeboxDocBasename(date)}]]`;
 }
 
 /**
@@ -163,37 +138,27 @@ function collectWikiLinkTargets(content: string): Set<string> {
 
 /**
  * 템플릿의 일반(generic) 위키 링크 토큰을 같은 날짜의 per-date 링크로 치환한다.
- *   "[[TimeBox Daily]]" → "[[YYYY-MM-DD TimeBox]]"
- *   "[[Daily To-Do]]"   → "[[YYYY-MM-DD To-Do]]"
- * 별칭(alias)이 있으면 보존한다: "[[TimeBox Daily|시간표]]" → "[[YYYY-MM-DD TimeBox|시간표]]".
+ *   "[[Daily To-Do]]" → "[[YYYY-MM-DD To-Do]]"
+ * 별칭(alias)이 있으면 보존한다: "[[Daily To-Do|할 일]]" → "[[YYYY-MM-DD To-Do|할 일]]".
  * 이미 per-date 링크이거나 일반 토큰이 없으면 원본을 그대로 반환한다(멱등).
+ *
+ * (TimeBox 기능 제거에 따라 To-Do 링크 지역화만 수행한다. 확정 To-Do 템플릿에는
+ *  위키링크가 없어 사실상 no-op이지만, 다른 호출/테스트 호환을 위해 함수는 유지한다.)
  */
 export function localizeTemplateLinks(
   content: string,
   date: Date,
-  todoTemplateName: string,
-  timeboxTemplateName: string
+  todoTemplateName: string
 ): string {
-  let result = content;
+  // 빈/공백 템플릿명은 건너뜀 (잘못된 정규식 구성 방지)
+  if (!todoTemplateName || todoTemplateName.trim().length === 0) return content;
 
-  // (일반 템플릿명 → per-date basename) 매핑 목록
-  const mappings: Array<{ templateName: string; perDate: string }> = [
-    { templateName: timeboxTemplateName, perDate: buildTimeboxDocBasename(date) },
-    { templateName: todoTemplateName, perDate: buildTodoDocBasename(date) },
-  ];
-
-  for (const { templateName, perDate } of mappings) {
-    // 빈/공백 템플릿명은 건너뜀 (잘못된 정규식 구성 방지)
-    if (!templateName || templateName.trim().length === 0) continue;
-
-    const escaped = escapeRegExp(templateName);
-    // [[<templateName>]] 또는 [[<templateName>|alias]] 형태만 매칭
-    // ']]' 로 닫히는 토큰만 매칭하므로 per-date 링크와는 충돌하지 않는다(멱등).
-    const re = new RegExp(`\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, "g");
-    result = result.replace(re, (_match, alias) => `[[${perDate}${alias ?? ""}]]`);
-  }
-
-  return result;
+  const perDate = buildTodoDocBasename(date);
+  const escaped = escapeRegExp(todoTemplateName);
+  // [[<templateName>]] 또는 [[<templateName>|alias]] 형태만 매칭
+  // ']]' 로 닫히는 토큰만 매칭하므로 per-date 링크와는 충돌하지 않는다(멱등).
+  const re = new RegExp(`\\[\\[${escaped}(\\|[^\\]]*)?\\]\\]`, "g");
+  return content.replace(re, (_match, alias) => `[[${perDate}${alias ?? ""}]]`);
 }
 
 /**

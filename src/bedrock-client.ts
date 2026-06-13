@@ -7,6 +7,7 @@ import {
 import {
   BedrockClient as BedrockControlClient,
   ListInferenceProfilesCommand,
+  ListFoundationModelsCommand,
 } from "@aws-sdk/client-bedrock";
 import type {
   GeminiAssistantSettings,
@@ -17,14 +18,15 @@ import type {
   ContentBlock,
   ModelInfo,
 } from "./types";
-import { buildSkillsPrompt } from "./skills";
+import { supportsTemperature } from "./provider-utils";
+import { buildSystemPrompt } from "./system-prompt";
 
 /**
  * temperature 파라미터를 지원하지 않는 모델 여부 확인
- * claude-opus-4 이상(anthropic.claude-opus-4-*)은 temperature deprecated
+ * Anthropic claude-opus-4 계열은 temperature 미지원(공통 판별 로직에 위임)
  */
 function isTemperatureDeprecated(modelId: string): boolean {
-  return /claude-opus-4/.test(modelId);
+  return !supportsTemperature("bedrock", modelId);
 }
 
 // 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)
@@ -76,7 +78,14 @@ export class BedrockClient implements IAiClient {
   }
 
   // 사용 가능한 모델 목록 반환 (Bedrock 추론 프로파일에서 최신 Claude 모델 조회)
-  async listModels(): Promise<ModelInfo[]> {
+  // 사용 가능한 모델 목록 반환.
+  //  - kind="chat"(기본): Bedrock 추론 프로파일에서 최신 Claude 채팅 모델 조회(기존 동작)
+  //  - kind="embedding": Bedrock 파운데이션 모델 중 텍스트 임베딩 모델만 조회
+  //    (예: amazon.titan-embed-text-v2:0). 임베딩 드롭다운이 채팅 모델을 보여주던 문제 해결.
+  async listModels(kind: "chat" | "embedding" = "chat"): Promise<ModelInfo[]> {
+    if (kind === "embedding") {
+      return this.listEmbeddingModels();
+    }
     try {
       const controlClient = this.createControlClient();
       const resp = await controlClient.send(
@@ -125,6 +134,38 @@ export class BedrockClient implements IAiClient {
     }
   }
 
+  // Bedrock 텍스트 임베딩 파운데이션 모델 목록 조회.
+  // ListFoundationModels를 outputModality=EMBEDDING으로 필터하고, 텍스트 입력을 지원하는
+  // 모델(예: amazon.titan-embed-text-v2:0, cohere.embed-*)만 ModelInfo로 매핑한다.
+  private async listEmbeddingModels(): Promise<ModelInfo[]> {
+    try {
+      const controlClient = this.createControlClient();
+      const resp = await controlClient.send(
+        new ListFoundationModelsCommand({ byOutputModality: "EMBEDDING" })
+      );
+
+      const summaries = resp.modelSummaries ?? [];
+      const models: ModelInfo[] = [];
+      for (const m of summaries) {
+        if (!m.modelId) continue;
+        // 텍스트 임베딩 모델만 노출(이미지 전용 임베딩 등 제외)
+        const inputs = m.inputModalities ?? [];
+        if (inputs.length > 0 && !inputs.includes("TEXT")) continue;
+
+        models.push({
+          modelId: m.modelId,
+          modelName: m.modelName || m.modelId,
+          provider: m.providerName || "Amazon",
+          isProfile: false,
+        });
+      }
+      return models;
+    } catch (e) {
+      console.error("Bedrock 임베딩 모델 목록 조회 실패:", e);
+      return [];
+    }
+  }
+
   // Bedrock 컨트롤 플레인 클라이언트 생성 (모델 목록 조회용)
   private createControlClient(): BedrockControlClient {
     const config = this.buildClientConfig();
@@ -136,8 +177,7 @@ export class BedrockClient implements IAiClient {
     messages: ConverseMessage[],
     tools?: ToolDefinition[]
   ): Record<string, unknown> {
-    const skillsPrompt = buildSkillsPrompt(this.settings.enabledSkills || []);
-    const fullSystemPrompt = this.settings.systemPrompt + skillsPrompt;
+    const fullSystemPrompt = buildSystemPrompt(this.settings);
 
     const input: Record<string, unknown> = {
       modelId: this.settings.bedrockChatModel,
@@ -318,13 +358,11 @@ export class BedrockClient implements IAiClient {
 
   // Titan 임베딩 생성
   async getEmbedding(text: string): Promise<number[]> {
-    // 임베딩 모델 ID가 비어있으면 기본값 사용
-    const modelId = this.settings.bedrockEmbeddingModel || "amazon.titan-embed-text-v2:0";
     // 텍스트 길이 제한 (Titan v2 최대 8192 토큰)
     const truncated = text.slice(0, 20000);
 
     const command = new InvokeModelCommand({
-      modelId,
+      modelId: this.settings.bedrockEmbeddingModel,
       contentType: "application/json",
       accept: "application/json",
       body: JSON.stringify({
