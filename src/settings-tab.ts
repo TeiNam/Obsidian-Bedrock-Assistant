@@ -2,7 +2,7 @@ import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFold
 import type GeminiAssistantPlugin from "./main";
 import type { CustomSkill } from "./types";
 import { SKILLS } from "./skills";
-import { BRANDING, updateBranding } from "./branding";
+import { BRANDING } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
 import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
@@ -26,22 +26,14 @@ const TODO_FOLDER_DEFAULT = "ToDo";
 export const I18N = {
   en: {
     title: BRANDING.settingsTitle.en,
-    pluginDesc: "An AI assistant sidebar to run your whole Obsidian vault. Pick your backend — AWS Bedrock or Google Gemini — then chat with AI, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools, all from within Obsidian.",
+    pluginDesc: "An AI assistant sidebar powered by AWS Bedrock to run your whole Obsidian vault — chat with AI, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools, all from within Obsidian.",
     readmeLabel: "📖 Documentation",
     readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
     languageDesc: "UI language for settings",
-    // AI 백엔드 선택
-    aiBackendLabel: "AI Backend",
-    aiBackendDesc: "Select AI backend to use",
     reindexNeeded:
       "Embedding model changed. The existing vault index uses a different embedding space, so search may return no results. Please re-index the vault.",
-    // Gemini 자격증명
-    awsAuth: "Gemini API",
-    apiKey: "Gemini API Key",
-    apiKeyDesc: "Your Gemini API key from Google AI Studio",
-    apiKeyPlaceholder: "Enter Gemini API key",
     // Bedrock 자격증명
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "AWS Access Key ID for Bedrock",
@@ -60,10 +52,6 @@ export const I18N = {
     // base URL 형식 오류 (Req 2.10)
     baseUrlInvalid: "Invalid base URL. It must start with http:// or https://",
     modelSettings: "Model Settings",
-    chatModel: "Chat Model",
-    chatModelDesc: "Gemini model ID",
-    embeddingModel: "Embedding Model",
-    embeddingModelDesc: "Gemini embedding model ID (used for vault document indexing)",
     genSettings: "Generation Settings",
     maxTokens: "Max Tokens",
     maxTokensDesc: "Maximum response tokens",
@@ -191,22 +179,14 @@ export const I18N = {
   },
   ko: {
     title: BRANDING.settingsTitle.ko,
-    pluginDesc: "옵시디언 볼트 전반을 AI로 다루는 어시스턴트 사이드바입니다. 백엔드(AWS Bedrock, Google Gemini)를 선택해 AI와 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 옵시디언 안에서 할 수 있습니다.",
+    pluginDesc: "AWS Bedrock 기반으로 옵시디언 볼트 전반을 AI로 다루는 어시스턴트 사이드바입니다. AI와 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 옵시디언 안에서 할 수 있습니다.",
     readmeLabel: "📖 사용 가이드",
     readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
     languageDesc: "설정 UI 언어",
-    // AI 백엔드 선택
-    aiBackendLabel: "AI 백엔드",
-    aiBackendDesc: "사용할 AI 백엔드를 선택합니다",
     reindexNeeded:
       "임베딩 모델이 변경되었습니다. 기존 볼트 인덱스는 다른 임베딩 공간을 사용하므로 검색 결과가 비어 나올 수 있습니다. 볼트를 다시 인덱싱해 주세요.",
-    // Gemini 자격증명
-    awsAuth: "Gemini API",
-    apiKey: "Gemini API Key",
-    apiKeyDesc: "Google AI Studio에서 발급받은 Gemini API 키",
-    apiKeyPlaceholder: "Gemini API 키 입력",
     // Bedrock 자격증명
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "Bedrock용 AWS Access Key ID",
@@ -225,10 +205,6 @@ export const I18N = {
     // base URL 형식 오류 (Req 2.10)
     baseUrlInvalid: "잘못된 base URL입니다. http:// 또는 https://로 시작해야 합니다",
     modelSettings: "모델 설정",
-    chatModel: "채팅 모델",
-    chatModelDesc: "Gemini 모델 ID",
-    embeddingModel: "임베딩 모델",
-    embeddingModelDesc: "Gemini 임베딩 모델 ID (볼트 문서 인덱싱에 사용)",
     genSettings: "생성 설정",
     maxTokens: "최대 토큰",
     maxTokensDesc: "응답 최대 토큰 수",
@@ -356,22 +332,14 @@ export const I18N = {
   },
   ja: {
     title: BRANDING.settingsTitle.ja,
-    pluginDesc: "Obsidianボルト全体をAIで扱えるアシスタントサイドバーです。バックエンド（AWS Bedrock、Google Gemini）を選んでAIと対話し、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で行えます。",
+    pluginDesc: "AWS Bedrockを基盤に、Obsidianボルト全体をAIで扱えるアシスタントサイドバーです。AIと対話し、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で行えます。",
     readmeLabel: "📖 ドキュメント",
     readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
     language: "言語",
     languageDesc: "設定UIの言語",
-    // AI バックエンド選択
-    aiBackendLabel: "AIバックエンド",
-    aiBackendDesc: "使用するAIバックエンドを選択",
     reindexNeeded:
       "埋め込みモデルが変更されました。既存のボルトインデックスは異なる埋め込み空間を使用しているため、検索結果が空になる場合があります。ボルトを再インデックスしてください。",
-    // Gemini 資格情報
-    awsAuth: "Gemini API",
-    apiKey: "Gemini APIキー",
-    apiKeyDesc: "Google AI Studioから取得したGemini APIキー",
-    apiKeyPlaceholder: "Gemini APIキーを入力",
     // Bedrock 資格情報
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "Bedrock用 AWS Access Key ID",
@@ -390,10 +358,6 @@ export const I18N = {
     // base URL 形式エラー (Req 2.10)
     baseUrlInvalid: "無効なbase URLです。http:// または https:// で始まる必要があります",
     modelSettings: "モデル設定",
-    chatModel: "チャットモデル",
-    chatModelDesc: "GeminiモデルID",
-    embeddingModel: "埋め込みモデル",
-    embeddingModelDesc: "Gemini埋め込みモデルID（ボルトドキュメントのインデックスに使用）",
     genSettings: "生成設定",
     maxTokens: "最大トークン数",
     maxTokensDesc: "応答の最大トークン数",
@@ -623,219 +587,127 @@ export class GeminiSettingTab extends PluginSettingTab {
           })
       );
 
-    // AI 백엔드 선택 (언어 선택 바로 아래)
-    new Setting(containerEl)
-      .setName(t.aiBackendLabel)
-      .setDesc(t.aiBackendDesc)
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("gemini", "Gemini")
-          .addOption("bedrock", "Bedrock")
-          .setValue(this.plugin.settings.aiBackend)
+    // AWS Bedrock 자격증명 설정
+    new Setting(containerEl).setName("AWS Bedrock").setHeading();
+
+    const awsAccessKeySetting = new Setting(containerEl)
+      .setName(t.awsAccessKeyLabel)
+      .setDesc(t.awsAccessKeyDesc)
+      .addText((text) => {
+        text
+          .setPlaceholder(t.awsAccessKeyPlaceholder)
+          .setValue(this.plugin.settings.awsAccessKeyId)
           .onChange(async (value) => {
-            // 2값 union으로 캐스팅 (bedrock/gemini 2종 백엔드만 지원)
-            this.plugin.settings.aiBackend = value as "bedrock" | "gemini";
+            this.plugin.settings.awsAccessKeyId = value.trim();
             await this.plugin.saveSettings();
-            this.plugin.recreateAiClient();
-            updateBranding(this.plugin.settings.aiBackend);
-            // 리본/뷰 헤더 아이콘을 새 백엔드 브랜딩으로 즉시 갱신한다.
-            // refreshBranding이 열린 뷰를 rebuildUI(→onOpen→preloadModels)하므로,
-            // 헤더 아이콘 갱신과 새 백엔드 모델 목록 재로드가 한 번에 처리된다.
-            this.plugin.refreshBranding();
-            this.display(); // 설정 탭 UI 재렌더링 (표시 필드 집합 갱신 — Req 12.5)
+            // 자격증명 변경 시 모델 목록 재로드 예약
+            this.scheduleModelReload();
+          });
+        text.inputEl.type = "password";
+        text.inputEl.addClass("ba-secret-input");
+      });
+    this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
+
+    const awsSecretKeySetting = new Setting(containerEl)
+      .setName(t.awsSecretKeyLabel)
+      .setDesc(t.awsSecretKeyDesc)
+      .addText((text) => {
+        text
+          .setPlaceholder(t.awsSecretKeyPlaceholder)
+          .setValue(this.plugin.settings.awsSecretAccessKey)
+          .onChange(async (value) => {
+            this.plugin.settings.awsSecretAccessKey = value.trim();
+            await this.plugin.saveSettings();
+            // 자격증명 변경 시 모델 목록 재로드 예약
+            this.scheduleModelReload();
+          });
+        text.inputEl.type = "password";
+        text.inputEl.addClass("ba-secret-input");
+      });
+    this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
+
+    new Setting(containerEl)
+      .setName(t.awsRegionLabel)
+      .setDesc(t.awsRegionDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder(t.awsRegionPlaceholder)
+          .setValue(this.plugin.settings.awsRegion)
+          .onChange(async (value) => {
+            this.plugin.settings.awsRegion = value.trim() || "us-east-1";
+            await this.plugin.saveSettings();
+            // 리전 변경 시 모델 목록 재로드 예약
+            this.scheduleModelReload();
           })
       );
 
-    // 조건부 자격증명 필드: 백엔드에 따라 다른 필드 표시
-    if (this.plugin.settings.aiBackend === "gemini") {
-      // Gemini API 설정
-      new Setting(containerEl).setName(t.awsAuth).setHeading();
-
-      const apiKeySetting = new Setting(containerEl)
-        .setName(t.apiKey)
-        .setDesc(t.apiKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.apiKeyPlaceholder)
-            .setValue(this.plugin.settings.geminiApiKey)
-            .onChange(async (value) => {
-              this.plugin.settings.geminiApiKey = value.trim();
-              await this.plugin.saveSettings();
-              // API 키 변경 시 모델 목록 재로드 예약
-              this.scheduleModelReload();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      // 눈 버튼 추가
-      this.addToggleVisibilityButton(apiKeySetting.controlEl);
-    } else if (this.plugin.settings.aiBackend === "bedrock") {
-      // Bedrock (AWS) 자격증명 설정
-      new Setting(containerEl).setName("AWS Bedrock").setHeading();
-
-      const awsAccessKeySetting = new Setting(containerEl)
-        .setName(t.awsAccessKeyLabel)
-        .setDesc(t.awsAccessKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.awsAccessKeyPlaceholder)
-            .setValue(this.plugin.settings.awsAccessKeyId)
-            .onChange(async (value) => {
-              this.plugin.settings.awsAccessKeyId = value.trim();
-              await this.plugin.saveSettings();
-              // 자격증명 변경 시 모델 목록 재로드 예약
-              this.scheduleModelReload();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
-
-      const awsSecretKeySetting = new Setting(containerEl)
-        .setName(t.awsSecretKeyLabel)
-        .setDesc(t.awsSecretKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.awsSecretKeyPlaceholder)
-            .setValue(this.plugin.settings.awsSecretAccessKey)
-            .onChange(async (value) => {
-              this.plugin.settings.awsSecretAccessKey = value.trim();
-              await this.plugin.saveSettings();
-              // 자격증명 변경 시 모델 목록 재로드 예약
-              this.scheduleModelReload();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
-
-      new Setting(containerEl)
-        .setName(t.awsRegionLabel)
-        .setDesc(t.awsRegionDesc)
-        .addText((text) =>
-          text
-            .setPlaceholder(t.awsRegionPlaceholder)
-            .setValue(this.plugin.settings.awsRegion)
-            .onChange(async (value) => {
-              this.plugin.settings.awsRegion = value.trim() || "us-east-1";
-              await this.plugin.saveSettings();
-              // 리전 변경 시 모델 목록 재로드 예약
-              this.scheduleModelReload();
-            })
-        );
-    }
-
-    // 조건부 모델 설정: 백엔드별 모델 드롭다운 표시
+    // 모델 설정 (Bedrock)
     new Setting(containerEl).setName(t.modelSettings).setHeading();
 
-    if (this.plugin.settings.aiBackend === "gemini") {
-      // Gemini 채팅 모델 드롭다운
-      new Setting(containerEl)
-        .setName(t.chatModel)
-        .setDesc(t.chatModelDesc)
-        .addDropdown((dropdown) => {
-          // 현재 설정값을 기본 옵션으로 추가
-          const current = this.plugin.settings.chatModel;
+    // Bedrock 채팅 모델 드롭다운
+    new Setting(containerEl)
+      .setName(t.bedrockChatModelLabel)
+      .setDesc(t.bedrockChatModelDesc)
+      .addDropdown((dropdown) => {
+        const current = this.plugin.settings.bedrockChatModel;
+        if (current) {
           dropdown.addOption(current, current);
-          dropdown.setValue(current);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.chatModel = value;
-            await this.plugin.saveSettings();
-          });
-          // 비동기로 모델 목록 로드 후 드롭다운 갱신
-          (async () => {
-            try {
-              const models = await this.plugin.aiClient.listModels();
-              dropdown.selectEl.empty();
-              for (const m of models) {
-                dropdown.addOption(m.modelId, m.modelName || m.modelId);
-              }
-              dropdown.setValue(this.plugin.settings.chatModel);
-            } catch {
-              // 모델 로드 실패 시 현재값 유지
-            }
-          })();
+        }
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.bedrockChatModel = value;
+          await this.plugin.saveSettings();
         });
-
-      // Gemini 임베딩 모델
-      new Setting(containerEl)
-        .setName(t.embeddingModel)
-        .setDesc(t.embeddingModelDesc)
-        .addText((text) =>
-          text
-            .setPlaceholder("text-embedding-004")
-            .setValue(this.plugin.settings.embeddingModel)
-            .onChange(async (value) => {
-              this.plugin.settings.embeddingModel = value;
-              await this.plugin.saveSettings();
-            })
-        );
-    } else if (this.plugin.settings.aiBackend === "bedrock") {
-      // Bedrock 채팅 모델 드롭다운
-      new Setting(containerEl)
-        .setName(t.bedrockChatModelLabel)
-        .setDesc(t.bedrockChatModelDesc)
-        .addDropdown((dropdown) => {
-          const current = this.plugin.settings.bedrockChatModel;
-          if (current) {
-            dropdown.addOption(current, current);
+        // 비동기로 모델 목록 로드 후 드롭다운 갱신
+        (async () => {
+          try {
+            const models = await this.plugin.aiClient.listModels();
+            dropdown.selectEl.empty();
+            for (const m of models) {
+              dropdown.addOption(m.modelId, m.modelName || m.modelId);
+            }
+            dropdown.setValue(this.plugin.settings.bedrockChatModel);
+          } catch {
+            // 모델 로드 실패 시 현재값 유지
           }
-          dropdown.setValue(current);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.bedrockChatModel = value;
-            await this.plugin.saveSettings();
-          });
-          // 비동기로 모델 목록 로드 후 드롭다운 갱신
-          (async () => {
-            try {
-              const models = await this.plugin.aiClient.listModels();
-              dropdown.selectEl.empty();
-              for (const m of models) {
-                dropdown.addOption(m.modelId, m.modelName || m.modelId);
-              }
-              dropdown.setValue(this.plugin.settings.bedrockChatModel);
-            } catch {
-              // 모델 로드 실패 시 현재값 유지
-            }
-          })();
-        });
+        })();
+      });
 
-      // Bedrock 임베딩 모델 드롭다운
-      new Setting(containerEl)
-        .setName(t.bedrockEmbeddingModelLabel)
-        .setDesc(t.bedrockEmbeddingModelDesc)
-        .addDropdown((dropdown) => {
-          const current = this.plugin.settings.bedrockEmbeddingModel;
-          if (current) {
-            dropdown.addOption(current, current);
-          }
-          dropdown.setValue(current);
-          dropdown.onChange(async (value) => {
-            this.plugin.settings.bedrockEmbeddingModel = value;
-            await this.plugin.saveSettings();
-          });
-          // 비동기로 임베딩 모델 목록 로드 후 드롭다운 갱신 (kind="embedding")
-          (async () => {
-            try {
-              const models = await this.plugin.aiClient.listModels("embedding");
-              // 빈 목록/오류 시 현재값 유지 (Req 7.9)
-              if (!models || models.length === 0) return;
-              const cur = this.plugin.settings.bedrockEmbeddingModel;
-              dropdown.selectEl.empty();
-              for (const m of models) {
-                dropdown.addOption(m.modelId, m.modelName || m.modelId);
-              }
-              // 현재 설정 ID가 목록에 없으면 현재값을 옵션으로 추가하여 선택 유지 (Req 7.9.1)
-              if (cur && !models.some((m) => m.modelId === cur)) {
-                dropdown.addOption(cur, cur);
-              }
-              dropdown.setValue(cur);
-            } catch {
-              // 모델 로드 실패 시 현재값 유지
-            }
-          })();
+    // Bedrock 임베딩 모델 드롭다운
+    new Setting(containerEl)
+      .setName(t.bedrockEmbeddingModelLabel)
+      .setDesc(t.bedrockEmbeddingModelDesc)
+      .addDropdown((dropdown) => {
+        const current = this.plugin.settings.bedrockEmbeddingModel;
+        if (current) {
+          dropdown.addOption(current, current);
+        }
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.bedrockEmbeddingModel = value;
+          await this.plugin.saveSettings();
         });
-    }
+        // 비동기로 임베딩 모델 목록 로드 후 드롭다운 갱신 (kind="embedding")
+        (async () => {
+          try {
+            const models = await this.plugin.aiClient.listModels("embedding");
+            // 빈 목록/오류 시 현재값 유지 (Req 7.9)
+            if (!models || models.length === 0) return;
+            const cur = this.plugin.settings.bedrockEmbeddingModel;
+            dropdown.selectEl.empty();
+            for (const m of models) {
+              dropdown.addOption(m.modelId, m.modelName || m.modelId);
+            }
+            // 현재 설정 ID가 목록에 없으면 현재값을 옵션으로 추가하여 선택 유지 (Req 7.9.1)
+            if (cur && !models.some((m) => m.modelId === cur)) {
+              dropdown.addOption(cur, cur);
+            }
+            dropdown.setValue(cur);
+          } catch {
+            // 모델 로드 실패 시 현재값 유지
+          }
+        })();
+      });
 
     // 생성 설정
     new Setting(containerEl).setName(t.genSettings).setHeading();

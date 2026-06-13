@@ -26,7 +26,7 @@ import { buildSystemPrompt } from "./system-prompt";
  * Anthropic claude-opus-4 계열은 temperature 미지원(공통 판별 로직에 위임)
  */
 function isTemperatureDeprecated(modelId: string): boolean {
-  return !supportsTemperature("bedrock", modelId);
+  return !supportsTemperature(modelId);
 }
 
 // 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)

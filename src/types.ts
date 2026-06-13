@@ -15,10 +15,6 @@ export interface CustomSkill {
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {
   language: "en" | "ko" | "ja";
-  // Gemini API Key
-  geminiApiKey: string;
-  chatModel: string;
-  embeddingModel: string;
   maxTokens: number;
   temperature: number;
   systemPrompt: string;
@@ -58,9 +54,7 @@ export interface GeminiAssistantSettings {
   // 아카이브 비우기 대상 폴더
   archiveCleanFolder: string;
 
-  // === AI 백엔드 통합 필드 ===
-  /** AI 백엔드 선택 ("bedrock" 또는 "gemini") */
-  aiBackend: "bedrock" | "gemini";
+  // === AWS Bedrock 백엔드 필드 ===
   /** AWS Access Key ID (Bedrock 자격증명) */
   awsAccessKeyId: string;
   /** AWS Secret Access Key (Bedrock 자격증명) */
@@ -81,7 +75,7 @@ export interface GeminiAssistantSettings {
   chunkOverlap: number;
 }
 
-// AI 클라이언트 공통 인터페이스 (GeminiClient, BedrockClient가 구현)
+// AI 클라이언트 공통 인터페이스 (BedrockClient가 구현)
 export interface IAiClient {
   /** 설정 변경 시 클라이언트 내부 설정 업데이트 */
   updateSettings(settings: GeminiAssistantSettings): void;
@@ -93,6 +87,7 @@ export interface IAiClient {
     tools: ToolDefinition[],
     onTextDelta?: (delta: string) => void,
     abortSignal?: AbortSignal,
+    // 웹서치 활성화 플래그. MCP 웹서치 도구(fetch/exa/brave) 사용 의도를 전달한다.
     webSearch?: boolean
   ): Promise<ConverseResult>;
   /** 텍스트 임베딩 생성 */
@@ -107,9 +102,6 @@ export interface IAiClient {
 
 export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   language: "en",
-  geminiApiKey: "",
-  chatModel: "gemini-3.1-flash-lite",
-  embeddingModel: "text-embedding-004",
   maxTokens: 32000,
   temperature: 0.1,
   systemPrompt: "",
@@ -131,11 +123,10 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   confirmToolExecution: false,
   mcpTimeout: 10,
   webClipFolder: "WebClips",
-  webClipModel: "gemini-3.1-flash-lite",
+  webClipModel: "",
   archiveCleanDays: 90,
   archiveCleanFolder: "ToDo/Archive",
-  // AI 백엔드 통합 기본값
-  aiBackend: "bedrock",
+  // AWS Bedrock 백엔드 기본값
   awsAccessKeyId: "",
   awsSecretAccessKey: "",
   awsRegion: "us-east-1",
@@ -235,8 +226,6 @@ export interface ToolResultBlock {
 export interface ContentBlockText {
   type: "text";
   text: string;
-  /** Gemini 3.x thought signature (텍스트 파트에서도 반환될 수 있음, 권장 보존) */
-  thoughtSignature?: string;
 }
 
 export interface ContentBlockToolUse {
@@ -244,8 +233,6 @@ export interface ContentBlockToolUse {
   toolUseId: string;
   name: string;
   input: Record<string, unknown>;
-  /** Gemini 3.x thought signature (function calling 시 필수 보존) */
-  thoughtSignature?: string;
 }
 
 export type ContentBlock = ContentBlockText | ContentBlockToolUse;

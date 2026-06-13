@@ -68,13 +68,13 @@ export default class GeminiAssistantPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // 초기 브랜딩 설정 (로드된 설정의 aiBackend에 맞게 갱신)
-    updateBranding(this.settings.aiBackend);
+    // 초기 브랜딩 설정 (Bedrock 고정)
+    updateBranding();
 
-    // 커스텀 아이콘 등록 — 양쪽 백엔드 아이콘 모두 등록 (전환 시 즉시 사용 가능하도록)
+    // 커스텀 아이콘 등록 (Kiro 아이콘)
     this.registerBrandingIcons();
 
-    // AI 클라이언트 초기화 (팩토리 패턴으로 백엔드에 따라 적절한 클라이언트 생성)
+    // AI 클라이언트 초기화 (Bedrock 단일 백엔드)
     this.aiClient = createAiClient(this.settings);
 
     // 볼트 인덱서 초기화
@@ -252,9 +252,6 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 마이그레이션: 임베딩 모델이 빈 문자열이면 기본값으로 복원
     // (이전 버전에서 빈 문자열로 저장된 경우 대응)
-    if (!this.settings.embeddingModel) {
-      this.settings.embeddingModel = DEFAULT_SETTINGS.embeddingModel;
-    }
     if (!this.settings.bedrockEmbeddingModel) {
       this.settings.bedrockEmbeddingModel = DEFAULT_SETTINGS.bedrockEmbeddingModel;
     }
@@ -267,8 +264,8 @@ export default class GeminiAssistantPlugin extends Plugin {
     const stripped = stripSensitiveFields(this.settings);
     await this.saveData(stripped);
     this.aiClient?.updateSettings(this.settings);
-    // 브랜딩을 현재 백엔드에 맞게 갱신
-    updateBranding(this.settings.aiBackend);
+    // 브랜딩 갱신 (Bedrock 고정)
+    updateBranding();
     // 설정 변경이 Graph RAG 검색에도 즉시 반영되도록 인덱서 옵션을 재적용한다 (견고성 목적)
     this.applySearchOptions();
   }
@@ -289,21 +286,13 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.indexer.client = this.aiClient;
   }
 
-  /** 2개 백엔드(bedrock/gemini)의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
+  /** Kiro(bedrock) 커스텀 아이콘을 등록한다 */
   private registerBrandingIcons(): void {
-    // bedrock/gemini 두 백엔드 아이콘을 모두 addIcon으로 등록한다.
-    // (하나라도 누락되면 해당 백엔드로 전환 시 아이콘이 표시되지 않는다)
-    const backends: GeminiAssistantSettings["aiBackend"][] = [
-      "bedrock",
-      "gemini",
-    ];
-    for (const backend of backends) {
-      const { icon } = getBranding(backend);
-      if (icon.svg) addIcon(icon.id, icon.svg);
-    }
+    const { icon } = getBranding();
+    if (icon.svg) addIcon(icon.id, icon.svg);
   }
 
-  /** 백엔드 전환 후 리본 아이콘, 뷰 탭/헤더 등 UI 브랜딩을 갱신한다 */
+  /** 리본 아이콘, 뷰 탭/헤더 등 UI 브랜딩을 갱신한다 */
   refreshBranding(): void {
     // 리본 아이콘 갱신
     if (this.ribbonIconEl) {

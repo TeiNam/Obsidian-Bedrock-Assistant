@@ -644,22 +644,13 @@ export class ChatView extends ItemView {
           const assistantContent: unknown[] = [];
           for (const block of result.contentBlocks) {
             if (block.type === "text") {
-              const textEntry: Record<string, unknown> = { text: block.text };
-              // Gemini 3.x 텍스트 파트 thoughtSignature 보존 (권장)
-              if (block.thoughtSignature) {
-                textEntry.thoughtSignature = block.thoughtSignature;
-              }
-              assistantContent.push(textEntry);
+              assistantContent.push({ text: block.text });
             } else if (block.type === "tool_use") {
               const toolUseEntry: Record<string, unknown> = {
                 toolUseId: block.toolUseId,
                 name: block.name,
                 input: block.input,
               };
-              // Gemini 3.x thought signature 보존 (function calling 필수)
-              if (block.thoughtSignature) {
-                toolUseEntry.thoughtSignature = block.thoughtSignature;
-              }
               assistantContent.push({ toolUse: toolUseEntry });
             }
           }
@@ -1113,31 +1104,14 @@ export class ChatView extends ItemView {
   // 모델 선택
   // ============================================
 
-  // 현재 백엔드에 해당하는 채팅 모델 ID를 반환한다.
-  // 모델 선택 박스가 백엔드별 올바른 설정 필드를 읽도록 한다(bedrock/gemini 2종).
+  // 현재 채팅 모델 ID를 반환한다 (Bedrock 단일).
   private getActiveChatModel(): string {
-    const s = this.plugin.settings;
-    switch (s.aiBackend) {
-      case "bedrock":
-        return s.bedrockChatModel;
-      case "gemini":
-      default:
-        return s.chatModel;
-    }
+    return this.plugin.settings.bedrockChatModel;
   }
 
-  // 현재 백엔드에 해당하는 채팅 모델 ID를 설정한다.
+  // 현재 채팅 모델 ID를 설정한다 (Bedrock 단일).
   private setActiveChatModel(modelId: string): void {
-    const s = this.plugin.settings;
-    switch (s.aiBackend) {
-      case "bedrock":
-        s.bedrockChatModel = modelId;
-        break;
-      case "gemini":
-      default:
-        s.chatModel = modelId;
-        break;
-    }
+    this.plugin.settings.bedrockChatModel = modelId;
   }
 
   // 모델 라벨 업데이트 (현재 선택된 모델 표시)
@@ -1511,18 +1485,11 @@ export class ChatView extends ItemView {
     });
   }
 
-  // 현재 백엔드가 네이티브 웹서치를 지원하는지 (Gemini = Google Search grounding)
-  private backendHasNativeWebSearch(): boolean {
-    return this.plugin.settings.aiBackend === "gemini";
-  }
-
   // 웹 서치 토글
   private toggleWebSearch(): void {
-    // 켜려는 경우: 네이티브 웹서치(Gemini)도, 웹서치용 MCP(fetch/exa/brave)도 없으면
-    // 알림 후 활성화하지 않는다.
+    // 켜려는 경우: 웹서치용 MCP(fetch/exa/brave)가 없으면 알림 후 활성화하지 않는다.
     if (
       !this.webSearchEnabled &&
-      !this.backendHasNativeWebSearch() &&
       !this.hasWebSearchMcp()
     ) {
       new Notice(this.t.webSearchNoMcp);

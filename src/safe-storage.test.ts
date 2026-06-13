@@ -74,16 +74,16 @@ import {
 // ============================================
 
 describe("SENSITIVE_FIELDS", () => {
-  it("geminiApiKey를 포함한다", () => {
-    expect(SENSITIVE_FIELDS).toContain("geminiApiKey");
-  });
-
   it("awsAccessKeyId를 포함한다 (Bedrock 자격증명)", () => {
     expect(SENSITIVE_FIELDS).toContain("awsAccessKeyId");
   });
 
   it("awsSecretAccessKey를 포함한다 (Bedrock 자격증명)", () => {
     expect(SENSITIVE_FIELDS).toContain("awsSecretAccessKey");
+  });
+
+  it("geminiApiKey를 포함하지 않는다 (Gemini 제거)", () => {
+    expect(SENSITIVE_FIELDS).not.toContain("geminiApiKey");
   });
 });
 
@@ -95,7 +95,6 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
   it("통합 설정 객체의 모든 민감 필드가 암호화된다", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
-      geminiApiKey: "test-gemini-key",
       awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
       awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     };
@@ -112,7 +111,6 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
   it("암호화된 설정을 복호화하면 원본 값이 복원된다", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
-      geminiApiKey: "my-api-key-123",
       awsAccessKeyId: "AKID-TEST",
       awsSecretAccessKey: "SECRET-TEST",
     };
@@ -120,7 +118,6 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const encrypted = encryptSettings(settings);
     const decrypted = decryptSettings(encrypted);
 
-    expect(decrypted.geminiApiKey).toBe("my-api-key-123");
     expect(decrypted.awsAccessKeyId).toBe("AKID-TEST");
     expect(decrypted.awsSecretAccessKey).toBe("SECRET-TEST");
   });
@@ -128,7 +125,6 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
   it("비민감 필드는 암호화되지 않는다", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
-      geminiApiKey: "key",
       awsRegion: "us-west-2",
     };
 
@@ -136,14 +132,12 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
 
     // awsRegion은 민감 필드가 아니므로 원본 그대로
     expect(encrypted.awsRegion).toBe("us-west-2");
-    expect(encrypted.aiBackend).toBe("bedrock");
     expect(encrypted.language).toBe("en");
   });
 
   it("빈 문자열 민감 필드는 암호화하지 않는다", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
-      geminiApiKey: "",
       awsAccessKeyId: "",
       awsSecretAccessKey: "",
     };
@@ -151,7 +145,6 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const encrypted = encryptSettings(settings);
 
     // 빈 문자열은 그대로 유지
-    expect(encrypted.geminiApiKey).toBe("");
     expect(encrypted.awsAccessKeyId).toBe("");
     expect(encrypted.awsSecretAccessKey).toBe("");
   });
@@ -183,7 +176,6 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
         // 모든 민감 필드에 동일한 임의 값 설정
         const settings: GeminiAssistantSettings = {
           ...DEFAULT_SETTINGS,
-          geminiApiKey: value,
           awsAccessKeyId: value,
           awsSecretAccessKey: value,
         };
@@ -206,11 +198,9 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
       fc.property(
         nonEmptyStringArb,
         nonEmptyStringArb,
-        nonEmptyStringArb,
-        (geminiKey, accessKey, secretKey) => {
+        (accessKey, secretKey) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
-            geminiApiKey: geminiKey,
             awsAccessKeyId: accessKey,
             awsSecretAccessKey: secretKey,
           };
@@ -218,7 +208,6 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
           const encrypted = encryptSettings(settings);
           const decrypted = decryptSettings(encrypted);
 
-          expect(decrypted.geminiApiKey).toBe(geminiKey);
           expect(decrypted.awsAccessKeyId).toBe(accessKey);
           expect(decrypted.awsSecretAccessKey).toBe(secretKey);
         },
