@@ -1,5 +1,5 @@
 import { App, TFile, TFolder, MarkdownView, Notice, normalizePath } from "obsidian";
-import type { VaultIndexer } from "./vault-indexer";
+import type { VaultIndexer, GraphRagResult, GraphRagSearchItem } from "./vault-indexer";
 import type { ToolDefinition } from "./types";
 
 // Obsidian 제어 도구 목록
@@ -11,7 +11,7 @@ export const TOOLS: ToolDefinition[] = [
       type: "object",
       properties: {
         query: { type: "string", description: "검색 쿼리" },
-        limit: { type: "number", description: "결과 수 (기본값: 5)" },
+        limit: { type: "number", description: "결과 수 (기본값: 10, 1~100)" },
       },
       required: ["query"],
     },
@@ -187,7 +187,7 @@ export class ToolExecutor {
       }
       switch (toolName) {
         case "search_vault":
-          return await this.searchVault(input.query as string, (input.limit as number) || 5);
+          return await this.searchVault(input.query as string, (input.limit as number) || 10);
         case "read_note":
           return await this.readNote(input.path as string);
         case "create_note":
@@ -228,13 +228,60 @@ export class ToolExecutor {
   }
 
   private async searchVault(query: string, limit: number): Promise<string> {
-    const results = await this.indexer.search(query, limit);
-    if (results.length === 0) {
+    // 검색 실패(throw)와 정상 빈 결과를 구분한다 (Req 7.6).
+    // indexer.search 호출만 별도 try/catch로 감싸, 검색 자체가 실패하면
+    // 부분/빈 결과를 정상으로 반환하지 않고 명확한 "검색 실패" 오류 메시지를 반환한다.
+    let result: GraphRagResult;
+    try {
+      result = await this.indexer.search(query, limit);
+    } catch (error) {
+      return `검색 실패: ${(error as Error).message}`;
+    }
+
+    // 빈/공백 쿼리로 검색을 수행하지 않은 경우 (Req 4.7)
+    if (result.invalidQuery) {
+      return "검색 쿼리가 비어 있습니다. 검색어를 입력해 주세요.";
+    }
+
+    // 결과가 비어 있으면 안내 메시지 반환 (Req 7.5)
+    if (result.items.length === 0) {
       return "검색 결과가 없습니다. 볼트 인덱싱이 필요할 수 있습니다.";
     }
-    return results
-      .map((r, i) => `${i + 1}. **${r.title}** (${r.path})\n   유사도: ${(r.score * 100).toFixed(1)}%\n   ${r.excerpt.slice(0, 200)}...`)
+
+    // 결과 헤더 — 키워드 폴백이 사용된 경우 대체 검색 사실을 표시 (Req 4.6)
+    const header = result.usedKeywordFallback
+      ? "검색 결과 (키워드 검색 — 임베딩 인덱스가 없어 키워드 검색으로 대체됨):"
+      : "검색 결과 (Graph RAG):";
+
+    const body = result.items
+      .map((item, i) => this.formatSearchItem(item, i + 1))
       .join("\n\n");
+
+    return `${header}\n\n${body}`;
+  }
+
+  // 단일 검색 결과 항목을 Seed/Neighbor 구분 및 관계 정보와 함께 렌더링한다 (Req 7.2~7.4).
+  private formatSearchItem(item: GraphRagSearchItem, rank: number): string {
+    // 통합 점수를 0.0~1.0 → 백분율로 표현 (Req 7.2)
+    const scorePercent = (item.combinedScore * 100).toFixed(1);
+    // 발췌는 최대 500자로 제한 (Req 7.2)
+    const excerpt = item.excerpt.slice(0, 500);
+
+    // Seed/Neighbor 구분 라벨 생성 (Req 7.3)
+    let label: string;
+    if (item.isSeed) {
+      label = "[Seed]";
+    } else {
+      // 이웃 결과는 연결된 시드 식별 정보(제목 우선, 없으면 경로)와 hop 수를 포함 (Req 7.4)
+      const seedRef = item.seedTitle || item.seedPath || "(알 수 없는 시드)";
+      label = `[Neighbor ← "${seedRef}" / ${item.hop} hop]`;
+    }
+
+    return (
+      `${label} ${rank}. **${item.title}** (${item.path})\n` +
+      `   통합 점수: ${scorePercent}%\n` +
+      `   발췌: ${excerpt}`
+    );
   }
 
   private async readNote(path: string): Promise<string> {

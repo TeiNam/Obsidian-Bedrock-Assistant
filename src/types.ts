@@ -55,6 +55,14 @@ export interface GeminiAssistantSettings {
   bedrockChatModel: string;
   /** Bedrock 임베딩 모델 ID */
   bedrockEmbeddingModel: string;
+
+  // === Graph RAG 검색 설정 필드 ===
+  /** 그래프 순회 탐색 깊이 (hop). 기본 1, 유효 범위 0~3 정수 (0이면 그래프 순회 비활성) */
+  graphTraversalDepth: number;
+  /** 단일 청크 최대 크기 (문자 수). 기본 2000, 최소 1 */
+  chunkMaxSize: number;
+  /** 인접 청크 겹침 크기 (문자 수). 기본 200, maxSize보다 작아야 함 */
+  chunkOverlap: number;
 }
 
 // AI 클라이언트 공통 인터페이스 (GeminiClient, BedrockClient가 구현)
@@ -114,6 +122,10 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   awsRegion: "us-east-1",
   bedrockChatModel: "",
   bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
+  // Graph RAG 검색 설정 기본값
+  graphTraversalDepth: 1,
+  chunkMaxSize: 2000,
+  chunkOverlap: 200,
 };
 
 // 채팅 메시지 타입
@@ -132,14 +144,52 @@ export interface ChatSession {
   messages: ChatMessage[];
 }
 
+// 청크 단위 임베딩
+// 긴 노트를 일정 크기로 분할한 텍스트 조각이며, 각 청크는 독립된 임베딩 벡터를 가진다.
+export interface IndexChunk {
+  /** 노트 내 청크 순번 (0부터 시작) */
+  index: number;
+  /** 청크 본문 (키워드 검색용) */
+  text: string;
+  /** 청크 임베딩 벡터 (빈 배열이면 임베딩 실패 또는 미생성) */
+  embedding: number[];
+  /** 임베딩 생성 실패 표시 (Req 3.6) */
+  embedFailed?: boolean;
+}
+
 // 볼트 인덱스 항목
 export interface VaultIndexEntry {
+  // === 기존 필드 (하위 호환 유지) ===
   path: string;
+  /** 레거시 노트 단위 임베딩 (마이그레이션/폴백용 유지) */
   embedding: number[];
   lastModified: number;
   title: string;
   excerpt: string;
   searchText?: string;
+
+  // === 신규 필드 (모두 optional, 버전 없는 기존 직렬화 데이터와 타입 호환) ===
+  /** 청크 집합 (Req 3) */
+  chunks?: IndexChunk[];
+  /** 아웃링크 경로 목록 — 볼트 내 존재하는 노트만, 중복 제거 (Req 1.1, 1.3) */
+  outlinks?: string[];
+  /** 백링크 경로 목록 — 중복 제거 (Req 1.2) */
+  backlinks?: string[];
+  /** 태그 목록 — 선행 # 제거, 중복 제거 (Req 2.1) */
+  tags?: string[];
+  /** 프론트매터 키-값 메타데이터 — tags와 분리된 별도 필드 (Req 2.2) */
+  frontmatter?: Record<string, unknown>;
+}
+
+// 인덱스 직렬화 스키마 버전 (Req 8.1)
+export const CURRENT_INDEX_SCHEMA_VERSION = 1;
+
+// 인덱스 직렬화 스키마 (버전 포함)
+export interface SerializedIndex {
+  /** Index_Schema_Version (Req 8.1) */
+  schemaVersion: number;
+  /** chunks/links/tags/frontmatter를 포함한 인덱스 항목 집합 */
+  entries: VaultIndexEntry[];
 }
 
 // Obsidian 제어 도구 정의

@@ -1,5 +1,6 @@
-import { Notice, Plugin, TFile, addIcon, setIcon } from "obsidian";
+import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
+import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
@@ -50,6 +51,11 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 볼트 인덱서 초기화
     this.indexer = new VaultIndexer(this.app, this.aiClient);
+
+    // 옵시디언 metadataCache를 감싸는 MetadataSource 어댑터를 주입 (그래프/태그/프론트매터 추출용)
+    this.indexer.setMetadataSource(this.createMetadataSource());
+    // 저장된 Graph RAG 검색 설정을 인덱서에 반영 (탐색 깊이/청크 크기/겹침)
+    this.applySearchOptions();
 
     // 도구 실행기 초기화
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
@@ -225,6 +231,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.aiClient?.updateSettings(this.settings);
     // 브랜딩을 현재 백엔드에 맞게 갱신
     updateBranding(this.settings.aiBackend);
+    // 설정 변경이 Graph RAG 검색에도 즉시 반영되도록 인덱서 옵션을 재적용한다 (견고성 목적)
+    this.applySearchOptions();
+  }
+
+  /** 현재 설정의 Graph RAG 검색 옵션을 인덱서에 적용한다 (로드/저장 시 공통 사용) */
+  private applySearchOptions(): void {
+    this.indexer?.setSearchOptions({
+      depth: this.settings.graphTraversalDepth,
+      chunkMaxSize: this.settings.chunkMaxSize,
+      chunkOverlap: this.settings.chunkOverlap,
+    });
   }
 
   /** 백엔드 전환 시 기존 클라이언트를 폐기하고 새 클라이언트를 생성한다 */
@@ -318,6 +335,53 @@ export default class GeminiAssistantPlugin extends Plugin {
     } catch (error) {
       console.error("대화 히스토리 저장 실패:", error);
     }
+  }
+
+  // 옵시디언 app.metadataCache를 감싸는 MetadataSource 어댑터를 생성한다.
+  // GraphExtractor가 옵시디언 API에 직접 의존하지 않도록 추상화 계층을 제공한다.
+  private createMetadataSource(): MetadataSource {
+    const app = this.app;
+    return {
+      // 해석된 아웃링크 맵: app.metadataCache.resolvedLinks를 그대로 노출
+      get resolvedLinks(): Record<string, Record<string, number>> {
+        return app.metadataCache.resolvedLinks;
+      },
+      // 백링크: 비공식 getBacklinksForFile() 대신 resolvedLinks 역산으로 구현 (타입 안정성 우선)
+      // 다른 노트(source)의 아웃링크 맵에 path가 키로 존재하면 그 source를 백링크로 간주
+      getBacklinks: (path: string): string[] => {
+        const resolved = app.metadataCache.resolvedLinks;
+        const seen = new Set<string>();
+        for (const sourcePath of Object.keys(resolved)) {
+          // 자기 자신은 백링크에서 제외
+          if (sourcePath === path) continue;
+          const linkMap = resolved[sourcePath];
+          if (linkMap && Object.prototype.hasOwnProperty.call(linkMap, path)) {
+            seen.add(sourcePath);
+          }
+        }
+        return Array.from(seen);
+      },
+      // 노트 캐시 조회: 인라인+프론트매터 태그 통합(getAllTags)과 frontmatter, frontmatterEndOffset 노출
+      getFileCache: (path: string) => {
+        const file = app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) return null;
+        const cache = app.metadataCache.getFileCache(file);
+        if (!cache) return null;
+        // getAllTags는 인라인 태그와 프론트매터 태그를 '#' 접두사 포함 형태로 통합 반환한다
+        // ('#' 제거는 extractMetadata 내부 stripTagHash가 담당)
+        const tags = getAllTags(cache) ?? undefined;
+        return {
+          tags: tags ?? undefined,
+          frontmatter: cache.frontmatter as Record<string, unknown> | undefined,
+          // frontmatter 끝 오프셋(본문 분리용). 캐시에 위치 정보가 없으면 undefined
+          frontmatterEndOffset: cache.frontmatterPosition?.end?.offset,
+        };
+      },
+      // dangling 판정: 해당 경로의 노트가 볼트에 실제 존재하는지 여부
+      fileExists: (path: string): boolean => {
+        return app.vault.getAbstractFileByPath(path) instanceof TFile;
+      },
+    };
   }
 
   // Obsidian Vault API를 FileAdapter 인터페이스로 감싸는 어댑터 생성
