@@ -8,6 +8,9 @@ import { VIEW_I18N } from "./chat-view-i18n";
 import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 import { normalizePlannerSetting } from "./planner-settings";
+// Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
+import { normalizeChunkConfig } from "./graph-rag/chunker";
+import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 
 // Daily Planner 설정 기본값 (빈/공백 입력 정규화에 사용)
 const PLANNER_FOLDER_DEFAULT = "Daily Planner";
@@ -151,6 +154,14 @@ export const I18N = {
     confirmToolExecutionDesc: "Show a confirmation dialog before executing destructive tools (edit, delete, move, create)",
     mcpTimeout: "MCP Tool Timeout",
     mcpTimeoutDesc: "Timeout in seconds for MCP tool requests (10–120)",
+    // Graph RAG 검색 설정 I18N 키 (Req 9)
+    graphRagSearch: "Graph RAG Search",
+    graphTraversalDepth: "Graph Traversal Depth",
+    graphTraversalDepthDesc: "Number of link hops to expand from search results (0–3, 0 disables graph traversal)",
+    chunkMaxSize: "Chunk Max Size",
+    chunkMaxSizeDesc: "Maximum size of a single chunk in characters (min 1, default 2000)",
+    chunkOverlap: "Chunk Overlap",
+    chunkOverlapDesc: "Overlap size between adjacent chunks in characters (must be smaller than chunk max size, default 200)",
     // JSON 에디터 관련 I18N 키
     mcpFormatBtn: "Format",
     mcpTemplateBtn: "Insert Template",
@@ -292,6 +303,14 @@ export const I18N = {
     confirmToolExecutionDesc: "파괴적 도구(편집, 삭제, 이동, 생성) 실행 전 확인 대화상자를 표시합니다",
     mcpTimeout: "MCP 도구 타임아웃",
     mcpTimeoutDesc: "MCP 도구 요청 타임아웃 (10~120초)",
+    // Graph RAG 검색 설정 I18N 키 (Req 9)
+    graphRagSearch: "Graph RAG 검색",
+    graphTraversalDepth: "그래프 순회 깊이",
+    graphTraversalDepthDesc: "검색 결과에서 링크를 따라 확장할 hop 수 (0~3, 0이면 그래프 순회 비활성)",
+    chunkMaxSize: "청크 최대 크기",
+    chunkMaxSizeDesc: "단일 청크의 최대 크기 (문자 수, 최소 1, 기본값 2000)",
+    chunkOverlap: "청크 겹침 크기",
+    chunkOverlapDesc: "인접 청크 간 겹침 크기 (문자 수, 청크 최대 크기보다 작아야 함, 기본값 200)",
     // JSON 에디터 관련 I18N 키
     mcpFormatBtn: "포맷",
     mcpTemplateBtn: "템플릿 삽입",
@@ -433,6 +452,14 @@ export const I18N = {
     confirmToolExecutionDesc: "破壊的ツール（編集、削除、移動、作成）の実行前に確認ダイアログを表示します",
     mcpTimeout: "MCPツールタイムアウト",
     mcpTimeoutDesc: "MCPツールリクエストのタイムアウト（10〜120秒）",
+    // Graph RAG 検索設定 I18N キー (Req 9)
+    graphRagSearch: "Graph RAG 検索",
+    graphTraversalDepth: "グラフ探索の深さ",
+    graphTraversalDepthDesc: "検索結果からリンクをたどって拡張するhop数（0〜3、0でグラフ探索を無効化）",
+    chunkMaxSize: "チャンク最大サイズ",
+    chunkMaxSizeDesc: "単一チャンクの最大サイズ（文字数、最小1、デフォルト2000）",
+    chunkOverlap: "チャンク重複サイズ",
+    chunkOverlapDesc: "隣接チャンク間の重複サイズ（文字数、チャンク最大サイズより小さくする必要あり、デフォルト200）",
     // JSON エディター関連 I18N キー
     mcpFormatBtn: "フォーマット",
     mcpTemplateBtn: "テンプレート挿入",
@@ -909,6 +936,80 @@ export class GeminiSettingTab extends PluginSettingTab {
             for (const leaf of leaves) {
               (leaf.view as any).applyFontSize?.();
             }
+          })
+      );
+
+    // === Graph RAG 검색 설정 (Req 9) ===
+    new Setting(containerEl).setName(t.graphRagSearch).setHeading();
+
+    // 그래프 순회 깊이 (0~3 정수). 슬라이더 값은 항상 정수지만 normalizeTraversalDepth로 한 번 더 보정한다 (Req 9.2, 9.4, 9.5)
+    new Setting(containerEl)
+      .setName(t.graphTraversalDepth)
+      .setDesc(t.graphTraversalDepthDesc)
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 3, 1)
+          .setValue(this.plugin.settings.graphTraversalDepth)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            // 유효 범위(0~3 정수)로 보정 후 저장 (Req 9.4, 9.5)
+            const depth = normalizeTraversalDepth(value);
+            this.plugin.settings.graphTraversalDepth = depth;
+            await this.plugin.saveSettings();
+            // 인덱서에 즉시 반영
+            this.plugin.indexer.setSearchOptions({ depth });
+          })
+      );
+
+    // 청크 최대 크기 (최소 1). 입력 변경 시 normalizeChunkConfig로 maxSize>=1, overlap<maxSize 보정 (Req 9.6, 9.7)
+    new Setting(containerEl)
+      .setName(t.chunkMaxSize)
+      .setDesc(t.chunkMaxSizeDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("2000")
+          .setValue(String(this.plugin.settings.chunkMaxSize))
+          .onChange(async (value) => {
+            const num = parseInt(value, 10);
+            if (isNaN(num)) {
+              return; // 숫자가 아니면 무시 (입력 도중 상태)
+            }
+            // maxSize<1→1, overlap>=maxSize→maxSize-1 보정 (Req 9.6, 9.7)
+            const normalized = normalizeChunkConfig(num, this.plugin.settings.chunkOverlap);
+            this.plugin.settings.chunkMaxSize = normalized.maxSize;
+            this.plugin.settings.chunkOverlap = normalized.overlap;
+            await this.plugin.saveSettings();
+            // 인덱서에 즉시 반영
+            this.plugin.indexer.setSearchOptions({
+              chunkMaxSize: normalized.maxSize,
+              chunkOverlap: normalized.overlap,
+            });
+          })
+      );
+
+    // 청크 겹침 크기 (청크 최대 크기보다 작아야 함). 입력 변경 시 normalizeChunkConfig로 보정 (Req 9.6)
+    new Setting(containerEl)
+      .setName(t.chunkOverlap)
+      .setDesc(t.chunkOverlapDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("200")
+          .setValue(String(this.plugin.settings.chunkOverlap))
+          .onChange(async (value) => {
+            const num = parseInt(value, 10);
+            if (isNaN(num)) {
+              return; // 숫자가 아니면 무시 (입력 도중 상태)
+            }
+            // overlap>=maxSize→maxSize-1 보정 (Req 9.6)
+            const normalized = normalizeChunkConfig(this.plugin.settings.chunkMaxSize, num);
+            this.plugin.settings.chunkMaxSize = normalized.maxSize;
+            this.plugin.settings.chunkOverlap = normalized.overlap;
+            await this.plugin.saveSettings();
+            // 인덱서에 즉시 반영
+            this.plugin.indexer.setSearchOptions({
+              chunkMaxSize: normalized.maxSize,
+              chunkOverlap: normalized.overlap,
+            });
           })
       );
 
