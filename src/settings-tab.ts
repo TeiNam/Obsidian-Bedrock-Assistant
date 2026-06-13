@@ -10,7 +10,12 @@ import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./j
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 import { normalizePlannerSetting } from "./planner-settings";
 // OpenAI/Ollama base URL 검증 (Req 2.10): onChange 시점 형식 검증에 사용
-import { isValidBaseUrl } from "./provider-utils";
+// clampMaxTokens: maxTokens 입력 범위 보정 / embeddingSignature: 임베딩 구성 변경 감지
+import {
+  isValidBaseUrl,
+  clampMaxTokens,
+  embeddingSignature,
+} from "./provider-utils";
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
@@ -32,6 +37,8 @@ export const I18N = {
     // AI 백엔드 선택
     aiBackendLabel: "AI Backend",
     aiBackendDesc: "Select AI backend to use",
+    reindexNeeded:
+      "Embedding model changed. The existing vault index uses a different embedding space, so search may return no results. Please re-index the vault.",
     // Gemini 자격증명
     awsAuth: "Gemini API",
     apiKey: "Gemini API Key",
@@ -216,6 +223,8 @@ export const I18N = {
     // AI 백엔드 선택
     aiBackendLabel: "AI 백엔드",
     aiBackendDesc: "사용할 AI 백엔드를 선택합니다",
+    reindexNeeded:
+      "임베딩 모델이 변경되었습니다. 기존 볼트 인덱스는 다른 임베딩 공간을 사용하므로 검색 결과가 비어 나올 수 있습니다. 볼트를 다시 인덱싱해 주세요.",
     // Gemini 자격증명
     awsAuth: "Gemini API",
     apiKey: "Gemini API Key",
@@ -400,6 +409,8 @@ export const I18N = {
     // AI バックエンド選択
     aiBackendLabel: "AIバックエンド",
     aiBackendDesc: "使用するAIバックエンドを選択",
+    reindexNeeded:
+      "埋め込みモデルが変更されました。既存のボルトインデックスは異なる埋め込み空間を使用しているため、検索結果が空になる場合があります。ボルトを再インデックスしてください。",
     // Gemini 資格情報
     awsAuth: "Gemini API",
     apiKey: "Gemini APIキー",
@@ -580,6 +591,9 @@ export class GeminiSettingTab extends PluginSettingTab {
   plugin: GeminiAssistantPlugin;
   // 자격증명 변경 시 모델 목록 재로드 디바운스 타이머
   private credentialDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // 탭 오픈 시점의 임베딩 구성 시그니처. 탭을 닫을 때 변경 여부를 비교해
+  // 재인덱싱 안내를 띄운다. (display()는 재렌더로 여러 번 호출되므로 최초 1회만 기록)
+  private embeddingSignatureSnapshot: string | null = null;
 
   constructor(app: App, plugin: GeminiAssistantPlugin) {
     super(app, plugin);
@@ -600,6 +614,10 @@ export class GeminiSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    // 탭 최초 오픈 시점의 임베딩 시그니처를 1회 기록한다(백엔드 전환에 따른 재렌더에서는 유지).
+    if (this.embeddingSignatureSnapshot === null) {
+      this.embeddingSignatureSnapshot = embeddingSignature(this.plugin.settings);
+    }
     const lang = this.plugin.settings.language;
     const t = I18N[lang] || I18N.en;
     // 신규 백엔드 라벨용 키 단위 en 폴백 헬퍼 (Req 13.3):
@@ -695,13 +713,11 @@ export class GeminiSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
-            // 열려있는 채팅 뷰의 모델 목록 캐시를 비워 새 백엔드 모델로 다시 로드시킨다
-            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-            for (const leaf of leaves) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (leaf.view as any).refreshModelList?.();
-            }
-            this.display(); // UI 재렌더링 (표시 필드 집합 갱신 — Req 12.5)
+            // 리본/뷰 헤더 아이콘을 새 백엔드 브랜딩으로 즉시 갱신한다.
+            // refreshBranding이 열린 뷰를 rebuildUI(→onOpen→preloadModels)하므로,
+            // 헤더 아이콘 갱신과 새 백엔드 모델 목록 재로드가 한 번에 처리된다.
+            this.plugin.refreshBranding();
+            this.display(); // 설정 탭 UI 재렌더링 (표시 필드 집합 갱신 — Req 12.5)
           })
       );
 
@@ -990,10 +1006,16 @@ export class GeminiSettingTab extends PluginSettingTab {
           .setPlaceholder("4096")
           .setValue(String(this.plugin.settings.maxTokens))
           .onChange(async (value) => {
-            const num = parseInt(value);
-            if (!isNaN(num) && num > 0) {
-              this.plugin.settings.maxTokens = num;
-              await this.plugin.saveSettings();
+            const num = parseInt(value, 10);
+            if (Number.isNaN(num)) return;
+            // 허용 범위([1, 200000])로 보정한다. 비정상적으로 큰 값이 API에
+            // 그대로 전달돼 비용/오류가 발생하는 것을 방지한다.
+            const clamped = clampMaxTokens(num);
+            this.plugin.settings.maxTokens = clamped;
+            await this.plugin.saveSettings();
+            // 입력값이 보정됐으면 표시값도 보정 결과로 동기화한다.
+            if (clamped !== num) {
+              text.setValue(String(clamped));
             }
           })
       );
@@ -1554,6 +1576,29 @@ export class GeminiSettingTab extends PluginSettingTab {
             this.scheduleModelReload();
           })
       );
+  }
+
+  /**
+   * 설정 탭이 닫힐 때 호출된다(Obsidian 라이프사이클).
+   * 탭 오픈 시점 대비 임베딩 구성(백엔드 또는 임베딩 모델)이 바뀌었고 기존 인덱스가
+   * 비어있지 않으면(=무력화될 벡터가 존재하면) 재인덱싱 안내 Notice를 1회 띄운다.
+   * 드롭다운/텍스트 입력/백엔드 전환을 단일 지점에서 처리하여 타이핑 중 중복 알림을 방지한다.
+   */
+  hide(): void {
+    const snapshot = this.embeddingSignatureSnapshot;
+    // 다음 오픈을 위해 스냅샷을 초기화한다.
+    this.embeddingSignatureSnapshot = null;
+    if (snapshot === null) return;
+
+    const nextSignature = embeddingSignature(this.plugin.settings);
+    if (snapshot === nextSignature) return;
+    if ((this.plugin.indexer?.size ?? 0) === 0) return;
+
+    const lang = this.plugin.settings.language;
+    const localized = (I18N[lang] as Record<string, unknown>)?.reindexNeeded;
+    const msg =
+      typeof localized === "string" ? localized : I18N.en.reindexNeeded;
+    new Notice(msg, 10000);
   }
 
   // 공급자 모델 드롭다운 추가 (채팅/임베딩 공용)

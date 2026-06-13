@@ -289,15 +289,23 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.indexer.client = this.aiClient;
   }
 
-  /** 양쪽 백엔드의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
+  /** 4개 백엔드의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
   private registerBrandingIcons(): void {
-    const bedrock = getBranding("bedrock");
-    const gemini = getBranding("gemini");
-    if (bedrock.icon.svg) addIcon(bedrock.icon.id, bedrock.icon.svg);
-    if (gemini.icon.svg) addIcon(gemini.icon.id, gemini.icon.svg);
+    // bedrock/gemini/openai/ollama 4개 백엔드 아이콘을 모두 addIcon으로 등록한다.
+    // (하나라도 누락되면 해당 백엔드로 전환 시 아이콘이 표시되지 않는다)
+    const backends: GeminiAssistantSettings["aiBackend"][] = [
+      "bedrock",
+      "gemini",
+      "openai",
+      "ollama",
+    ];
+    for (const backend of backends) {
+      const { icon } = getBranding(backend);
+      if (icon.svg) addIcon(icon.id, icon.svg);
+    }
   }
 
-  /** 백엔드 전환 후 리본 아이콘, 뷰 탭 등 UI 브랜딩을 갱신한다 */
+  /** 백엔드 전환 후 리본 아이콘, 뷰 탭/헤더 등 UI 브랜딩을 갱신한다 */
   refreshBranding(): void {
     // 리본 아이콘 갱신
     if (this.ribbonIconEl) {
@@ -305,9 +313,12 @@ export default class GeminiAssistantPlugin extends Plugin {
       setIcon(this.ribbonIconEl, BRANDING.icon.id);
       this.ribbonIconEl.setAttribute("aria-label", BRANDING.displayName);
     }
-    // 열려있는 뷰의 탭 아이콘/타이틀 갱신
+    // 열려있는 뷰의 헤더(타이틀 아이콘/이름)를 다시 렌더하고 탭 아이콘을 갱신한다.
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     for (const leaf of leaves) {
+      // 뷰 내부 헤더(ba-title-icon 등)는 rebuildUI(=onOpen 재실행)로 새 BRANDING을 반영한다.
+      (leaf.view as any).rebuildUI?.();
+      // 탭 헤더 아이콘/타이틀(getIcon/getDisplayText)도 갱신 시도 (미지원 시 no-op)
       (leaf as any).updateHeader?.();
     }
   }

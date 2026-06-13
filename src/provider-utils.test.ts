@@ -15,8 +15,18 @@ import {
 	toOpenAIMessages,
 	toOllamaMessages,
 	supportsTemperature,
+	clampMaxTokens,
+	MIN_MAX_TOKENS,
+	MAX_MAX_TOKENS,
+	embeddingSignature,
 } from "./provider-utils";
-import type { ModelInfo, ToolDefinition, ConverseMessage } from "./types";
+import { DEFAULT_SETTINGS } from "./types";
+import type {
+	ModelInfo,
+	ToolDefinition,
+	ConverseMessage,
+	GeminiAssistantSettings,
+} from "./types";
 
 // ============================================
 // 속성 기반 테스트: base URL 정규화/해석
@@ -937,5 +947,101 @@ describe("provider-utils supportsTemperature", () => {
 	it("Ollama: 로컬 모델은 항상 지원", () => {
 		expect(supportsTemperature("ollama", "llama4")).toBe(true);
 		expect(supportsTemperature("ollama", "anything")).toBe(true);
+	});
+});
+
+// ============================================
+// maxTokens 입력 클램프
+// ============================================
+
+describe("provider-utils clampMaxTokens", () => {
+	it("허용 범위 내 값은 그대로 반환한다", () => {
+		expect(clampMaxTokens(4096)).toBe(4096);
+		expect(clampMaxTokens(MIN_MAX_TOKENS)).toBe(MIN_MAX_TOKENS);
+		expect(clampMaxTokens(MAX_MAX_TOKENS)).toBe(MAX_MAX_TOKENS);
+	});
+
+	it("하한 미만은 하한으로, 상한 초과는 상한으로 보정한다", () => {
+		expect(clampMaxTokens(0)).toBe(MIN_MAX_TOKENS);
+		expect(clampMaxTokens(-100)).toBe(MIN_MAX_TOKENS);
+		expect(clampMaxTokens(MAX_MAX_TOKENS + 1)).toBe(MAX_MAX_TOKENS);
+		expect(clampMaxTokens(9999999)).toBe(MAX_MAX_TOKENS);
+	});
+
+	it("소수는 정수로 절단한다", () => {
+		expect(clampMaxTokens(4096.9)).toBe(4096);
+	});
+
+	it("비유한 입력은 하한으로 수렴한다", () => {
+		expect(clampMaxTokens(NaN)).toBe(MIN_MAX_TOKENS);
+		expect(clampMaxTokens(Infinity)).toBe(MIN_MAX_TOKENS);
+		expect(clampMaxTokens(-Infinity)).toBe(MIN_MAX_TOKENS);
+	});
+
+	it("Property: 결과는 항상 [MIN, MAX] 범위 내 정수다", () => {
+		fc.assert(
+			fc.property(fc.double({ noNaN: false }), (n) => {
+				const r = clampMaxTokens(n);
+				expect(Number.isInteger(r)).toBe(true);
+				expect(r).toBeGreaterThanOrEqual(MIN_MAX_TOKENS);
+				expect(r).toBeLessThanOrEqual(MAX_MAX_TOKENS);
+			})
+		);
+	});
+});
+
+// ============================================
+// 임베딩 구성 시그니처
+// ============================================
+
+describe("provider-utils embeddingSignature", () => {
+	// 백엔드별로 해당 백엔드의 임베딩 모델 필드만 시그니처에 반영되는지 검증한다.
+	const base: GeminiAssistantSettings = {
+		...DEFAULT_SETTINGS,
+		embeddingModel: "text-embedding-004",
+		bedrockEmbeddingModel: "amazon.titan-embed-text-v2:0",
+		openaiEmbeddingModel: "text-embedding-3-large",
+		ollamaEmbeddingModel: "nomic-embed-text",
+	};
+
+	it("백엔드별로 해당 임베딩 모델을 시그니처에 포함한다", () => {
+		expect(embeddingSignature({ ...base, aiBackend: "gemini" })).toBe(
+			"gemini:text-embedding-004"
+		);
+		expect(embeddingSignature({ ...base, aiBackend: "bedrock" })).toBe(
+			"bedrock:amazon.titan-embed-text-v2:0"
+		);
+		expect(embeddingSignature({ ...base, aiBackend: "openai" })).toBe(
+			"openai:text-embedding-3-large"
+		);
+		expect(embeddingSignature({ ...base, aiBackend: "ollama" })).toBe(
+			"ollama:nomic-embed-text"
+		);
+	});
+
+	it("백엔드 전환 시 시그니처가 달라진다(인덱스 무효화 트리거)", () => {
+		const gem = embeddingSignature({ ...base, aiBackend: "gemini" });
+		const oai = embeddingSignature({ ...base, aiBackend: "openai" });
+		expect(gem).not.toBe(oai);
+	});
+
+	it("같은 백엔드에서 임베딩 모델만 바뀌어도 시그니처가 달라진다", () => {
+		const before = embeddingSignature({ ...base, aiBackend: "openai" });
+		const after = embeddingSignature({
+			...base,
+			aiBackend: "openai",
+			openaiEmbeddingModel: "text-embedding-3-small",
+		});
+		expect(before).not.toBe(after);
+	});
+
+	it("다른 백엔드의 임베딩 모델 변경은 현재 시그니처에 영향을 주지 않는다", () => {
+		const before = embeddingSignature({ ...base, aiBackend: "gemini" });
+		const after = embeddingSignature({
+			...base,
+			aiBackend: "gemini",
+			openaiEmbeddingModel: "changed",
+		});
+		expect(before).toBe(after);
 	});
 });

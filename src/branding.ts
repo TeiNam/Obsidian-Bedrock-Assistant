@@ -72,8 +72,8 @@ const OPENAI_BRANDING: SwitchableBranding = {
   displayName: "OpenAI Assistant",
   icon: {
     id: "openai-assistant",
-    /** Lucide brain-circuit 아이콘 (AI 두뇌) — currentColor 인라인 SVG */
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M12 13h4"/><path d="M12 18h6a2 2 0 0 1 2 2v1"/><path d="M12 8h8"/><path d="M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>`,
+    /** OpenAI 공식 로고 (blossom 매듭) — currentColor 단색 fill 인라인 SVG */
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.985 5.985 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.142-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>`,
   },
   settingsTitle: {
     en: "OpenAI Assistant Settings",
@@ -87,8 +87,8 @@ const OLLAMA_BRANDING: SwitchableBranding = {
   displayName: "Ollama Assistant",
   icon: {
     id: "ollama-assistant",
-    /** Lucide server 아이콘 (로컬 서버) — currentColor 인라인 SVG */
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>`,
+    /** Ollama 알파카(라마) 라인 아이콘 — currentColor 인라인 SVG */
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6.5C8.3 5.2 8.1 3.8 8.6 2.7c1 .2 1.8 1.3 2.1 2.7"/><path d="M15 6.5c.7-1.3.9-2.7.4-3.8-1 .2-1.8 1.3-2.1 2.7"/><path d="M10.7 5.4C8.4 5.7 6.7 7.7 6.7 10.1v.6c-.9.6-1.2 1.9-1.2 3.4 0 2.2.1 4.4.6 5.7.3.8.9 1.3 1.6 1.3"/><path d="M13.3 5.4c2.3.3 4 2.3 4 4.7v.6c.9.6 1.2 1.9 1.2 3.4 0 2.2-.1 4.4-.6 5.7-.3.8-.9 1.3-1.6 1.3"/><path d="M8.5 21.1h7"/><circle cx="10" cy="10" r=".6" fill="currentColor" stroke="none"/><circle cx="14" cy="10" r=".6" fill="currentColor" stroke="none"/><path d="M9.8 12.5c0-1.2 1-2 2.2-2s2.2.8 2.2 2-1 2.3-2.2 2.3-2.2-1.1-2.2-2.3z"/><path d="M12 12.6v1"/><path d="M11.3 12.2c.4.3 1 .3 1.4 0"/></svg>`,
   },
   settingsTitle: {
     en: "Ollama Assistant Settings",
