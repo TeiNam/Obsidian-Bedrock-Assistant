@@ -5,18 +5,17 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://qr.kakaopay.com/Ej74xpc815dc06149)
 
-**AWS Bedrock**와 **Google Gemini** 듀얼 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
-설정 탭에서 백엔드를 전환할 수 있으며, 재설치 없이 바로 적용됩니다. AI 기반 IDE인 [Kiro](https://kiro.dev)로 개발·유지보수됩니다.
+**AWS Bedrock** 기반의 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
+AI 기반 IDE인 [Kiro](https://kiro.dev)로 개발·유지보수됩니다.
 
 ## 주요 기능
 
-- **듀얼 AI 백엔드** — 설정에서 AWS Bedrock (Claude)와 Google Gemini를 전환
+- **AWS Bedrock 백엔드** — AWS Bedrock (Claude) 모델 기반
 - **스트리밍 채팅** — 사이드바에서 실시간 스트리밍 응답
 - **볼트 시맨틱 검색** — 임베딩(Titan / Gemini)으로 노트를 인덱싱하고 의미 기반 검색
 - **태그 자동 생성** — 노트 내용을 분석하여 태그 자동 추천

@@ -5,18 +5,17 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-An AI assistant sidebar plugin for Obsidian with dual backend support — **AWS Bedrock** and **Google Gemini**.
-Switch between backends from the settings tab without reinstalling. Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
+An AI assistant sidebar plugin for Obsidian powered by **AWS Bedrock**.
+Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
 
 ## Features
 
-- **Dual AI Backend** — Switch between AWS Bedrock (Claude) and Google Gemini from settings
+- **AWS Bedrock Backend** — Powered by AWS Bedrock (Claude) models
 - **Streaming Chat** — Real-time streaming responses in the sidebar
 - **Semantic Vault Search** — Index notes with embeddings (Titan / Gemini) and search by meaning
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags

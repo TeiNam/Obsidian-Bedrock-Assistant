@@ -5,18 +5,17 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![Google](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-**AWS Bedrock**と**Google Gemini**のデュアルバックエンドに対応したObsidian AIアシスタントサイドバープラグインです。
-設定タブからバックエンドを切り替えられ、再インストール不要で即座に反映されます。AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされています。
+**AWS Bedrock** を基盤とするObsidian AIアシスタントサイドバープラグインです。
+AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされています。
 
 ## 主な機能
 
-- **デュアルAIバックエンド** — 設定からAWS Bedrock (Claude) とGoogle Geminiを切り替え
+- **AWS Bedrockバックエンド** — AWS Bedrock (Claude) モデルを基盤
 - **ストリーミングチャット** — サイドバーでリアルタイムストリーミング応答
 - **ボルトセマンティック検索** — 埋め込み (Titan / Gemini) でノートをインデックスし、意味ベースで検索
 - **タグ自動生成** — ノート内容を分析してタグを自動推薦
