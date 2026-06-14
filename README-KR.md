@@ -6,15 +6,17 @@
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
 ![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT-412991.svg)
+![Ollama](https://img.shields.io/badge/Ollama-Local-000000.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![카카오페이 후원](https://img.shields.io/badge/카카오페이-후원하기-FFCD00?style=for-the-badge&logo=kakaotalk&logoColor=black)](https://qr.kakaopay.com/Ej74xpc815dc06149)
 
-AWS Bedrock와 Google Gemini 듀얼 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
+AWS Bedrock, Google Gemini, OpenAI, Ollama 멀티 프로바이더 백엔드를 지원하는 Obsidian AI 어시스턴트 사이드바 플러그인입니다.
 
 ## 주요 기능
 
-- **듀얼 AI 백엔드** — 설정에서 AWS Bedrock (Claude)과 Google Gemini를 전환
+- **멀티 프로바이더 AI 백엔드** — 설정에서 AWS Bedrock (Claude), Google Gemini, OpenAI, Ollama를 전환
 - **스트리밍 채팅** — 사이드바에서 실시간 스트리밍 응답
 - **볼트 시맨틱 검색** — 임베딩으로 노트를 인덱싱하고 의미 기반 검색
 - **태그 자동 생성** — 노트 내용을 분석하여 태그 추천

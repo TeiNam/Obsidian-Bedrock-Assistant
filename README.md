@@ -6,15 +6,17 @@
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
 ![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT-412991.svg)
+![Ollama](https://img.shields.io/badge/Ollama-Local-000000.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-An AI assistant sidebar plugin for Obsidian with dual backend support — AWS Bedrock and Google Gemini.
+An AI assistant sidebar plugin for Obsidian with multi-provider backend support — AWS Bedrock, Google Gemini, OpenAI, and Ollama.
 
 ## Features
 
-- **Dual AI Backend** — Switch between AWS Bedrock (Claude) and Google Gemini from settings
+- **Multi-Provider AI Backend** — Switch between AWS Bedrock (Claude), Google Gemini, OpenAI, and Ollama from settings
 - **Streaming Chat** — Real-time streaming responses in the sidebar
 - **Semantic Vault Search** — Index notes with embeddings and search by meaning
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags

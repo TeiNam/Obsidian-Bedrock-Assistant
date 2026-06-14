@@ -6,15 +6,17 @@
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
 ![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT-412991.svg)
+![Ollama](https://img.shields.io/badge/Ollama-Local-000000.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
 
-AWS BedrockとGoogle Geminiのデュアルバックエンドに対応したObsidian AIアシスタントサイドバープラグインです。
+AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバックエンドに対応したObsidian AIアシスタントサイドバープラグインです。
 
 ## 主な機能
 
-- **デュアルAIバックエンド** — 設定でAWS Bedrock (Claude)とGoogle Geminiを切り替え
+- **マルチプロバイダーAIバックエンド** — 設定でAWS Bedrock (Claude)、Google Gemini、OpenAI、Ollamaを切り替え
 - **ストリーミングチャット** — サイドバーでリアルタイムストリーミング応答
 - **ボルトセマンティック検索** — 埋め込みでノートをインデックスし意味ベースで検索
 - **タグ自動生成** — ノート内容を分析してタグを推薦
