@@ -1,6 +1,24 @@
 import { App, TFile, TFolder, MarkdownView, Notice, normalizePath } from "obsidian";
 import type { VaultIndexer, GraphRagResult, GraphRagSearchItem } from "./vault-indexer";
-import type { ToolDefinition } from "./types";
+import type { ToolDefinition, SecondBrainSettings, IAiClient } from "./types";
+// Second Brain Layer — 위키 노트 생성/카탈로그 갱신에 사용하는 순수 함수 + I/O 래퍼
+import { buildAiFirstNote, type AiFirstMeta, type Recency, type Confidence } from "./second-brain/ai-first-format";
+import {
+  buildIndexCatalog,
+  ensureWikiFolders,
+  writeIndexCatalog,
+  WIKI_CATEGORIES,
+  type CatalogEntry,
+} from "./second-brain/wiki-structure";
+// Second Brain Layer — 종합(synthesize) 실행 래퍼 + 실행 컨텍스트 타입
+import { runSynthesize } from "./second-brain/synthesize";
+// Second Brain Layer — 모순해결(reconcile) 실행 래퍼 (비파괴)
+import { runReconcile } from "./second-brain/reconcile";
+// Second Brain Layer — 코드베이스 아키텍트(architect) 실행 래퍼
+import { runArchitect } from "./second-brain/architect";
+// Second Brain Layer — 사고 도구(challenge/connect/emerge) 실행 래퍼 (읽기 전용)
+import { runChallenge, runConnect, runEmerge } from "./second-brain/thinking-tools";
+import type { SecondBrainContext } from "./second-brain/scheduler";
 
 // Obsidian 제어 도구 목록
 export const TOOLS: ToolDefinition[] = [
@@ -153,6 +171,112 @@ export const TOOLS: ToolDefinition[] = [
       required: ["path"],
     },
   },
+  // === Second Brain Layer 도구 (옵트인) ===
+  {
+    name: "create_wiki_note",
+    description:
+      "Second Brain 위키 폴더에 AI-first 규격 노트를 생성합니다(프론트매터 + '## For future AI' 프리앰블). Second Brain 기능이 활성화되어 있어야 하며, 위키 폴더 밖 경로는 거부됩니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "노트 제목 (파일명으로 사용)" },
+        body: { type: "string", description: "노트 본문 (마크다운). 다른 노트 참조는 [[노트명]] wikilink 형식 사용" },
+        category: {
+          type: "string",
+          description: "카테고리 (entities | concepts | projects). 그 외 값은 위키 루트에 생성",
+        },
+        meta: {
+          type: "object",
+          description: "AI-first 메타데이터 (recency, confidence, valid_from, learned_at, source, tags)",
+        },
+      },
+      required: ["title", "body"],
+    },
+  },
+  {
+    name: "update_index",
+    description:
+      "Second Brain 위키 폴더의 노트를 수집하여 index.md 카탈로그를 갱신합니다. 사용자가 직접 추가한 메모(User_Region)는 보존됩니다. Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "synthesize_topic",
+    description:
+      "특정 주제로 볼트를 검색해 관련 노트들의 패턴을 하나의 종합 노트로 모읍니다. 검색 결과가 없으면 노트를 생성하지 않습니다. 재실행 시 사용자가 추가한 주석은 보존됩니다(synthesis 블록만 갱신). Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "종합할 주제 또는 태그" },
+      },
+      required: ["topic"],
+    },
+  },
+  {
+    name: "reconcile_topic",
+    description:
+      "특정 주제로 볼트를 검색해 노트 간 서로 상충하는 진술(모순)을 점검하고 리포트로 제시합니다. 어떤 노트도 수정하지 않으며(비파괴), 정정안은 사용자 승인 전까지 반영되지 않습니다. 검색 결과나 모순이 없으면 안내만 반환합니다. Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "모순을 점검할 주제 또는 태그" },
+      },
+      required: ["topic"],
+    },
+  },
+  {
+    name: "architect",
+    description:
+      "코드베이스 구조(폴더/모듈/진입점)를 스캔하여 아키텍처 노트(Architecture.md)를 생성/갱신합니다. overview/modules/decisions 섹션을 각각 sentinel 블록으로 기록하므로, 재실행 시 사용자가 추가한 메모는 보존됩니다. 볼트 밖 경로는 거부됩니다. Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "스캔할 볼트 상대 경로(예: src). 미입력 시 볼트 전체를 스캔",
+        },
+      },
+    },
+  },
+  {
+    name: "challenge",
+    description:
+      "주장(claim)을 받아 볼트의 과거 노트를 검색하고, 그 노트들을 근거로 주장의 허점·반례·전제를 비판적으로 검토한 반론을 반환합니다. 기본적으로 노트를 생성·수정하지 않습니다(읽기 전용). Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        claim: { type: "string", description: "비판적으로 검토할 현재 주장" },
+      },
+      required: ["claim"],
+    },
+  },
+  {
+    name: "connect",
+    description:
+      "두 주제(topicA, topicB)를 각각 검색해 노트 집합을 교차 컨텍스트로 묶고, 두 주제를 잇는 공통점·긴장·연결 아이디어를 도출하여 반환합니다. 기본적으로 노트를 생성·수정하지 않습니다(읽기 전용). Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        topicA: { type: "string", description: "연결할 첫 번째 주제" },
+        topicB: { type: "string", description: "연결할 두 번째 주제" },
+      },
+      required: ["topicA", "topicB"],
+    },
+  },
+  {
+    name: "emerge",
+    description:
+      "최근 N일(days) 이내에 수정된 노트들을 인덱스에서 모아, 아직 이름 붙지 않은(미명명) 떠오르는 패턴·주제·연결을 발견하여 제시합니다. 검색이 아니라 인덱스 전체 항목을 사용합니다. 기본적으로 노트를 생성·수정하지 않습니다(읽기 전용). Second Brain 기능이 활성화되어 있어야 합니다.",
+    input_schema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "최근 일수(0 이하/비정수는 1 이상 정수로 보정)" },
+      },
+      required: ["days"],
+    },
+  },
 ];
 
 // 도구 실행기
@@ -160,11 +284,23 @@ export class ToolExecutor {
   private app: App;
   private indexer: VaultIndexer;
   private getTemplateFolder: () => string;
+  // Second Brain Layer 의존성 (옵트인). 기존 호출자 하위호환을 위해 선택적으로 주입한다.
+  private getSecondBrain?: () => SecondBrainSettings;
+  private getAiClient?: () => IAiClient;
 
-  constructor(app: App, indexer: VaultIndexer, getTemplateFolder: () => string) {
+  constructor(
+    app: App,
+    indexer: VaultIndexer,
+    getTemplateFolder: () => string,
+    // 신규 인자는 기존 인자 뒤에 선택적으로 추가하여 하위호환을 보장한다.
+    getSecondBrain?: () => SecondBrainSettings,
+    getAiClient?: () => IAiClient,
+  ) {
     this.app = app;
     this.indexer = indexer;
     this.getTemplateFolder = getTemplateFolder;
+    this.getSecondBrain = getSecondBrain;
+    this.getAiClient = getAiClient;
   }
 
   async execute(toolName: string, input: Record<string, unknown>): Promise<string> {
@@ -219,6 +355,22 @@ export class ToolExecutor {
           );
         case "delete_file":
           return await this.deleteFile(input.path as string);
+        case "create_wiki_note":
+          return await this.createWikiNote(input);
+        case "update_index":
+          return await this.updateIndex();
+        case "synthesize_topic":
+          return await this.synthesizeTopic(input);
+        case "reconcile_topic":
+          return await this.reconcileTopic(input);
+        case "architect":
+          return await this.architect(input);
+        case "challenge":
+          return await this.challenge(input);
+        case "connect":
+          return await this.connect(input);
+        case "emerge":
+          return await this.emerge(input);
         default:
           return `알 수 없는 도구: ${toolName}`;
       }
@@ -524,5 +676,333 @@ export class ToolExecutor {
     await this.app.vault.trash(target, false);
     new Notice(`${type} 삭제됨: ${path}`);
     return `${type}을(를) 삭제했습니다: ${path}`;
+  }
+
+  // ============================================
+  // Second Brain Layer 핸들러 (옵트인)
+  // ============================================
+  // 모든 핸들러는 진입 시 secondBrain.enabled를 확인하고(false면 안내 메시지 반환, Req 6.4),
+  // 경로는 normalizePath로 정규화한 뒤 Wiki_Folder 밖 쓰기를 거부한다(Req 6.3).
+  // 비활성/미주입 상태에서는 어떤 노트도 생성·수정하지 않는다(옵트인 격리).
+
+  /**
+   * Second Brain 설정을 반환한다. 기능이 비활성이거나 의존성이 주입되지 않았으면 null.
+   * null인 경우 호출 측은 안내 메시지를 반환하고 쓰기를 수행하지 않는다(Req 6.4).
+   */
+  private getEnabledSecondBrain(): SecondBrainSettings | null {
+    const sb = this.getSecondBrain?.();
+    if (!sb || !sb.enabled) {
+      return null;
+    }
+    return sb;
+  }
+
+  /**
+   * create_wiki_note — AI_First_Note를 Wiki_Folder 하위에 생성한다 (Req 6.2, 6.3, 6.4, 6.6).
+   * - enabled=false면 쓰기 없이 안내 메시지 반환 (Req 6.4)
+   * - 경로는 normalizePath + Wiki_Folder 범위 검증, 밖이면 거부 (Req 6.3)
+   * - 경로 충돌 시 덮어쓰지 않고 충돌 메시지 반환 (Req 6.6)
+   * - 정상 생성 시 생성 경로 반환 (Req 6.2)
+   */
+  private async createWikiNote(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+
+    const title = typeof input.title === "string" ? input.title.trim() : "";
+    if (title === "") {
+      return "노트 제목(title)이 필요합니다.";
+    }
+    const body = typeof input.body === "string" ? input.body : "";
+    const category = typeof input.category === "string" ? input.category : "";
+    const metaInput = (input.meta && typeof input.meta === "object"
+      ? (input.meta as Record<string, unknown>)
+      : {}) as Partial<AiFirstMeta>;
+
+    // 카테고리가 표준 카테고리면 하위 폴더, 아니면 위키 루트에 생성
+    const wikiFolder = normalizePath(sb.wikiFolder);
+    const resolvedCategory = (WIKI_CATEGORIES as readonly string[]).includes(category)
+      ? category
+      : "";
+    const fileName = `${title}.md`;
+    const rawPath = resolvedCategory
+      ? `${wikiFolder}/${resolvedCategory}/${fileName}`
+      : `${wikiFolder}/${fileName}`;
+    const notePath = normalizePath(rawPath);
+
+    // Wiki_Folder 범위 검증 — 정규화 후 위키 폴더 밖이면 거부 (Req 6.3).
+    // title에 "../" 등 디렉터리 탈출이 포함되면 정규화 후 prefix를 벗어나므로 차단된다.
+    if (notePath !== wikiFolder && !notePath.startsWith(`${wikiFolder}/`)) {
+      return `Wiki 폴더(${wikiFolder}) 밖으로의 쓰기는 허용되지 않습니다: ${notePath}`;
+    }
+
+    // 경로 충돌 확인 — 기존 노트를 덮어쓰지 않는다 (Req 6.6)
+    const existing = this.app.vault.getAbstractFileByPath(notePath);
+    if (existing) {
+      return `노트가 이미 존재하여 덮어쓰지 않았습니다: ${notePath}`;
+    }
+
+    // AI_First_Note 문자열 생성 (Req 6.2). 누락 메타는 안전한 기본값으로 보정한다.
+    const recency: Recency = metaInput.recency === "dated" ? "dated" : "evergreen";
+    const confidence: Confidence =
+      metaInput.confidence !== undefined && metaInput.confidence !== null
+        ? metaInput.confidence
+        : "medium";
+    const meta: AiFirstMeta = {
+      title,
+      recency,
+      confidence,
+      validFrom: metaInput.validFrom,
+      learnedAt: metaInput.learnedAt,
+      source: metaInput.source,
+      tags: Array.isArray(metaInput.tags) ? metaInput.tags : undefined,
+    };
+    const noteContent = buildAiFirstNote({ meta, body });
+
+    // 위키 폴더 구조를 보장한 뒤 노트를 생성한다 (Req 4.1 폴더 보장 재사용).
+    await ensureWikiFolders(this.app, sb.wikiFolder);
+    await this.app.vault.create(notePath, noteContent);
+    new Notice(`위키 노트 생성됨: ${notePath}`);
+    return `위키 노트가 생성되었습니다: ${notePath}`;
+  }
+
+  /**
+   * update_index — Wiki_Folder 노트를 수집해 Index_Catalog를 갱신한다 (Req 6.5).
+   * buildIndexCatalog로 카탈로그를 만들고 writeIndexCatalog(Block_Key 'catalog')로
+   * index.md를 갱신하므로, 사용자가 직접 추가한 메모(User_Region)는 보존된다.
+   */
+  private async updateIndex(): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+
+    const wikiFolder = normalizePath(sb.wikiFolder);
+    const entries = this.collectWikiEntries(wikiFolder);
+    const catalog = buildIndexCatalog(entries);
+    // 폴더가 없을 수도 있으므로 보장 후 카탈로그를 기록한다(User_Region 보존).
+    await ensureWikiFolders(this.app, sb.wikiFolder);
+    await writeIndexCatalog(this.app, sb.wikiFolder, catalog);
+    new Notice(`인덱스 카탈로그 갱신됨 (${entries.length}개 노트)`);
+    return `인덱스 카탈로그를 갱신했습니다: ${entries.length}개 노트`;
+  }
+
+  /**
+   * synthesize_topic — 주제로 검색한 관련 노트를 종합하여 AI_First_Note를 생성/갱신한다 (Req 7.1~7.6).
+   * - enabled=false면 쓰기 없이 안내 메시지 반환 (Req 6.4 패턴)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - SecondBrainContext를 구성하여 runSynthesize 실행 래퍼에 위임한다(채팅·명령 팔레트 공용 로직).
+   *   synthesize는 설정을 영속화하지 않으므로 persist는 no-op이다.
+   */
+  private async synthesizeTopic(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 종합을 수행할 수 없습니다.";
+    }
+
+    const topic = typeof input.topic === "string" ? input.topic.trim() : "";
+    if (topic === "") {
+      return "종합할 주제(topic)가 필요합니다.";
+    }
+
+    // 실행 컨텍스트 구성 — 기존 접근자(getSecondBrain/getAiClient)와 동일 의존성을 재사용한다.
+    // synthesize는 settings를 영속화하지 않으므로 persist는 no-op으로 둔다.
+    const ctx: SecondBrainContext = {
+      app: this.app,
+      indexer: this.indexer,
+      aiClient,
+      settings: sb,
+      wikiFolder: normalizePath(sb.wikiFolder),
+      persist: async () => {},
+    };
+
+    return await runSynthesize(ctx, topic);
+  }
+
+  /**
+   * reconcile_topic — 주제로 검색한 관련 노트 간 모순을 점검하여 리포트를 반환한다 (Req 8.1, 8.2, 8.3, 8.5).
+   * - enabled=false면 점검 없이 안내 메시지 반환 (Req 6.4 패턴)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - SecondBrainContext를 구성하여 runReconcile 실행 래퍼에 위임한다(채팅·명령 팔레트 공용 로직).
+   * - runReconcile은 비파괴이므로 어떤 노트도 수정하지 않으며, 설정도 영속화하지 않아 persist는 no-op이다.
+   */
+  private async reconcileTopic(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 모순 점검을 수행할 수 없습니다.";
+    }
+
+    const topic = typeof input.topic === "string" ? input.topic.trim() : "";
+    if (topic === "") {
+      return "모순을 점검할 주제(topic)가 필요합니다.";
+    }
+
+    // 실행 컨텍스트 구성 — synthesize와 동일 의존성을 재사용한다.
+    // reconcile은 비파괴(노트 미변경)이고 settings를 영속화하지 않으므로 persist는 no-op으로 둔다.
+    const ctx: SecondBrainContext = {
+      app: this.app,
+      indexer: this.indexer,
+      aiClient,
+      settings: sb,
+      wikiFolder: normalizePath(sb.wikiFolder),
+      persist: async () => {},
+    };
+
+    return await runReconcile(ctx, topic);
+  }
+
+  /**
+   * architect — 코드베이스 구조를 스캔하여 아키텍처 노트를 생성/갱신한다 (Req 10.1, 10.3, 10.4, 10.5).
+   * - enabled=false면 분석 없이 안내 메시지 반환 (Req 6.4 패턴, 옵트인 격리)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - SecondBrainContext를 구성하여 runArchitect 실행 래퍼에 위임한다(채팅·명령 팔레트 공용 로직).
+   * - 섹션별 sentinel 블록 갱신으로 재실행 시 사용자 메모(User_Region)를 보존하며, 볼트 밖 경로는
+   *   runArchitect 내부 경로 검증으로 거부된다(Req 10.5). architect는 설정을 영속화하지 않으므로
+   *   persist는 no-op이다.
+   */
+  private async architect(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 아키텍처 분석을 수행할 수 없습니다.";
+    }
+
+    // 스캔 경로는 선택 입력(미입력 시 볼트 전체). 경로 검증은 runArchitect 내부에서 수행한다.
+    const scanPath = typeof input.path === "string" ? input.path : undefined;
+
+    // 실행 컨텍스트 구성 — synthesize/reconcile와 동일 의존성을 재사용한다.
+    // architect는 settings를 영속화하지 않으므로 persist는 no-op으로 둔다.
+    const ctx: SecondBrainContext = {
+      app: this.app,
+      indexer: this.indexer,
+      aiClient,
+      settings: sb,
+      wikiFolder: normalizePath(sb.wikiFolder),
+      persist: async () => {},
+    };
+
+    return await runArchitect(ctx, scanPath);
+  }
+
+  /**
+   * 사고 도구(challenge/connect/emerge) 공용 SecondBrainContext를 구성한다.
+   * synthesize/reconcile/architect 핸들러와 동일한 의존성을 재사용하며, 사고 도구는
+   * 설정을 영속화하지 않으므로 persist는 no-op이다(읽기 전용).
+   */
+  private buildThinkingContext(sb: SecondBrainSettings, aiClient: IAiClient): SecondBrainContext {
+    return {
+      app: this.app,
+      indexer: this.indexer,
+      aiClient,
+      settings: sb,
+      wikiFolder: normalizePath(sb.wikiFolder),
+      persist: async () => {},
+    };
+  }
+
+  /**
+   * challenge — 과거 노트를 근거로 현재 주장을 반박한다 (Req 9.1, 9.2).
+   * - enabled=false면 점검 없이 안내 메시지 반환 (Req 6.4 패턴, 옵트인 격리)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - runChallenge에 위임한다. 기본 읽기 전용으로 어떤 노트도 생성·수정하지 않는다.
+   */
+  private async challenge(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 비판적 검토를 수행할 수 없습니다.";
+    }
+    const claim = typeof input.claim === "string" ? input.claim.trim() : "";
+    if (claim === "") {
+      return "검토할 주장(claim)이 필요합니다.";
+    }
+    const ctx = this.buildThinkingContext(sb, aiClient);
+    return await runChallenge(ctx, claim);
+  }
+
+  /**
+   * connect — 두 주제를 교차하여 연결 아이디어를 도출한다 (Req 9.1, 9.3).
+   * - enabled=false면 점검 없이 안내 메시지 반환 (Req 6.4 패턴, 옵트인 격리)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - runConnect에 위임한다. 기본 읽기 전용으로 어떤 노트도 생성·수정하지 않는다.
+   */
+  private async connect(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 주제 연결을 수행할 수 없습니다.";
+    }
+    const topicA = typeof input.topicA === "string" ? input.topicA.trim() : "";
+    const topicB = typeof input.topicB === "string" ? input.topicB.trim() : "";
+    if (topicA === "" || topicB === "") {
+      return "연결할 두 주제(topicA, topicB)가 모두 필요합니다.";
+    }
+    const ctx = this.buildThinkingContext(sb, aiClient);
+    return await runConnect(ctx, topicA, topicB);
+  }
+
+  /**
+   * emerge — 최근 N일 노트에서 미명명 패턴을 발견한다 (Req 9.1, 9.4, 9.5, 9.6).
+   * - enabled=false면 점검 없이 안내 메시지 반환 (Req 6.4 패턴, 옵트인 격리)
+   * - AI 클라이언트가 주입되지 않았으면 안내 메시지 반환(옵트인 격리)
+   * - runEmerge에 위임한다(검색 대신 getEntries 사용, Req 9.6). 기본 읽기 전용.
+   */
+  private async emerge(input: Record<string, unknown>): Promise<string> {
+    const sb = this.getEnabledSecondBrain();
+    if (!sb) {
+      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+    }
+    const aiClient = this.getAiClient?.();
+    if (!aiClient) {
+      return "AI 클라이언트를 사용할 수 없어 패턴 발견을 수행할 수 없습니다.";
+    }
+    // days는 숫자 입력. 비숫자는 기본값 7로 두고, 0 이하/비정수 보정은 selectRecentNotes가 수행한다(Req 9.5).
+    const days = typeof input.days === "number" ? input.days : 7;
+    const ctx = this.buildThinkingContext(sb, aiClient);
+    return await runEmerge(ctx, days);
+  }
+
+  /**
+   * Wiki_Folder 하위 마크다운 노트를 수집하여 CatalogEntry 목록으로 변환한다.
+   * - index.md / log.md는 카탈로그 대상에서 제외한다.
+   * - 카테고리는 위키 폴더 바로 아래 첫 경로 세그먼트가 표준 카테고리면 그 값, 아니면 빈 값
+   *   (buildIndexCatalog가 빈/미상 카테고리를 "기타"로 분류한다, Req 4.6).
+   */
+  private collectWikiEntries(wikiFolder: string): CatalogEntry[] {
+    const prefix = `${wikiFolder}/`;
+    const entries: CatalogEntry[] = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!file.path.startsWith(prefix)) continue;
+      const rel = file.path.slice(prefix.length);
+      if (rel === "index.md" || rel === "log.md") continue;
+      const slashIdx = rel.indexOf("/");
+      const firstSeg = slashIdx >= 0 ? rel.slice(0, slashIdx) : "";
+      const category = (WIKI_CATEGORIES as readonly string[]).includes(firstSeg)
+        ? firstSeg
+        : "";
+      entries.push({ path: file.path, title: file.basename, category });
+    }
+    return entries;
   }
 }

@@ -12,6 +12,86 @@ export interface CustomSkill {
   enabled: boolean;
 }
 
+// Second Brain Layer 설정 (옵트인). Graph RAG "읽기" 위에 능동 "쓰기" 레이어를 제어한다.
+export interface SecondBrainSettings {
+  /** 기능 활성화 (옵트인, 기본 false) (Req 1.1) */
+  enabled: boolean;
+  /** Wiki_Folder 루트 경로 (기본 "Second Brain") (Req 1.2) */
+  wikiFolder: string;
+  /** 스케줄러 자동 트리거 활성화 (기본 false) (Req 1.2) */
+  schedulerEnabled: boolean;
+  /** 스케줄러 주기 (시간 단위, 기본 24, 최소 1 정수) (Req 1.2, 1.5) */
+  schedulerIntervalHours: number;
+  /** 마지막 Cleanup_Pipeline 실행 시각 (epoch ms, 미실행 시 0) (Req 11.2, 11.6) */
+  lastScheduledRun: number;
+}
+
+// Second Brain Layer 기본값 (옵트인이므로 enabled/schedulerEnabled는 false)
+export const DEFAULT_SECOND_BRAIN_SETTINGS: SecondBrainSettings = {
+  enabled: false,
+  wikiFolder: "Second Brain",
+  schedulerEnabled: false,
+  schedulerIntervalHours: 24,
+  lastScheduledRun: 0,
+};
+
+/**
+ * 부분/누락/이상 값을 가진 입력을 안전한 SecondBrainSettings로 정규화한다 (Req 1.3, 1.4, 1.5).
+ * - 누락 필드는 DEFAULT로 채움
+ * - wikiFolder 공백/빈 문자열 → "Second Brain"
+ * - schedulerIntervalHours < 1 또는 비정수 → max(1, round(n))
+ */
+export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings {
+  // 객체가 아니면(undefined/null/원시값) 전체 기본값으로 시작 (Req 1.3)
+  const source: Record<string, unknown> =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+
+  // enabled: 불리언이 아니면 기본값 사용
+  const enabled =
+    typeof source.enabled === "boolean"
+      ? source.enabled
+      : DEFAULT_SECOND_BRAIN_SETTINGS.enabled;
+
+  // wikiFolder: 문자열이고 공백 제거 후 비어 있지 않으면 trim 값, 아니면 기본값 (Req 1.4)
+  let wikiFolder = DEFAULT_SECOND_BRAIN_SETTINGS.wikiFolder;
+  if (typeof source.wikiFolder === "string") {
+    const trimmed = source.wikiFolder.trim();
+    if (trimmed.length > 0) {
+      wikiFolder = trimmed;
+    }
+  }
+
+  // schedulerEnabled: 불리언이 아니면 기본값 사용
+  const schedulerEnabled =
+    typeof source.schedulerEnabled === "boolean"
+      ? source.schedulerEnabled
+      : DEFAULT_SECOND_BRAIN_SETTINGS.schedulerEnabled;
+
+  // schedulerIntervalHours: 유한 수치면 max(1, round(n))로 보정, 아니면 기본값 (Req 1.5)
+  let schedulerIntervalHours = DEFAULT_SECOND_BRAIN_SETTINGS.schedulerIntervalHours;
+  if (
+    typeof source.schedulerIntervalHours === "number" &&
+    Number.isFinite(source.schedulerIntervalHours)
+  ) {
+    schedulerIntervalHours = Math.max(1, Math.round(source.schedulerIntervalHours));
+  }
+
+  // lastScheduledRun: 유한 수치면 그대로, 아니면 기본값(0)
+  const lastScheduledRun =
+    typeof source.lastScheduledRun === "number" &&
+    Number.isFinite(source.lastScheduledRun)
+      ? source.lastScheduledRun
+      : DEFAULT_SECOND_BRAIN_SETTINGS.lastScheduledRun;
+
+  return {
+    enabled,
+    wikiFolder,
+    schedulerEnabled,
+    schedulerIntervalHours,
+    lastScheduledRun,
+  };
+}
+
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {
   language: "en" | "ko" | "ja";
@@ -73,6 +153,10 @@ export interface GeminiAssistantSettings {
   chunkMaxSize: number;
   /** 인접 청크 겹침 크기 (문자 수). 기본 200, maxSize보다 작아야 함 */
   chunkOverlap: number;
+
+  // === Second Brain Layer 설정 (옵트인) ===
+  /** Second Brain Layer 설정 (기능 활성화·위키 폴더·스케줄러) (Req 1.7) */
+  secondBrain: SecondBrainSettings;
 }
 
 // AI 클라이언트 공통 인터페이스 (BedrockClient가 구현)
@@ -136,6 +220,8 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   graphTraversalDepth: 1,
   chunkMaxSize: 2000,
   chunkOverlap: 200,
+  // Second Brain Layer 기본값 (옵트인)
+  secondBrain: DEFAULT_SECOND_BRAIN_SETTINGS,
 };
 
 // 채팅 메시지 타입

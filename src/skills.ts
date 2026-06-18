@@ -295,6 +295,83 @@ You are an expert at writing clear, professional English for business email and 
 `;
 
 // ============================================
+// Second Brain (LLM Wiki) 스킬
+// AI-first 노트 규칙 · 위키 구조 규약 · second-brain 도구 사용 가이드
+// (Req 5.4) 본문은 백엔드별 표시 이름을 하드코딩/정적 보간하지 않는다.
+//   - Skill.content 는 모듈 로드 시 확정되는 정적 string 이지만
+//     BRANDING 은 백엔드 전환 시 재할당되는 가변 export let 이므로,
+//     보간하면 로드 시점 값으로 고정되어 전환이 반영되지 않는다.
+//   - 따라서 "이 플러그인의 Second Brain 기능"처럼 백엔드 무관 표현을 쓴다.
+// ============================================
+const SECOND_BRAIN_SKILL = `# Second Brain (LLM Wiki)
+
+이 플러그인의 Second Brain 기능은 볼트를 능동적으로 정리·진화시키는 "쓰기" 레이어다.
+검색(Graph RAG) 위에서 노트를 종합·정리·연결하고, AI가 다시 읽기 좋은 형태로 지식을 축적한다.
+아래 규약은 second-brain 도구로 노트를 만들거나 갱신할 때 항상 따른다.
+
+## 1. AI-first 노트 규칙
+미래의 AI(그리고 사람)가 다시 읽을 것을 전제로 노트를 쓴다.
+
+- **프론트매터(YAML)**: 노트 맨 앞에 메타데이터를 둔다. 권장 필드:
+  - \`title\` — 노트 제목 (명사구, 모호하지 않게)
+  - \`type\` — entity | concept | project 중 하나 (위키 카테고리와 일치)
+  - \`tags\` — 검색·분류용 태그 목록
+  - \`confidence\` — 0.0~1.0 수치 또는 low/medium/high (이 지식의 확신 정도)
+  - \`valid_from\` — 이 지식이 사실로서 유효해진 날짜 (\`YYYY-MM-DD\`)
+  - \`learned_at\` — 이 노트로 학습/기록한 날짜 (\`YYYY-MM-DD\`)
+- **"## For future AI" 프리앰블**: 본문 앞에 짧은 안내 블록을 둔다. 이 노트가 무엇이고,
+  왜 중요하며, 어떤 맥락에서 작성됐는지 한두 문장으로 적어 다음 AI가 빠르게 맥락을 잡게 한다.
+- **본문**: 결론·핵심을 앞에 두고, 근거와 세부는 뒤에 둔다. 한 노트는 한 주제만 다룬다.
+- **확신도 명시**: 불확실한 내용은 \`confidence\`를 낮추고 본문에서도 "추정", "미확인"처럼 표시한다.
+- **이중 시간(bi-temporal)**: 사실이 유효한 시점(\`valid_from\`)과 기록한 시점(\`learned_at\`)을 구분한다.
+
+## 2. wikilink 규약 (중요)
+노트 본문에서 다른 개념·엔티티·프로젝트를 언급할 때는 반드시 Obsidian wikilink로 연결한다.
+
+- 다른 노트를 가리킬 때 \`[[노트명]]\` 형식을 사용한다 (필요하면 \`[[노트명|표시 텍스트]]\`).
+- 새 지식을 쓸 때 기존 노트와 연결될 수 있는 개념은 적극적으로 wikilink로 건다.
+  연결이 많을수록 그래프가 풍부해지고 이후 검색·종합·발상이 좋아진다.
+- 링크 자동 변환에 의존하지 말고, 본문을 생성할 때 직접 wikilink를 작성한다.
+
+## 3. 위키 구조 규약
+Second Brain 노트는 사용자가 설정한 위키 폴더(Wiki_Folder) 안에 모은다.
+
+- **카테고리**: 노트는 세 가지로 분류한다.
+  - \`entities\` — 사람·조직·도구·장소 등 구체적 대상
+  - \`concepts\` — 아이디어·이론·패턴·정의 등 추상 개념
+  - \`projects\` — 진행 중이거나 완료된 작업·목표
+  분류가 모호하면 가장 가까운 것을 고르고, 정말 애매하면 "기타"로 둔다.
+- **index 노트**: 위키 폴더의 \`index.md\` 는 카테고리별 카탈로그(목차)다.
+  카탈로그는 자동 생성 영역으로 관리되며 \`update_index\` 도구가 갱신한다.
+- **활동 로그**: \`log.md\` 에 능동 작업 내역이 한 줄씩 누적된다.
+- **비파괴 원칙**: 노트의 자동 생성 영역(Generated_Region)만 교체하고
+  사용자가 직접 쓴 영역(User_Region)은 절대 건드리지 않는다.
+  자동 생성 영역은 \`<!-- @generated:KEY -->\` ~ \`<!-- @end:KEY -->\` 마커로 감싼다.
+
+## 4. second-brain 도구 사용 가이드
+아래 도구는 Second Brain 기능이 활성화된 경우에만 동작한다. 기능이 꺼져 있으면 호출하지 말고,
+사용자가 설정에서 활성화하도록 안내한다. 모든 쓰기는 위키 폴더 범위 안에서만 수행한다.
+
+- **create_wiki_note** — 위키 폴더에 AI-first 규격(프론트매터 + "For future AI" 프리앰블)으로
+  새 노트를 만든다. 같은 경로가 이미 있으면 덮어쓰지 않는다. 본문에는 wikilink를 적극 사용한다.
+- **update_index** — 위키 폴더의 노트를 수집해 \`index.md\` 카탈로그를 갱신한다 (User_Region 보존).
+- **synthesize_topic** — 한 주제에 대해 흩어진 노트를 검색·종합해 하나의 정리 노트를 만든다.
+  검색 결과가 없으면 노트를 만들지 않고 그 사실을 안내한다.
+- **reconcile_topic** — 한 주제의 노트 간 모순·중복을 찾아 \*\*리포트만\*\* 제시한다.
+  스스로 노트를 수정하지 않는다. 실제 반영은 사용자가 명시적으로 승인한 항목에 한해 이뤄진다.
+- **challenge** — 어떤 주장에 대해 볼트의 근거를 찾아 반론·약점·반례를 제시한다 (기본은 읽기 전용).
+- **connect** — 두 주제를 교차로 검색해 둘 사이의 숨은 연결·공통점·시사점을 찾는다.
+- **emerge** — 최근 노트들을 훑어 새롭게 떠오르는 주제·패턴·다음 행동을 제안한다.
+- **architect** — 코드베이스/볼트 구조를 스캔해 아키텍처 개요 노트를 만든다.
+  재실행 시 자동 생성 영역만 갱신하고 사용자 메모는 보존한다. 볼트 밖 경로는 읽기 전용이다.
+
+## 5. 작업 태도
+- 사용자의 명시적 요청이나 활성화된 자동화 없이는 기존 노트를 바꾸지 않는다 (옵트인 격리).
+- 파괴적 변경 대신 비파괴적 누적을 기본으로 한다. 모순은 지우지 말고 드러내고 정정안을 제시한다.
+- 불확실하면 확신도를 낮추고 그 이유를 본문에 남긴다.
+`;
+
+// ============================================
 // 스킬 목록 및 유틸리티
 // ============================================
 export const SKILLS: Skill[] = [  {
@@ -335,6 +412,14 @@ export const SKILLS: Skill[] = [  {
     description: "영어 비즈니스 이메일·메신저(Slack/Teams)를 명확하고 프로페셔널하게 작성",
     descriptionEn: "Write clear, professional English business email and messaging (Slack/Teams)",
     content: BUSINESS_ENGLISH_WRITING_SKILL,
+    builtin: false,
+  },
+  {
+    id: "second-brain",
+    name: "Second Brain (LLM Wiki)",
+    description: "AI-first 노트 규칙·위키 구조 규약·second-brain 도구 사용 가이드",
+    descriptionEn: "AI-first note rules, wiki structure conventions, and second-brain tool usage guide",
+    content: SECOND_BRAIN_SKILL,
     builtin: false,
   },
 ];
