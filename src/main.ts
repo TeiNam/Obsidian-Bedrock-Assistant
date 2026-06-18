@@ -1,11 +1,11 @@
-import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags } from "obsidian";
+import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
-import { DEFAULT_SETTINGS, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
+import { DEFAULT_SETTINGS, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING, updateBranding, getBranding } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import {
@@ -18,6 +18,8 @@ import {
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
 import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
+import { SecondBrainScheduler, type SecondBrainContext } from "./second-brain/scheduler";
+import { SecondBrainInputModal } from "./modals/second-brain-modals";
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -58,6 +60,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   indexer!: VaultIndexer;
   toolExecutor!: ToolExecutor;
   mcpManager!: McpManager;
+  // Second Brain Layer 스케줄러 (수동 명령 + onLayoutReady 자동 트리거)
+  secondBrainScheduler!: SecondBrainScheduler;
   // 인덱싱 진행률 표시용 상태바 아이템
   private statusBarItem!: HTMLElement;
   // 리본 아이콘 엘리먼트 참조 (브랜딩 전환 시 갱신용)
@@ -86,7 +90,20 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.applySearchOptions();
 
     // 도구 실행기 초기화
-    this.toolExecutor = new ToolExecutor(this.app, this.indexer, () => this.settings.templateFolder);
+    // Second Brain Layer 의존성 주입 (Req 11.6, 12.3):
+    //  - getSecondBrain: this.settings.secondBrain 동일 참조를 반환(복사본 아님)하여
+    //    스케줄러의 lastScheduledRun 갱신이 플러그인 설정에 반영되게 한다.
+    //  - getAiClient: 백엔드 전환 시 recreateAiClient로 재할당되는 현재 클라이언트를 항상 반환.
+    this.toolExecutor = new ToolExecutor(
+      this.app,
+      this.indexer,
+      () => this.settings.templateFolder,
+      () => this.settings.secondBrain,
+      () => this.aiClient,
+    );
+
+    // Second Brain 스케줄러 초기화 (수동 명령 + onLayoutReady 자동 트리거)
+    this.secondBrainScheduler = new SecondBrainScheduler();
 
     // MCP 매니저 초기화 및 타임아웃 설정 적용
     this.mcpManager = new McpManager();
@@ -112,6 +129,15 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 인덱스 로드는 레이아웃 준비 후 실행 (볼트 파일 시스템이 완전히 준비된 상태에서 로드)
     this.app.workspace.onLayoutReady(() => {
       this.loadIndex().catch((e) => console.error("인덱스 로드 실패:", e));
+    });
+
+    // Second Brain 스케줄러 자동 트리거 (Req 11.1).
+    // maybeRunOnStartup 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
+    // 여기서는 무조건 호출해도 옵트인 격리가 보장된다(비활성 시 아무 동작 없음).
+    this.app.workspace.onLayoutReady(() => {
+      this.secondBrainScheduler
+        .maybeRunOnStartup(this.buildSecondBrainContext(), Date.now())
+        .catch((e) => console.error("Second Brain 스케줄러 시작 실패:", e));
     });
 
     // 리본 아이콘 추가
@@ -150,6 +176,14 @@ export default class GeminiAssistantPlugin extends Plugin {
         await this.saveIndex();
       },
     });
+
+    // ============================================
+    // Second Brain Layer 명령 등록 (Req 12.3)
+    // ============================================
+    // 모든 능동 동작을 명령 팔레트에 등록한다. 각 명령은 입력이 필요하면 모달로 수집한 뒤,
+    // 채팅 도구와 동일한 핸들러(ToolExecutor.execute / 스케줄러)를 호출한다(DRY).
+    // 옵트인 격리: enabled=false면 핸들러(execute)·스케줄러가 내부에서 쓰기를 거부한다.
+    this.registerSecondBrainCommands();
 
     // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
     // indexVault 진행 중에는 modify 이벤트 인덱싱을 건너뛰어 동시 실행 방지
@@ -207,6 +241,276 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
   }
 
+  // ============================================
+  // Second Brain Layer 와이어링 헬퍼 (Req 12.3)
+  // ============================================
+
+  /**
+   * Second Brain 실행 컨텍스트를 구성한다 (Req 11.6).
+   *
+   * - `settings`는 `this.settings.secondBrain`의 **동일 참조**를 넘긴다(복사본 아님).
+   *   스케줄러가 `ctx.settings.lastScheduledRun = now`로 갱신한 값이 플러그인 설정에 반영된다.
+   * - `aiClient`는 백엔드 전환 시 재할당되므로 호출 시점의 현재 클라이언트를 사용한다(지연 구성).
+   * - `persist`는 기존 저장 경로(`saveSettings`)를 재사용한다.
+   */
+  buildSecondBrainContext(): SecondBrainContext {
+    return {
+      app: this.app,
+      indexer: this.indexer,
+      aiClient: this.aiClient,
+      settings: this.settings.secondBrain,
+      wikiFolder: this.settings.secondBrain.wikiFolder,
+      persist: () => this.saveSettings(),
+    };
+  }
+
+  /** 현재 활성 노트의 제목(basename)을 반환한다. 없으면 빈 문자열. */
+  private getActiveNoteTitle(): string {
+    return this.app.workspace.getActiveFile()?.basename ?? "";
+  }
+
+  /** 현재 에디터의 선택 텍스트를 반환한다. 선택이 없으면 빈 문자열. */
+  private getEditorSelection(): string {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) return "";
+    return view.editor.getSelection() ?? "";
+  }
+
+  /**
+   * 채팅 도구와 동일한 핸들러(ToolExecutor.execute)로 second-brain 도구를 실행하고
+   * 결과를 Notice로 표시한다(명령 팔레트 경로 공용, DRY). 결과 문자열은 콘솔에도 남겨
+   * 긴 LLM 응답(challenge/connect 등)을 확인할 수 있게 한다.
+   */
+  private async runSecondBrainTool(
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const result = await this.toolExecutor.execute(toolName, input);
+      // 긴 응답도 잘리지 않도록 콘솔에 전체를 남기고, Notice는 10초간 표시한다.
+      console.info(`[SecondBrain:${toolName}] ${result}`);
+      new Notice(result, 10000);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`Second Brain 도구 실행 실패 (${toolName}): ${reason}`, 10000);
+    }
+  }
+
+  /**
+   * 모든 Second Brain 능동 동작을 명령 팔레트에 등록한다 (Req 12.3).
+   *
+   * 입력이 필요한 도구는 SecondBrainInputModal로 값을 수집한 뒤 runSecondBrainTool로
+   * 채팅과 동일한 핸들러를 호출한다. update_index와 스케줄러 실행은 입력이 없으므로 즉시 실행한다.
+   */
+  private registerSecondBrainCommands(): void {
+    // create_wiki_note — 위키 노트 생성 (제목 + 본문). 활성 노트 제목/선택 텍스트를 프리필.
+    this.addCommand({
+      id: "second-brain-create-wiki-note",
+      name: "위키 노트 생성",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "위키 노트 생성",
+          submitLabel: "생성",
+          fields: [
+            {
+              key: "title",
+              label: "제목",
+              type: "text",
+              placeholder: "노트 제목",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+            {
+              key: "body",
+              label: "본문",
+              type: "textarea",
+              placeholder: "노트 본문",
+              defaultValue: this.getEditorSelection(),
+            },
+          ],
+          onSubmit: (values) =>
+            this.runSecondBrainTool("create_wiki_note", {
+              title: values.title,
+              body: values.body,
+            }),
+        }).open();
+      },
+    });
+
+    // update_index — 위키 인덱스 카탈로그 갱신 (입력 불필요, 즉시 실행).
+    this.addCommand({
+      id: "second-brain-update-index",
+      name: "위키 인덱스 갱신",
+      callback: () => this.runSecondBrainTool("update_index", {}),
+    });
+
+    // synthesize_topic — 주제 종합. 활성 노트 제목을 기본값으로.
+    this.addCommand({
+      id: "second-brain-synthesize",
+      name: "주제 종합 (synthesize)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "주제 종합 (synthesize)",
+          submitLabel: "종합",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "종합할 주제/태그",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) =>
+            this.runSecondBrainTool("synthesize_topic", { topic: values.topic }),
+        }).open();
+      },
+    });
+
+    // reconcile_topic — 모순 점검(비파괴). 활성 노트 제목을 기본값으로.
+    this.addCommand({
+      id: "second-brain-reconcile",
+      name: "모순 점검 (reconcile)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "모순 점검 (reconcile)",
+          submitLabel: "점검",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "모순을 점검할 주제",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) =>
+            this.runSecondBrainTool("reconcile_topic", { topic: values.topic }),
+        }).open();
+      },
+    });
+
+    // challenge — 주장 반박. 에디터 선택 텍스트를 기본값으로.
+    this.addCommand({
+      id: "second-brain-challenge",
+      name: "주장 반박 (challenge)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "주장 반박 (challenge)",
+          submitLabel: "반박",
+          fields: [
+            {
+              key: "claim",
+              label: "주장",
+              type: "textarea",
+              placeholder: "검토(반박)할 주장",
+              defaultValue: this.getEditorSelection(),
+            },
+          ],
+          onSubmit: (values) =>
+            this.runSecondBrainTool("challenge", { claim: values.claim }),
+        }).open();
+      },
+    });
+
+    // connect — 두 주제 연결 (topicA, topicB).
+    this.addCommand({
+      id: "second-brain-connect",
+      name: "두 주제 연결 (connect)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "두 주제 연결 (connect)",
+          submitLabel: "연결",
+          fields: [
+            { key: "topicA", label: "주제 A", type: "text", placeholder: "첫 번째 주제" },
+            { key: "topicB", label: "주제 B", type: "text", placeholder: "두 번째 주제" },
+          ],
+          onSubmit: (values) =>
+            this.runSecondBrainTool("connect", {
+              topicA: values.topicA,
+              topicB: values.topicB,
+            }),
+        }).open();
+      },
+    });
+
+    // emerge — 최근 N일 패턴 발견 (days, 기본 7).
+    this.addCommand({
+      id: "second-brain-emerge",
+      name: "최근 패턴 발견 (emerge)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "최근 패턴 발견 (emerge)",
+          submitLabel: "발견",
+          fields: [
+            {
+              key: "days",
+              label: "최근 일수",
+              type: "number",
+              placeholder: "7",
+              defaultValue: "7",
+            },
+          ],
+          onSubmit: (values) => {
+            // 숫자 변환 — 비숫자/빈값은 핸들러(selectRecentNotes)가 보정하도록 기본 7로 둔다.
+            const parsed = Number(values.days);
+            const days = Number.isFinite(parsed) ? parsed : 7;
+            return this.runSecondBrainTool("emerge", { days });
+          },
+        }).open();
+      },
+    });
+
+    // architect — 코드베이스 아키텍트. 경로 입력(미입력 시 볼트 전체).
+    this.addCommand({
+      id: "second-brain-architect",
+      name: "코드베이스 아키텍트 (architect)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "코드베이스 아키텍트 (architect)",
+          submitLabel: "분석",
+          fields: [
+            {
+              key: "path",
+              label: "스캔 경로 (비우면 볼트 전체)",
+              type: "text",
+              placeholder: "예: src",
+            },
+          ],
+          onSubmit: (values) => {
+            // 경로가 비어 있으면 path를 생략하여 볼트 전체를 대상으로 한다.
+            const path = values.path.trim();
+            const input: Record<string, unknown> = path ? { path } : {};
+            return this.runSecondBrainTool("architect", input);
+          },
+        }).open();
+      },
+    });
+
+    // 스케줄러 수동 실행 — 비파괴 Cleanup_Pipeline을 즉시 실행 (Req 11.1).
+    // 옵트인 격리: enabled=false면 runCleanupPipeline은 단계 내부에서 쓰기를 수행하지 않는다.
+    // (자동 트리거와 달리 수동 실행은 schedulerEnabled와 무관하게 사용자 명시 요청으로 동작)
+    this.addCommand({
+      id: "second-brain-run-scheduler",
+      name: "Second Brain 정리 실행 (스케줄러)",
+      callback: async () => {
+        if (!this.settings.secondBrain.enabled) {
+          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          return;
+        }
+        try {
+          await this.secondBrainScheduler.runCleanupPipeline(
+            this.buildSecondBrainContext(),
+            Date.now(),
+          );
+          new Notice("Second Brain 정리(catalog 갱신)를 실행했습니다.");
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          new Notice(`Second Brain 정리 실행 실패: ${reason}`);
+        }
+      },
+    });
+  }
+
   // 설정 로드/저장
   async loadSettings(): Promise<void> {
     // 저장된 원본 데이터를 먼저 로드한다 (DEFAULT_SETTINGS 병합 전)
@@ -258,6 +562,12 @@ export default class GeminiAssistantPlugin extends Plugin {
     if (!this.settings.bedrockEmbeddingModel) {
       this.settings.bedrockEmbeddingModel = DEFAULT_SETTINGS.bedrockEmbeddingModel;
     }
+
+    // Second Brain 설정 정규화 (Req 1.3): this.settings가 두 hasMigratedKeys 분기로
+    // 확정된 뒤에 적용해야 한다(병합 직후에는 이후 분기에서 통째로 덮어써짐).
+    // 정규화 입력은 사용자 저장 원본(loaded?.secondBrain)을 직접 사용한다.
+    // 누락/부분/이상 값은 normalize가 기본값으로 채워 비파괴 마이그레이션을 보장한다.
+    this.settings.secondBrain = normalizeSecondBrainSettings(loaded?.secondBrain);
   }
 
   async saveSettings(): Promise<void> {

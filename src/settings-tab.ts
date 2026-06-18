@@ -1,6 +1,8 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import type { CustomSkill } from "./types";
+// Second Brain 설정 정규화 (Req 1.4, 1.5): onChange 시점 값 보정에 사용
+import { normalizeSecondBrainSettings } from "./types";
 import { SKILLS } from "./skills";
 import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
@@ -206,6 +208,16 @@ export const I18N = {
     chunkMaxSizeDesc: "Maximum size of a single chunk in characters (min 1, default 2000)",
     chunkOverlap: "Chunk Overlap",
     chunkOverlapDesc: "Overlap size between adjacent chunks in characters (must be smaller than chunk max size, default 200)",
+    // Second Brain Layer 설정 I18N 키 (Req 12.1)
+    secondBrain: "Second Brain",
+    secondBrainEnabled: "Enable Second Brain",
+    secondBrainEnabledDesc: "Turn on the active knowledge layer. While off, no notes are created, modified, or deleted automatically.",
+    secondBrainWikiFolder: "Wiki Folder",
+    secondBrainWikiFolderDesc: "Root folder where Second Brain notes are created and managed (default: Second Brain)",
+    secondBrainScheduler: "Enable Scheduler",
+    secondBrainSchedulerDesc: "Automatically run the non-destructive cleanup pipeline on app startup once the interval has elapsed",
+    secondBrainInterval: "Scheduler Interval (hours)",
+    secondBrainIntervalDesc: "Minimum hours between automatic scheduler runs (minimum 1, default 24)",
     // JSON 에디터 관련 I18N 키
     mcpFormatBtn: "Format",
     mcpTemplateBtn: "Insert Template",
@@ -392,6 +404,16 @@ export const I18N = {
     chunkMaxSizeDesc: "단일 청크의 최대 크기 (문자 수, 최소 1, 기본값 2000)",
     chunkOverlap: "청크 겹침 크기",
     chunkOverlapDesc: "인접 청크 간 겹침 크기 (문자 수, 청크 최대 크기보다 작아야 함, 기본값 200)",
+    // Second Brain Layer 설정 I18N 키 (Req 12.1)
+    secondBrain: "Second Brain",
+    secondBrainEnabled: "Second Brain 활성화",
+    secondBrainEnabledDesc: "능동 지식 레이어를 켭니다. 꺼져 있는 동안에는 어떤 노트도 자동으로 생성·수정·삭제하지 않습니다.",
+    secondBrainWikiFolder: "위키 폴더",
+    secondBrainWikiFolderDesc: "Second Brain 노트를 생성·관리할 루트 폴더 (기본값: Second Brain)",
+    secondBrainScheduler: "스케줄러 활성화",
+    secondBrainSchedulerDesc: "주기가 지났으면 앱 시작 시 비파괴 정리 파이프라인을 자동 실행합니다",
+    secondBrainInterval: "스케줄러 주기 (시간)",
+    secondBrainIntervalDesc: "자동 스케줄러 실행 간 최소 시간 (최소 1, 기본값 24)",
     // JSON 에디터 관련 I18N 키
     mcpFormatBtn: "포맷",
     mcpTemplateBtn: "템플릿 삽입",
@@ -578,6 +600,16 @@ export const I18N = {
     chunkMaxSizeDesc: "単一チャンクの最大サイズ（文字数、最小1、デフォルト2000）",
     chunkOverlap: "チャンク重複サイズ",
     chunkOverlapDesc: "隣接チャンク間の重複サイズ（文字数、チャンク最大サイズより小さくする必要あり、デフォルト200）",
+    // Second Brain Layer 設定 I18N キー (Req 12.1)
+    secondBrain: "Second Brain",
+    secondBrainEnabled: "Second Brainを有効化",
+    secondBrainEnabledDesc: "能動的なナレッジレイヤーを有効にします。オフの間は、ノートが自動的に作成・変更・削除されることはありません。",
+    secondBrainWikiFolder: "Wikiフォルダ",
+    secondBrainWikiFolderDesc: "Second Brainノートを作成・管理するルートフォルダ（デフォルト: Second Brain）",
+    secondBrainScheduler: "スケジューラを有効化",
+    secondBrainSchedulerDesc: "間隔が経過した場合、アプリ起動時に非破壊的なクリーンアップパイプラインを自動実行します",
+    secondBrainInterval: "スケジューラ間隔（時間）",
+    secondBrainIntervalDesc: "自動スケジューラ実行間の最小時間（最小1、デフォルト24）",
     // JSON エディター関連 I18N キー
     mcpFormatBtn: "フォーマット",
     mcpTemplateBtn: "テンプレート挿入",
@@ -1260,6 +1292,107 @@ export class GeminiSettingTab extends PluginSettingTab {
               chunkMaxSize: normalized.maxSize,
               chunkOverlap: normalized.overlap,
             });
+          })
+      );
+
+    // === Second Brain Layer 설정 (Req 12.1, 12.2) ===
+    // 옵트인 능동 지식 레이어. enabled가 false면 어떤 자동 변경도 일어나지 않는다.
+    new Setting(containerEl).setName(t.secondBrain).setHeading();
+
+    // 기능 활성화 토글 (Req 1.1, 12.1)
+    new Setting(containerEl)
+      .setName(t.secondBrainEnabled)
+      .setDesc(t.secondBrainEnabledDesc)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.secondBrain.enabled)
+          .onChange(async (value) => {
+            // 변경 값을 합쳐 정규화 후 동일 참조에 반영 (Req 1.4, 1.5, 12.2)
+            const normalized = normalizeSecondBrainSettings({
+              ...this.plugin.settings.secondBrain,
+              enabled: value,
+            });
+            // Object.assign으로 기존 객체를 제자리 갱신해 런타임 참조(컨텍스트)에 즉시 반영한다
+            Object.assign(this.plugin.settings.secondBrain, normalized);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // Wiki_Folder 경로 (Req 1.2, 1.4, 12.1)
+    new Setting(containerEl)
+      .setName(t.secondBrainWikiFolder)
+      .setDesc(t.secondBrainWikiFolderDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("Second Brain")
+          .setValue(this.plugin.settings.secondBrain.wikiFolder)
+          .onChange(async (value) => {
+            // 공백/빈 문자열은 normalize가 기본값으로 보정한다 (Req 1.4)
+            const normalized = normalizeSecondBrainSettings({
+              ...this.plugin.settings.secondBrain,
+              wikiFolder: value,
+            });
+            Object.assign(this.plugin.settings.secondBrain, normalized);
+            await this.plugin.saveSettings();
+            // 보정 결과가 입력과 다르면(공백/빈 입력) 표시값을 갱신
+            if (normalized.wikiFolder !== value) text.setValue(normalized.wikiFolder);
+          })
+      )
+      .addButton((btn) =>
+        btn.setIcon("folder").setTooltip("Browse").onClick(() => {
+          new FolderSuggestModal(this.app, async (folder) => {
+            const normalized = normalizeSecondBrainSettings({
+              ...this.plugin.settings.secondBrain,
+              wikiFolder: folder,
+            });
+            Object.assign(this.plugin.settings.secondBrain, normalized);
+            await this.plugin.saveSettings();
+            this.display();
+          }, t.folderSelectPlaceholder).open();
+        })
+      );
+
+    // 스케줄러 활성화 토글 (Req 1.2, 12.1)
+    new Setting(containerEl)
+      .setName(t.secondBrainScheduler)
+      .setDesc(t.secondBrainSchedulerDesc)
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.secondBrain.schedulerEnabled)
+          .onChange(async (value) => {
+            const normalized = normalizeSecondBrainSettings({
+              ...this.plugin.settings.secondBrain,
+              schedulerEnabled: value,
+            });
+            Object.assign(this.plugin.settings.secondBrain, normalized);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // 스케줄러 주기 (시간 단위, 최소 1 정수). normalize가 <1/비정수를 max(1, round(n))로 보정 (Req 1.5)
+    new Setting(containerEl)
+      .setName(t.secondBrainInterval)
+      .setDesc(t.secondBrainIntervalDesc)
+      .addText((text) =>
+        text
+          .setPlaceholder("24")
+          .setValue(String(this.plugin.settings.secondBrain.schedulerIntervalHours))
+          .onChange(async (value) => {
+            const num = parseInt(value, 10);
+            if (isNaN(num)) {
+              return; // 숫자가 아니면 무시 (입력 도중 상태)
+            }
+            // <1/비정수 → max(1, round(n)) 보정 (Req 1.5)
+            const normalized = normalizeSecondBrainSettings({
+              ...this.plugin.settings.secondBrain,
+              schedulerIntervalHours: num,
+            });
+            Object.assign(this.plugin.settings.secondBrain, normalized);
+            await this.plugin.saveSettings();
+            // 보정 결과가 입력과 다르면 표시값을 동기화
+            if (normalized.schedulerIntervalHours !== num) {
+              text.setValue(String(normalized.schedulerIntervalHours));
+            }
           })
       );
 

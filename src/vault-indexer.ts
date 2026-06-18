@@ -350,6 +350,17 @@ export class VaultIndexer {
   }
 
   /**
+   * 인덱싱된 모든 항목을 읽기 전용 스냅샷 배열로 반환한다 (Req 9.6).
+   *
+   * `emerge` 등 전체 인덱스 항목 열거가 필요한 능동 기능이 `search` 대신 사용한다.
+   * 내부 `Map`을 직접 노출하지 않도록 `Array.from(values())`로 얕은 복사한 스냅샷을
+   * 돌려주며, 기존 `search`/직렬화/인덱싱 동작에는 영향을 주지 않는다(무회귀).
+   */
+  getEntries(): VaultIndexEntry[] {
+    return Array.from(this.index.values());
+  }
+
+  /**
    * Graph_RAG_Search 진입점 (task 8.4).
    *
    * 파이프라인:
