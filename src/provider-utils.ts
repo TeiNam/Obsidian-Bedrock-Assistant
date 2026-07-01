@@ -59,6 +59,7 @@ export function truncateForEmbedding(text: string, maxChars: number): string {
  */
 export function supportsTemperature(modelId: string): boolean {
   const id = (modelId ?? "").toLowerCase();
-  // Anthropic claude-opus-4 계열은 temperature 미지원
-  return !/claude-opus-4/.test(id);
+  // effort 기반 추론 모델은 temperature 미지원 (opus-4 이상, sonnet-5 이상)
+  // ponytail: 신규 effort 모델 나오면 이 패턴에 추가
+  return !/claude-opus-4|claude-sonnet-5/.test(id);
 }
