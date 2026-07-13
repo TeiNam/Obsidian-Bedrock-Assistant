@@ -335,7 +335,7 @@ export class ToolExecutor {
         case "list_files":
           return this.listFiles((input.folder as string) || "");
         case "get_active_note":
-          return this.getActiveNote();
+          return await this.getActiveNote();
         case "open_note":
           return await this.openNote(input.path as string);
         case "list_templates":
@@ -521,13 +521,20 @@ export class ToolExecutor {
     return items.length > 0 ? items.join("\n") : "빈 폴더입니다.";
   }
 
-  private getActiveNote(): string {
+  private async getActiveNote(): Promise<string> {
+    // 활성 마크다운 뷰가 있으면 에디터 값(미저장 편집 포함)을 우선 사용.
+    // 채팅 사이드바에 포커스가 있으면 활성 뷰가 ChatView라 null이 되므로,
+    // getActiveFile()로 "가장 최근 활성 파일"을 fallback 조회한다.
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view || !view.file) {
+    if (view?.file) {
+      return `경로: ${view.file.path}\n\n${view.editor.getValue()}`;
+    }
+    const file = this.app.workspace.getActiveFile();
+    if (!file) {
       return "현재 열려있는 노트가 없습니다.";
     }
-    const content = view.editor.getValue();
-    return `경로: ${view.file.path}\n\n${content}`;
+    const content = await this.app.vault.cachedRead(file);
+    return `경로: ${file.path}\n\n${content}`;
   }
 
   private async openNote(path: string): Promise<string> {
