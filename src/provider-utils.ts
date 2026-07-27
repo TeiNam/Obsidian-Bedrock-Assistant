@@ -13,9 +13,12 @@ import type {
 	ModelInfo,
 	ConverseMessage,
 	ContentBlockToolUse,
+	EffortLevel,
 	ToolDefinition,
 	GeminiAssistantSettings,
 } from "./types";
+
+export type { EffortLevel };
 
 // === maxTokens 입력 정규화 ===
 
@@ -101,40 +104,276 @@ export function truncateForEmbedding(text: string, maxChars: number): string {
 	return text.length <= maxChars ? text : text.slice(0, maxChars);
 }
 
-// === temperature 지원 여부 판별 (공급자별 최신 모델 대응) ===
+// === 채팅 모델 계열 식별 (Bedrock 추론 프로파일 목록 필터/정렬) ===
 
 /**
- * 주어진 공급자/모델이 temperature 파라미터를 지원하는지 판별한다.
- * 최신 추론(reasoning) 모델 중 일부는 temperature를 기본값 외 값으로 지정하면
- * 요청이 거부되거나(예: OpenAI GPT-5/o 시리즈) 권장되지 않으므로(예: Gemini 3),
- * 이런 모델에는 요청에서 temperature를 생략하기 위해 false를 반환한다.
- *
- * 공급자별 규칙:
- *  - openai: gpt-5 계열 및 o1/o2/.../o9 추론 모델은 미지원(기본값 1만 허용) → false
- *  - gemini: gemini-3 계열은 기본값(1.0) 유지 권장 → false(생략)
- *  - bedrock: Anthropic claude-opus-4 계열은 temperature 미지원 → false
- *  - ollama: 로컬/셀프호스트 모델은 거부하지 않으므로 항상 지원 → true
- * 그 외 모델은 모두 지원하는 것으로 간주한다(true).
+ * Bedrock 채팅 모델로 노출할 계열 패턴. 배열 순서가 곧 표시 우선순위이며,
+ * 인덱스는 "같은 계열에서 최신 버전만 남기기" 축약의 그룹 키로도 쓰인다.
+ * 버전 숫자를 패턴에 넣지 않으므로 신규 버전이 나와도 자동으로 매칭된다.
  */
-export function supportsTemperature(
-	provider: "openai" | "ollama" | "gemini" | "bedrock",
-	modelId: string
-): boolean {
+const CHAT_MODEL_FAMILIES: readonly RegExp[] = [
+	/claude-opus/,
+	/claude-sonnet/,
+	/claude-haiku/,
+	// OpenAI GPT 계열은 같은 버전 안에서도 variant(sol/terra/luna)가 별개 모델이다.
+	/gpt-[\d.]+-sol/,
+	/gpt-[\d.]+-terra/,
+	/gpt-[\d.]+-luna/,
+	// variant 없는 GPT 계열(gpt-oss 등)은 마지막 그룹으로 묶는다.
+	/gpt-/,
+];
+
+/**
+ * 모델 ID가 속한 채팅 모델 계열의 순위를 반환한다.
+ * 채팅 모델로 노출하지 않는 모델(임베딩·이미지 등)이면 null.
+ * 반환값은 정렬 우선순위(작을수록 먼저)와 계열 그룹 키를 겸한다.
+ */
+export function chatModelRank(modelId: string): number | null {
+	const id = (modelId ?? "").toLowerCase();
+	const rank = CHAT_MODEL_FAMILIES.findIndex((re) => re.test(id));
+	return rank === -1 ? null : rank;
+}
+
+/**
+ * 같은 계열 두 모델 ID의 버전 우열을 비교한다(a가 최신이면 양수).
+ * 단순 문자열 비교는 `claude-opus-10`을 `claude-opus-4`보다 낮게 판정하므로,
+ * ID에 등장하는 숫자 그룹을 자연 순서(numeric)로 비교한다.
+ * 숫자 그룹이 모두 같으면 문자열 비교로 폴백한다.
+ */
+export function compareModelVersion(a: string, b: string): number {
+	const numsA = (a.match(/\d+/g) ?? []).map(Number);
+	const numsB = (b.match(/\d+/g) ?? []).map(Number);
+	for (let i = 0; i < Math.max(numsA.length, numsB.length); i++) {
+		// 숫자 그룹이 더 적은 쪽은 해당 자리를 0으로 취급한다(예: v4 < v4-1).
+		const diff = (numsA[i] ?? 0) - (numsB[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return a === b ? 0 : a > b ? 1 : -1;
+}
+
+/**
+ * 모델 ID에서 표시용 공급자 이름을 추론한다.
+ * Bedrock 추론 프로파일 ID는 `global.<vendor>.<model>` 형태이므로 두 번째 세그먼트를
+ * 쓰되, 알려진 벤더는 표기를 정규화한다.
+ */
+export function inferProviderName(modelId: string): string {
+	const id = (modelId ?? "").toLowerCase();
+	if (id.includes("anthropic") || id.includes("claude")) return "Anthropic";
+	if (id.includes("openai") || id.includes("gpt-")) return "OpenAI";
+	const segments = id.split(".");
+	const vendor = segments.length >= 3 ? segments[1] : segments[0];
+	if (!vendor) return "Unknown";
+	return vendor.charAt(0).toUpperCase() + vendor.slice(1);
+}
+
+/**
+ * 현재 선택된 백엔드의 채팅 모델 ID를 반환한다.
+ * 백엔드마다 모델 ID를 보관하는 설정 필드가 달라(bedrockChatModel /
+ * openaiChatModel / ollamaChatModel / chatModel) 호출부가 분기하지 않도록 모은다.
+ */
+export function activeChatModelId(settings: GeminiAssistantSettings): string {
+	switch (settings.aiBackend) {
+		case "bedrock":
+			return settings.bedrockChatModel;
+		case "openai":
+			return settings.openaiChatModel;
+		case "ollama":
+			return settings.ollamaChatModel;
+		case "gemini":
+		default:
+			return settings.chatModel;
+	}
+}
+
+// === 추론 강도(effort) 지원 여부 및 요청 파라미터 구성 ===
+
+/** 공급자(백엔드) 식별자. */
+export type AiProvider = "openai" | "ollama" | "gemini" | "bedrock";
+
+/**
+ * effort 파라미터를 받는 추론 모델 패턴(공급자별).
+ * 버전 숫자는 "해당 버전 이상"을 뜻하며, 두 자리 이상 버전(예: gpt-10, claude-opus-12)도
+ * 낮은 버전으로 오판하지 않도록 `\d{2,}`를 함께 허용한다.
+ *
+ *  - openai: gpt-5 이상 계열과 o 시리즈(o1/o3/o4 …) 추론 모델
+ *  - gemini: gemini-3 이상 계열
+ *  - bedrock: Anthropic opus-4 이상 / sonnet-5 이상 / haiku-5 이상,
+ *             그리고 Bedrock에 올라온 OpenAI GPT-5 이상 계열(sol/terra/luna 등)
+ *  - ollama: 로컬/셀프호스트 모델은 effort 규격이 없으므로 대상 없음
+ */
+const EFFORT_MODEL_PATTERNS: Record<AiProvider, readonly RegExp[]> = {
+	openai: [/^gpt-(?:[5-9]|\d{2,})/, /^o[1-9]/],
+	gemini: [/^gemini-(?:[3-9]|\d{2,})/],
+	bedrock: [
+		/claude-opus-(?:[4-9]|\d{2,})/,
+		/claude-sonnet-(?:[5-9]|\d{2,})/,
+		/claude-haiku-(?:[5-9]|\d{2,})/,
+		/gpt-(?:[5-9]|\d{2,})/,
+	],
+	ollama: [],
+};
+
+/**
+ * 주어진 공급자/모델이 추론 강도(effort) 파라미터를 지원하는지 판별한다.
+ * 지원하지 않는 모델(구형 모델, Ollama 로컬 모델 등)에는 요청에서 effort를 생략한다.
+ * 이 프로젝트는 temperature를 전송하지 않으므로, effort 미지원 모델은
+ * 공급자 기본 샘플링 설정을 그대로 사용한다.
+ */
+export function supportsEffort(provider: AiProvider, modelId: string): boolean {
+	const id = (modelId ?? "").toLowerCase();
+	return (EFFORT_MODEL_PATTERNS[provider] ?? []).some((re) => re.test(id));
+}
+
+/** effort 값의 강도 순서(약함 → 강함). clampEffort의 근접 값 선택 기준. */
+const EFFORT_RANK: readonly EffortLevel[] = [
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+];
+
+/** Anthropic Claude 계열이 허용하는 effort 값. */
+const ANTHROPIC_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+/**
+ * OpenAI reasoning_effort 허용 값.
+ * 스펙상 전체 집합은 none~max지만 모델마다 지원 범위가 다르다.
+ *  - gpt-5.6 이상: minimal~max (xhigh/max 지원)
+ *  - 그 이전 gpt-5.x: minimal~high
+ *  - o 시리즈: low~high (minimal 미지원)
+ * ("none"은 추론을 끄는 값으로, 이 플러그인은 노출하지 않는다.)
+ */
+const OPENAI_EFFORTS_FULL: readonly EffortLevel[] = [
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+];
+const OPENAI_EFFORTS_BASIC: readonly EffortLevel[] = ["minimal", "low", "medium", "high"];
+const O_SERIES_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high"];
+/**
+ * Gemini thinking level 허용 값.
+ * Gemini 3 이상에서 지원하며 모델 계열별로 범위가 다르다.
+ *  - Pro 계열: low / high 만 지원
+ *  - Flash·Flash-Lite 계열: minimal~high
+ * 2.5 이하는 thinkingBudget(토큰 수) 규격이라 effort 대상에서 제외한다
+ * (EFFORT_MODEL_PATTERNS.gemini 참고) — 해당 모델은 공급자 기본값을 사용한다.
+ */
+const GEMINI_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high"];
+const GEMINI_PRO_EFFORTS: readonly EffortLevel[] = ["low", "high"];
+
+/** OpenAI 모델 ID의 허용 effort 집합을 판별한다(Bedrock에 올라온 GPT도 동일 규칙). */
+function openAiEffortsFor(id: string): readonly EffortLevel[] {
+	// o 시리즈(o1/o3/o4 …)는 minimal을 지원하지 않는다.
+	if (/^o[1-9]/.test(id)) return O_SERIES_EFFORTS;
+	// gpt-5.6 이상은 xhigh/max까지 지원한다. 5.6 미만(5, 5.1, 5.4 …)은 high까지.
+	const version = /gpt-(\d+)(?:\.(\d+))?/.exec(id);
+	if (version) {
+		const major = Number(version[1]);
+		const minor = Number(version[2] ?? 0);
+		if (major > 5 || (major === 5 && minor >= 6)) return OPENAI_EFFORTS_FULL;
+	}
+	return OPENAI_EFFORTS_BASIC;
+}
+
+/**
+ * 모델이 허용하는 effort 값 목록을 반환한다(effort 미지원이면 빈 배열).
+ * 벤더마다 허용 집합이 다르므로(Anthropic만 xhigh/max 보유) 설정 UI는
+ * 이 목록만 사용자에게 노출해야 한다.
+ */
+export function effortLevels(provider: AiProvider, modelId: string): readonly EffortLevel[] {
+	if (!supportsEffort(provider, modelId)) return [];
+	const id = (modelId ?? "").toLowerCase();
+	switch (provider) {
+		case "gemini":
+			// Pro 계열은 low/high만 지원한다(minimal/medium 전송 시 INVALID_ARGUMENT).
+			return /-pro/.test(id) ? GEMINI_PRO_EFFORTS : GEMINI_EFFORTS;
+		case "openai":
+			return openAiEffortsFor(id);
+		case "bedrock":
+			// Bedrock은 Anthropic과 OpenAI 모델을 함께 제공하므로 모델 ID로 구분한다.
+			return /gpt-/.test(id) ? openAiEffortsFor(id) : ANTHROPIC_EFFORTS;
+		default:
+			return [];
+	}
+}
+
+/**
+ * 저장된 effort 값을 해당 모델이 허용하는 값으로 보정한다.
+ * 백엔드/모델을 바꾸면 허용 집합이 달라지므로(예: Anthropic "max" → OpenAI 미허용),
+ * 강도 랭크가 가장 가까운 허용 값으로 수렴시킨다. 동거리면 더 약한 쪽을 택한다.
+ */
+export function clampEffort(
+	provider: AiProvider,
+	modelId: string,
+	value: EffortLevel
+): EffortLevel {
+	const allowed = effortLevels(provider, modelId);
+	if (allowed.length === 0) return value;
+	if (allowed.includes(value)) return value;
+	const target = EFFORT_RANK.indexOf(value);
+	// 알 수 없는 값(설정 파일 손상 등)은 중간 강도로 폴백한다.
+	if (target === -1) return allowed.includes("medium") ? "medium" : allowed[0];
+	let best = allowed[0];
+	let bestDist = Number.POSITIVE_INFINITY;
+	for (const level of allowed) {
+		const dist = Math.abs(EFFORT_RANK.indexOf(level) - target);
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = level;
+		}
+	}
+	return best;
+}
+
+/**
+ * 레거시 temperature 값을 effort 강도로 환산한다.
+ * temperature를 제거하는 마이그레이션에서 구버전 설정값의 "의도"(보수적 ↔ 창의적)를
+ * 최대한 승계하기 위한 매핑이며, 정확한 등가 변환은 아니다.
+ * 낮은 temperature는 결정적 출력을 원한다는 뜻이므로 낮은 강도로 대응시킨다.
+ */
+export function legacyTemperatureToEffort(temperature: number): EffortLevel {
+	if (!Number.isFinite(temperature)) return "medium";
+	if (temperature <= 0.2) return "low";
+	if (temperature <= 0.7) return "medium";
+	return "high";
+}
+
+/**
+ * 공급자별 effort 요청 파라미터를 구성한다.
+ * 각 공급자의 원본 API 스펙을 그대로 따르며, effort 미지원 모델은 빈 객체를 반환해
+ * 호출부가 파라미터를 생략하도록 한다.
+ *
+ *  - openai: `{ reasoning_effort }` (요청 본문 최상위)
+ *  - bedrock(Anthropic): `{ output_config: { effort } }` (additionalModelRequestFields)
+ *  - bedrock(OpenAI): `{ reasoning_effort }` (additionalModelRequestFields)
+ *  - gemini: `{ thinkingConfig: { thinkingLevel } }` (generationConfig 내부)
+ *  - ollama: 대상 없음 → 빈 객체
+ */
+export function buildEffortParams(
+	provider: AiProvider,
+	modelId: string,
+	effort: EffortLevel
+): Record<string, unknown> {
+	if (!supportsEffort(provider, modelId)) return {};
+	const level = clampEffort(provider, modelId, effort);
 	const id = (modelId ?? "").toLowerCase();
 	switch (provider) {
 		case "openai":
-			// gpt-5 계열(gpt-5, gpt-5.1 등)과 o 시리즈(o1/o3/o4 등) 추론 모델은 미지원
-			return !(/^gpt-5/.test(id) || /^o[1-9]/.test(id));
+			return { reasoning_effort: level };
 		case "gemini":
-			// Gemini 3 계열은 기본값 1.0 유지를 권장하므로 생략한다
-			return !/^gemini-3/.test(id);
+			// Gemini는 thinkingConfig.thinkingLevel로 사고 깊이를 지정한다.
+			return { thinkingConfig: { thinkingLevel: level } };
 		case "bedrock":
-			// effort 기반 추론 모델은 temperature 미지원 (opus-4 이상, sonnet-5 이상)
-			// ponytail: 신규 effort 모델 나오면 이 패턴에 추가
-			return !/claude-opus-4|claude-sonnet-5/.test(id);
-		case "ollama":
+			// 평면 `effort`는 Anthropic API에서 validation 오류가 발생하므로 중첩한다.
+			return /gpt-/.test(id)
+				? { reasoning_effort: level }
+				: { output_config: { effort: level } };
 		default:
-			return true;
+			return {};
 	}
 }
 

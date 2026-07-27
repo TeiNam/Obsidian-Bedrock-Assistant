@@ -17,6 +17,11 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
+import {
+  activeChatModelId,
+  clampEffort,
+  legacyTemperatureToEffort,
+} from "./provider-utils";
 import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 import { SecondBrainScheduler, type SecondBrainContext } from "./second-brain/scheduler";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
@@ -54,6 +59,22 @@ const DEFAULT_MCP_CONFIG = {
   },
 };
 
+/**
+ * 비밀값을 변경 감지용 요약 문자열로 환산한다.
+ * 길이 + 문자 합 기반 체크섬이라 평문을 보관하지 않으면서도, 같은 접두사로
+ * 시작하는 다른 키로 교체된 경우를 구분할 수 있다(암호학적 용도 아님).
+ */
+function digestSecret(value: string): string {
+  const s = value ?? "";
+  if (!s) return "0";
+  let sum = 0;
+  for (let i = 0; i < s.length; i++) {
+    // 위치를 곱해 순서가 다른 같은 문자 집합도 구분한다.
+    sum = (sum + s.charCodeAt(i) * (i + 1)) % 0xffffffff;
+  }
+  return `${s.length}-${sum.toString(36)}`;
+}
+
 export default class GeminiAssistantPlugin extends Plugin {
   settings!: GeminiAssistantSettings;
   aiClient!: IAiClient;
@@ -68,6 +89,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // 마지막으로 관측한 계정 스코프(백엔드·인증·리전). 변경 시 모델 캐시를 비운다.
+  private lastAccountScope = "";
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -540,6 +563,20 @@ export default class GeminiAssistantPlugin extends Plugin {
       }
     }
 
+    // 마이그레이션: temperature → effort. 구버전 설정에는 effort 키가 없고 대신
+    // temperature(0.0~1.0)가 저장돼 있으므로, 그 값의 크기를 강도로 환산해 승계한다.
+    // (temperature는 더 이상 어떤 공급자에도 전송하지 않는다.)
+    // 아래 hasMigratedKeys 분기가 saveData를 호출하므로, 그 전에 raw에 반영해야
+    // 변환 결과가 저장된다. 나중에 반영하면 기본값 "medium"이 저장돼 다음 실행에서
+    // effort 키가 존재한다는 이유로 마이그레이션이 건너뛰어진다.
+    if (typeof loaded?.effort !== "string") {
+      const legacyTemp = loaded?.temperature;
+      raw.effort =
+        typeof legacyTemp === "number" && Number.isFinite(legacyTemp)
+          ? legacyTemperatureToEffort(legacyTemp)
+          : DEFAULT_SETTINGS.effort;
+    }
+
     if (hasMigratedKeys) {
       // 기존 data.json의 키를 복호화 후 로컬 파일로 저장
       const decrypted = decryptSettings(raw);
@@ -563,11 +600,21 @@ export default class GeminiAssistantPlugin extends Plugin {
       this.settings.bedrockEmbeddingModel = DEFAULT_SETTINGS.bedrockEmbeddingModel;
     }
 
+    // 저장된 effort가 현재 백엔드·모델의 허용 집합을 벗어나면 근접 값으로 보정한다.
+    this.settings.effort = clampEffort(
+      this.settings.aiBackend,
+      activeChatModelId(this.settings),
+      this.settings.effort
+    );
+
     // Second Brain 설정 정규화 (Req 1.3): this.settings가 두 hasMigratedKeys 분기로
     // 확정된 뒤에 적용해야 한다(병합 직후에는 이후 분기에서 통째로 덮어써짐).
     // 정규화 입력은 사용자 저장 원본(loaded?.secondBrain)을 직접 사용한다.
     // 누락/부분/이상 값은 normalize가 기본값으로 채워 비파괴 마이그레이션을 보장한다.
     this.settings.secondBrain = normalizeSecondBrainSettings(loaded?.secondBrain);
+
+    // 로드 시점 스코프를 기준선으로 기록한다(첫 저장에서 불필요한 캐시 무효화 방지).
+    this.lastAccountScope = this.accountScopeKey();
   }
 
   async saveSettings(): Promise<void> {
@@ -577,10 +624,54 @@ export default class GeminiAssistantPlugin extends Plugin {
     const stripped = stripSensitiveFields(this.settings);
     await this.saveData(stripped);
     this.aiClient?.updateSettings(this.settings);
+
+    // 설정 UI는 this.settings를 먼저 바꾼 뒤 saveSettings를 호출하므로, 이 함수
+    // 내부에서 전/후를 비교하면 항상 같다. 마지막으로 관측한 스코프를 필드에 보관해
+    // 그것과 비교해야 실제 변경을 감지할 수 있다.
+    const scope = this.accountScopeKey();
+    if (this.lastAccountScope !== scope) {
+      this.lastAccountScope = scope;
+      this.refreshChatModelLists();
+    }
     // 브랜딩을 현재 백엔드에 맞게 갱신
     updateBranding(this.settings.aiBackend);
     // 설정 변경이 Graph RAG 검색에도 즉시 반영되도록 인덱서 옵션을 재적용한다 (견고성 목적)
     this.applySearchOptions();
+  }
+
+  /**
+   * 접근 가능한 모델 집합을 좌우하는 설정들의 시그니처.
+   * 백엔드·인증 방식·자격증명 주체·엔드포인트·리전이 바뀌면 이 값이 달라진다.
+   * 비밀값은 원문 대신 길이와 간단한 체크섬으로 요약해, 같은 접두사를 가진 키로
+   * 교체하는 경우까지 감지하면서도 평문을 메모리에 중복 보관하지 않는다.
+   */
+  private accountScopeKey(): string {
+    const s = this.settings;
+    switch (s.aiBackend) {
+      case "bedrock": {
+        const subject =
+          s.awsAuthMethod === "profile"
+            ? s.awsProfile
+            : s.awsAuthMethod === "apiKey"
+              ? digestSecret(s.bedrockApiKey)
+              : s.awsAccessKeyId;
+        return `bedrock:${s.awsAuthMethod}:${subject}:${s.awsRegion}`;
+      }
+      case "openai":
+        return `openai:${digestSecret(s.openaiApiKey)}:${s.openaiBaseUrl}`;
+      case "ollama":
+        return `ollama:${s.ollamaBaseUrl}`;
+      case "gemini":
+      default:
+        return `gemini:${digestSecret(s.geminiApiKey)}`;
+    }
+  }
+
+  /** 열려 있는 채팅 뷰의 모델 목록 캐시를 비워 다음 조회에서 재로드하게 한다 */
+  private refreshChatModelLists(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      (leaf.view as { refreshModelList?: () => void }).refreshModelList?.();
+    }
   }
 
   /** 현재 설정의 Graph RAG 검색 옵션을 인덱서에 적용한다 (로드/저장 시 공통 사용) */

@@ -28,7 +28,7 @@ function makeSettings(
     openaiEmbeddingModel: "text-embedding-3-large",
     openaiBaseUrl: "",
     maxTokens: 4096,
-    temperature: 0.5,
+    effort: "medium",
     ...overrides,
   };
 }
@@ -432,13 +432,32 @@ describe("OpenAIClient.converseLight", () => {
     });
     const client = new OpenAIClient(makeSettings());
 
+    // 기본 픽스처 모델(gpt-5.1)은 추론 모델이므로 max_completion_tokens를 사용한다.
+    // (추론 모델은 max_tokens를 거부한다)
     await client.converseLight("p", "s", 256);
     const body1 = JSON.parse(requestUrlMock.mock.calls[0][0].body);
-    expect(body1.max_tokens).toBe(256);
+    expect(body1.max_completion_tokens).toBe(256);
+    expect(body1.max_tokens).toBeUndefined();
 
     await client.converseLight("p", "s");
     const body2 = JSON.parse(requestUrlMock.mock.calls[1][0].body);
-    expect(body2.max_tokens).toBe(1024);
+    expect(body2.max_completion_tokens).toBe(1024);
+  });
+
+  it("비추론 모델에는 기존 max_tokens를 사용한다", async () => {
+    requestUrlMock.mockResolvedValue({
+      status: 200,
+      json: { choices: [{ message: { content: "ok" } }] },
+      text: "",
+    });
+    const client = new OpenAIClient(makeSettings({ openaiChatModel: "gpt-4o" }));
+
+    await client.converseLight("p", "s", 256);
+    const body = JSON.parse(requestUrlMock.mock.calls[0][0].body);
+    expect(body.max_tokens).toBe(256);
+    expect(body.max_completion_tokens).toBeUndefined();
+    // 비추론 모델에는 reasoning_effort도 실리지 않는다
+    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it("응답 텍스트가 없거나 공백이면 오류를 반환한다 (Req 8.5)", async () => {

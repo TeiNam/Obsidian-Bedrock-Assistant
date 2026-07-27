@@ -28,7 +28,6 @@ import {
 	toOllamaTools,
 	ollamaToolCallsToBlocks,
 	toOllamaMessages,
-	supportsTemperature,
 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
 
@@ -114,13 +113,11 @@ export class OllamaClient implements IAiClient {
 		const fullSystemPrompt = buildSystemPrompt(this.settings);
 
 		const providerMessages = toOllamaMessages(messages);
-		// temperature 미지원 모델이면 옵션에서 생략한다(현재 Ollama 로컬 모델은 모두 지원).
+		// Ollama는 effort 규격이 없고 이 프로젝트는 temperature를 전송하지 않으므로,
+		// 샘플링은 모델·서버의 기본 설정을 그대로 사용한다.
 		const options: Record<string, unknown> = {
 			num_predict: this.settings.maxTokens,
 		};
-		if (supportsTemperature("ollama", this.settings.ollamaChatModel)) {
-			options.temperature = this.settings.temperature;
-		}
 		const body: Record<string, unknown> = {
 			model: this.settings.ollamaChatModel,
 			messages: [
@@ -443,11 +440,8 @@ export class OllamaClient implements IAiClient {
 	): Promise<{ text: string }> {
 		const base = this.baseUrl();
 		const url = `${base}/api/chat`;
-		// temperature 미지원 모델이면 옵션에서 생략한다.
+		// Ollama는 effort 규격이 없으므로 출력 길이만 제한한다.
 		const lightOptions: Record<string, unknown> = { num_predict: maxTokens };
-		if (supportsTemperature("ollama", this.settings.ollamaChatModel)) {
-			lightOptions.temperature = 0;
-		}
 		const body = {
 			model: this.settings.ollamaChatModel,
 			messages: [

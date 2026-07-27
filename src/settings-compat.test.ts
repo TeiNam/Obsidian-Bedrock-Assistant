@@ -137,7 +137,7 @@ const existingSettingsWithoutAiBackendArb = fc.record({
   chatModel: fc.string({ minLength: 1, maxLength: 30 }),
   embeddingModel: fc.string({ minLength: 1, maxLength: 30 }),
   maxTokens: fc.integer({ min: 1, max: 128000 }),
-  temperature: fc.double({ min: 0, max: 2, noNaN: true }),
+  effort: fc.constantFrom("minimal" as const, "low" as const, "medium" as const, "high" as const),
   systemPrompt: fc.string({ minLength: 0, maxLength: 200 }),
   welcomeGreeting: fc.string({ minLength: 0, maxLength: 100 }),
   autoAttachActiveNote: fc.boolean(),

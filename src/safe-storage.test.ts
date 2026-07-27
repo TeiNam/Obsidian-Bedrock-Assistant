@@ -64,6 +64,7 @@ vi.mock("./safe-storage", async (importOriginal) => {
 // 모킹 후 import
 import {
   SENSITIVE_FIELDS,
+  buildCredentialsPayload,
   encryptSettings,
   decryptSettings,
   isEncrypted,
@@ -101,6 +102,8 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
       awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
       // OpenAI API 키도 민감 필드이므로 암호화 대상 (Req 3.1)
       openaiApiKey: "sk-test-openai-key",
+      // Bedrock API 키도 장기 자격증명이므로 암호화 대상
+      bedrockApiKey: "BEDROCK-API-KEY-EXAMPLE",
     };
 
     const encrypted = encryptSettings(settings);
@@ -191,6 +194,8 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
           awsSecretAccessKey: value,
           // openaiApiKey도 SENSITIVE_FIELDS에 포함되므로 동일 값 설정 (Req 3.1)
           openaiApiKey: value,
+          // bedrockApiKey도 SENSITIVE_FIELDS에 포함된다
+          bedrockApiKey: value,
         };
 
         // 암호화 → 복호화
@@ -244,8 +249,59 @@ describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
     expect(SENSITIVE_FIELDS).toContain("openaiApiKey");
   });
 
+  it("bedrockApiKey를 포함한다 (Bedrock API 키 인증)", () => {
+    expect(SENSITIVE_FIELDS).toContain("bedrockApiKey");
+  });
+
   it("ollamaBaseUrl을 포함하지 않는다 (비민감, data.json 일반 저장 — Req 3.5)", () => {
     expect(SENSITIVE_FIELDS).not.toContain("ollamaBaseUrl");
+  });
+
+  it("awsProfile을 포함하지 않는다 (프로필 이름은 비밀값이 아님)", () => {
+    expect(SENSITIVE_FIELDS).not.toContain("awsProfile");
+  });
+});
+
+// ============================================
+// 단위 테스트: 로컬 저장 페이로드 (평문 저장 거부)
+// ============================================
+
+describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않는다", () => {
+  const settings = {
+    geminiApiKey: "GKEY",
+    awsAccessKeyId: "AKID",
+    awsSecretAccessKey: "SECRET",
+    openaiApiKey: "sk-openai",
+    bedrockApiKey: "APIKEY",
+  };
+
+  it("암호화가 가능하면 모든 민감 필드를 암호화해 담는다", () => {
+    const payload = buildCredentialsPayload(settings, mockEncryptValue);
+    for (const field of SENSITIVE_FIELDS) {
+      expect(isEncrypted(payload[field])).toBe(true);
+    }
+  });
+
+  it("암호화가 불가능한(평문 반환) 환경에서는 필드를 제외한다", () => {
+    // 키체인 미구성 시 encryptValue는 원본을 그대로 반환한다
+    expect(buildCredentialsPayload(settings, (v) => v)).toEqual({});
+  });
+
+  it("빈 값은 담지 않는다", () => {
+    const payload = buildCredentialsPayload(
+      { geminiApiKey: "", awsAccessKeyId: "", bedrockApiKey: "" },
+      mockEncryptValue
+    );
+    expect(payload).toEqual({});
+  });
+
+  it("일부만 암호화 가능하면 가능한 필드만 담는다", () => {
+    // bedrockApiKey만 암호화에 실패하는 상황을 시뮬레이션
+    const payload = buildCredentialsPayload(settings, (v) =>
+      v === "APIKEY" ? v : mockEncryptValue(v)
+    );
+    expect(payload.bedrockApiKey).toBeUndefined();
+    expect(isEncrypted(payload.awsAccessKeyId)).toBe(true);
   });
 });
 

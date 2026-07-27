@@ -10,6 +10,7 @@ import {
   ListFoundationModelsCommand,
 } from "@aws-sdk/client-bedrock";
 import type {
+  EffortLevel,
   GeminiAssistantSettings,
   IAiClient,
   ToolDefinition,
@@ -18,25 +19,77 @@ import type {
   ContentBlock,
   ModelInfo,
 } from "./types";
-import { supportsTemperature } from "./provider-utils";
+import {
+  buildEffortParams,
+  chatModelRank,
+  compareModelVersion,
+  inferProviderName,
+} from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
+import { loadProfileCredentials, type AwsCredentials } from "./aws-profile";
+import { runtimeProfileDeps } from "./aws-profile-runtime";
 
 /**
- * temperature 파라미터를 지원하지 않는 모델 여부 확인
- * Anthropic claude-opus-4 계열은 temperature 미지원(공통 판별 로직에 위임)
+ * 인증 방식별 Bedrock 클라이언트 설정을 구성한다.
+ *  - apiKey: Bedrock API 키를 베어러 토큰으로 전달하고 SigV4보다 우선하도록
+ *    authSchemePreference를 httpBearerAuth로 지정한다.
+ *  - profile: `~/.aws` 프로필을 읽는 비동기 공급자를 credentials에 전달한다.
+ *    SDK가 요청 시점에 호출하고 만료(expiration) 이후 자동 재호출한다.
+ *  - accessKey: 입력된 키를 그대로 사용한다. 비어 있으면 SDK 기본 체인
+ *    (환경변수, IAM 역할 등)에 위임한다 — 기존 동작 유지.
+ *
+ * apiKey/profile을 명시했는데 값이 비어 있으면 fail-closed로 처리한다. SDK 기본
+ * 자격증명 체인으로 폴백하면 사용자가 선택하지 않은 AWS 계정으로 프롬프트가
+ * 전송되고 과금될 수 있기 때문이다.
+ *
+ * 순수 함수로 분리해 단위 테스트가 가능하게 한다(SDK 인스턴스화 없이 검증).
  */
-function isTemperatureDeprecated(modelId: string): boolean {
-  return !supportsTemperature("bedrock", modelId);
-}
+export function buildBedrockClientConfig(
+  settings: GeminiAssistantSettings,
+  profileDeps = runtimeProfileDeps
+): Record<string, unknown> {
+  const config: Record<string, unknown> = { region: settings.awsRegion };
 
-// 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)
-const MODEL_KEYWORDS = ["claude-opus", "claude-sonnet", "claude-haiku"];
-// 모델 정렬 우선순위 (opus > sonnet > haiku)
-const MODEL_PRIORITY: Record<string, number> = {
-  "claude-opus": 0,
-  "claude-sonnet": 1,
-  "claude-haiku": 2,
-};
+  switch (settings.awsAuthMethod) {
+    case "apiKey": {
+      const apiKey = settings.bedrockApiKey?.trim();
+      if (apiKey) {
+        config.token = { token: apiKey };
+        config.authSchemePreference = ["httpBearerAuth"];
+      } else {
+        config.credentials = () =>
+          Promise.reject(
+            new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
+          );
+      }
+      break;
+    }
+    case "profile": {
+      const profile = settings.awsProfile?.trim();
+      if (profile) {
+        config.credentials = (): Promise<AwsCredentials> =>
+          loadProfileCredentials(profile, profileDeps);
+      } else {
+        config.credentials = () =>
+          Promise.reject(
+            new Error("AWS 프로필이 선택되지 않았습니다. 설정에서 프로필을 선택하세요")
+          );
+      }
+      break;
+    }
+    default: {
+      if (settings.awsAccessKeyId) {
+        config.credentials = {
+          accessKeyId: settings.awsAccessKeyId,
+          secretAccessKey: settings.awsSecretAccessKey,
+        };
+      }
+      break;
+    }
+  }
+
+  return config;
+}
 
 // Bedrock API 클라이언트 (IAiClient 인터페이스 구현)
 export class BedrockClient implements IAiClient {
@@ -54,27 +107,23 @@ export class BedrockClient implements IAiClient {
     this.client = this.createClient();
   }
 
-  // 자격증명 설정 로직
+  /** 인증 방식별 클라이언트 설정 구성 (buildBedrockClientConfig에 위임) */
   private buildClientConfig(): Record<string, unknown> {
-    const config: Record<string, unknown> = {
-      region: this.settings.awsRegion,
-    };
-
-    // 수동 입력 자격증명이 있는 경우 사용
-    if (this.settings.awsAccessKeyId) {
-      config.credentials = {
-        accessKeyId: this.settings.awsAccessKeyId,
-        secretAccessKey: this.settings.awsSecretAccessKey,
-      };
-    }
-    // 자격증명 미지정 시 SDK 기본 체인 사용 (환경변수, IAM 역할 등)
-
-    return config;
+    return buildBedrockClientConfig(this.settings);
   }
 
   private createClient(): BedrockRuntimeClient {
     const config = this.buildClientConfig();
     return new BedrockRuntimeClient(config as any);
+  }
+
+  /**
+   * Converse 입력에 펼쳐 넣을 effort 관련 필드를 구성한다.
+   * effort 지원 모델이면 `{ additionalModelRequestFields: {...} }`, 아니면 빈 객체.
+   */
+  private effortRequestFields(effort: EffortLevel): Record<string, unknown> {
+    const fields = buildEffortParams("bedrock", this.settings.bedrockChatModel, effort);
+    return Object.keys(fields).length > 0 ? { additionalModelRequestFields: fields } : {};
   }
 
   // 사용 가능한 모델 목록 반환 (Bedrock 추론 프로파일에서 최신 Claude 모델 조회)
@@ -94,40 +143,39 @@ export class BedrockClient implements IAiClient {
 
       if (!resp.inferenceProfileSummaries) return [];
 
-      // global.anthropic.claude-{opus,sonnet,haiku} 프로파일만 필터
-      const models: ModelInfo[] = [];
+      // 채팅 모델 계열(Claude opus/sonnet/haiku, GPT sol/terra/luna)만 필터.
+      // 계열 판별은 provider-utils.chatModelRank에 위임한다.
+      const models: Array<ModelInfo & { rank: number }> = [];
       for (const p of resp.inferenceProfileSummaries) {
         if (!p.inferenceProfileId || !p.inferenceProfileName) continue;
         // "global." 접두사가 있는 글로벌 프로파일만
         if (!p.inferenceProfileId.startsWith("global.")) continue;
 
-        const matched = MODEL_KEYWORDS.some((kw) =>
-          p.inferenceProfileId!.includes(kw)
-        );
-        if (!matched) continue;
+        const rank = chatModelRank(p.inferenceProfileId);
+        if (rank === null) continue;
 
         models.push({
           modelId: p.inferenceProfileId,
           modelName: p.inferenceProfileName,
-          provider: "Anthropic",
+          provider: inferProviderName(p.inferenceProfileId),
           isProfile: true,
+          rank,
         });
       }
 
-      // 같은 계열(opus/sonnet/haiku)에서 최신 버전만 남기기
-      const bestByFamily = new Map<string, ModelInfo>();
+      // 같은 계열에서 최신 버전만 남기기 (계열 = chatModelRank 그룹)
+      const bestByFamily = new Map<number, ModelInfo & { rank: number }>();
       for (const m of models) {
-        const family = MODEL_KEYWORDS.find((kw) => m.modelId.includes(kw)) || "";
-        const existing = bestByFamily.get(family);
-        if (!existing || m.modelId > existing.modelId) {
-          bestByFamily.set(family, m);
+        const existing = bestByFamily.get(m.rank);
+        if (!existing || compareModelVersion(m.modelId, existing.modelId) > 0) {
+          bestByFamily.set(m.rank, m);
         }
       }
 
-      // 우선순위 순으로 정렬 (opus > sonnet > haiku)
-      return Array.from(bestByFamily.entries())
-        .sort(([a], [b]) => (MODEL_PRIORITY[a] ?? 99) - (MODEL_PRIORITY[b] ?? 99))
-        .map(([, m]) => m);
+      // 계열 우선순위 순으로 정렬
+      return Array.from(bestByFamily.values())
+        .sort((a, b) => a.rank - b.rank)
+        .map(({ rank: _rank, ...m }) => m);
     } catch (e) {
       console.error("모델 목록 조회 실패:", e);
       return [];
@@ -185,11 +233,10 @@ export class BedrockClient implements IAiClient {
       system: [{ text: fullSystemPrompt }],
       inferenceConfig: {
         maxTokens: this.settings.maxTokens,
-        // claude-opus-4 이상 모델은 temperature 파라미터를 지원하지 않음
-        ...(!isTemperatureDeprecated(this.settings.bedrockChatModel) && {
-          temperature: this.settings.temperature,
-        }),
       },
+      // 추론 강도는 벤더 고유 파라미터로 전달한다(Anthropic: output_config.effort,
+      // OpenAI: reasoning_effort). effort 미지원 모델에서는 빈 객체이므로 생략된다.
+      ...this.effortRequestFields(this.settings.effort),
     };
 
     if (tools && tools.length > 0) {
@@ -390,7 +437,9 @@ export class BedrockClient implements IAiClient {
       modelId: this.settings.bedrockChatModel,
       messages: [{ role: "user", content: [{ text: userText }] }],
       system: [{ text: systemText }],
-      inferenceConfig: { maxTokens, ...(isTemperatureDeprecated(this.settings.bedrockChatModel) ? {} : { temperature: 0 }) },
+      inferenceConfig: { maxTokens },
+      // 분류·요약은 짧고 결정적인 출력이 바람직하므로 최저 강도를 쓴다.
+      ...this.effortRequestFields("minimal"),
     };
     const command = new ConverseCommand(input as any);
     const response = await this.client.send(command);
