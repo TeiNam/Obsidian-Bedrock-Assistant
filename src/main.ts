@@ -17,6 +17,7 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
+import { clampEffort } from "./provider-utils";
 import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 import { SecondBrainScheduler, type SecondBrainContext } from "./second-brain/scheduler";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
@@ -560,6 +561,13 @@ export default class GeminiAssistantPlugin extends Plugin {
       this.settings.bedrockEmbeddingModel = DEFAULT_SETTINGS.bedrockEmbeddingModel;
     }
 
+    // 마이그레이션: effort 값이 없거나(구버전 설정) 현재 모델이 허용하지 않는 값이면
+    // 모델이 허용하는 가장 가까운 강도로 보정한다.
+    this.settings.effort = clampEffort(
+      this.settings.bedrockChatModel,
+      this.settings.effort ?? DEFAULT_SETTINGS.effort
+    );
+
     // Second Brain 설정 정규화 (Req 1.3): this.settings가 두 hasMigratedKeys 분기로
     // 확정된 뒤에 적용해야 한다(병합 직후에는 이후 분기에서 통째로 덮어써짐).
     // 정규화 입력은 사용자 저장 원본(loaded?.secondBrain)을 직접 사용한다.
@@ -568,16 +576,47 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    // 인증 방식·프로필·리전이 바뀌면 접근 가능한 모델 집합도 달라진다.
+    // 갱신 전 값을 기억해 두고, 변경이 있으면 채팅 뷰의 모델 캐시를 비운다.
+    const previousAccountScope = this.accountScopeKey();
+
     // 민감 필드는 로컬 전용 파일에 암호화하여 저장 (iCloud 동기화 안 됨)
     saveCredentialsToLocal(this.settings as unknown as Record<string, unknown>);
     // data.json에는 민감 필드를 제거하여 저장 (iCloud 동기화 대상)
     const stripped = stripSensitiveFields(this.settings);
     await this.saveData(stripped);
     this.aiClient?.updateSettings(this.settings);
+
+    if (this.accountScopeKey() !== previousAccountScope) {
+      this.refreshChatModelLists();
+    }
     // 브랜딩 갱신 (Bedrock 고정)
     updateBranding();
     // 설정 변경이 Graph RAG 검색에도 즉시 반영되도록 인덱서 옵션을 재적용한다 (견고성 목적)
     this.applySearchOptions();
+  }
+
+  /**
+   * 접근 가능한 모델 집합을 좌우하는 설정들의 시그니처.
+   * 인증 방식·자격증명 주체·리전이 바뀌면 이 값이 달라진다.
+   * (비밀값 자체가 아니라 앞부분만 사용해 변경 감지에 필요한 최소 정보만 담는다.)
+   */
+  private accountScopeKey(): string {
+    const s = this.settings;
+    const subject =
+      s.awsAuthMethod === "profile"
+        ? s.awsProfile
+        : s.awsAuthMethod === "apiKey"
+          ? s.bedrockApiKey.slice(0, 8)
+          : s.awsAccessKeyId;
+    return `${s.awsAuthMethod}:${subject}:${s.awsRegion}`;
+  }
+
+  /** 열려 있는 채팅 뷰의 모델 목록 캐시를 비워 다음 조회에서 재로드하게 한다 */
+  private refreshChatModelLists(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+      (leaf.view as { refreshModelList?: () => void }).refreshModelList?.();
+    }
   }
 
   /** 현재 설정의 Graph RAG 검색 옵션을 인덱서에 적용한다 (로드/저장 시 공통 사용) */

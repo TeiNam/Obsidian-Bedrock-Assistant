@@ -92,6 +92,20 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
   };
 }
 
+/**
+ * Bedrock 인증 방식.
+ *  - accessKey: Access Key ID + Secret Access Key 직접 입력 (기존 방식, 기본값)
+ *  - apiKey: Bedrock API 키(장기 베어러 토큰)로 인증
+ *  - profile: `~/.aws` 공유 설정의 프로필 사용(정적 자격증명 또는 `aws sso login` 결과)
+ */
+export type AwsAuthMethod = "accessKey" | "apiKey" | "profile";
+
+/**
+ * 추론 강도(effort). effort 기반 최신 모델에서 temperature를 대체하는 파라미터로,
+ * 약함 → 강함 순서로 나열한다. 모델별 허용 값은 provider-utils의 effortLevels 참고.
+ */
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {
   language: "en" | "ko" | "ja";
@@ -135,16 +149,24 @@ export interface GeminiAssistantSettings {
   archiveCleanFolder: string;
 
   // === AWS Bedrock 백엔드 필드 ===
+  /** Bedrock 인증 방식 (액세스 키 / API 키 / 공유 프로필) */
+  awsAuthMethod: AwsAuthMethod;
   /** AWS Access Key ID (Bedrock 자격증명) */
   awsAccessKeyId: string;
   /** AWS Secret Access Key (Bedrock 자격증명) */
   awsSecretAccessKey: string;
+  /** Bedrock API 키 (장기 베어러 토큰). awsAuthMethod="apiKey"에서 사용 */
+  bedrockApiKey: string;
+  /** `~/.aws` 공유 설정의 프로필 이름. awsAuthMethod="profile"에서 사용 */
+  awsProfile: string;
   /** AWS 리전 (Bedrock) */
   awsRegion: string;
   /** Bedrock 채팅 모델 ID */
   bedrockChatModel: string;
   /** Bedrock 임베딩 모델 ID */
   bedrockEmbeddingModel: string;
+  /** 추론 강도(effort). effort 기반 최신 모델에서 temperature를 대체한다 */
+  effort: EffortLevel;
 
   // === Graph RAG 검색 설정 필드 ===
   /** 그래프 순회 탐색 깊이 (hop). 기본 1, 유효 범위 0~3 정수 (0이면 그래프 순회 비활성) */
@@ -211,11 +233,16 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   archiveCleanDays: 90,
   archiveCleanFolder: "ToDo/Archive",
   // AWS Bedrock 백엔드 기본값
+  awsAuthMethod: "accessKey",
   awsAccessKeyId: "",
   awsSecretAccessKey: "",
+  bedrockApiKey: "",
+  awsProfile: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
   bedrockEmbeddingModel: "",
+  // effort 기본값: 품질과 지연시간의 균형점
+  effort: "medium",
   // Graph RAG 검색 설정 기본값
   graphTraversalDepth: 1,
   chunkMaxSize: 2000,

@@ -64,6 +64,7 @@ vi.mock("./safe-storage", async (importOriginal) => {
 // 모킹 후 import
 import {
   SENSITIVE_FIELDS,
+  buildCredentialsPayload,
   encryptSettings,
   decryptSettings,
   isEncrypted,
@@ -82,6 +83,10 @@ describe("SENSITIVE_FIELDS", () => {
     expect(SENSITIVE_FIELDS).toContain("awsSecretAccessKey");
   });
 
+  it("bedrockApiKey를 포함한다 (Bedrock API 키 인증)", () => {
+    expect(SENSITIVE_FIELDS).toContain("bedrockApiKey");
+  });
+
   it("geminiApiKey를 포함하지 않는다 (Gemini 제거)", () => {
     expect(SENSITIVE_FIELDS).not.toContain("geminiApiKey");
   });
@@ -97,6 +102,7 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
       ...DEFAULT_SETTINGS,
       awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
       awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      bedrockApiKey: "BEDROCK-API-KEY-EXAMPLE",
     };
 
     const encrypted = encryptSettings(settings);
@@ -140,6 +146,7 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
       ...DEFAULT_SETTINGS,
       awsAccessKeyId: "",
       awsSecretAccessKey: "",
+      bedrockApiKey: "",
     };
 
     const encrypted = encryptSettings(settings);
@@ -147,6 +154,48 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     // 빈 문자열은 그대로 유지
     expect(encrypted.awsAccessKeyId).toBe("");
     expect(encrypted.awsSecretAccessKey).toBe("");
+    expect(encrypted.bedrockApiKey).toBe("");
+  });
+});
+
+// ============================================
+// 단위 테스트: 로컬 저장 페이로드 (평문 저장 거부)
+// ============================================
+
+describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않는다", () => {
+  const settings = {
+    awsAccessKeyId: "AKID",
+    awsSecretAccessKey: "SECRET",
+    bedrockApiKey: "APIKEY",
+  };
+
+  it("암호화가 가능하면 모든 민감 필드를 암호화해 담는다", () => {
+    const payload = buildCredentialsPayload(settings, mockEncryptValue);
+    for (const field of SENSITIVE_FIELDS) {
+      expect(isEncrypted(payload[field])).toBe(true);
+    }
+  });
+
+  it("암호화가 불가능한(평문 반환) 환경에서는 필드를 제외한다", () => {
+    // 키체인 미구성 시 encryptValue는 원본을 그대로 반환한다
+    const payload = buildCredentialsPayload(settings, (v) => v);
+    expect(payload).toEqual({});
+  });
+
+  it("빈 값은 담지 않는다", () => {
+    const payload = buildCredentialsPayload(
+      { awsAccessKeyId: "", awsSecretAccessKey: "", bedrockApiKey: "" },
+      mockEncryptValue
+    );
+    expect(payload).toEqual({});
+  });
+
+  it("일부만 암호화 가능하면 가능한 필드만 담는다", () => {
+    // bedrockApiKey만 암호화에 실패하는 상황을 시뮬레이션
+    const payload = buildCredentialsPayload(settings, (v) =>
+      v === "APIKEY" ? v : mockEncryptValue(v)
+    );
+    expect(Object.keys(payload).sort()).toEqual(["awsAccessKeyId", "awsSecretAccessKey"]);
   });
 });
 
@@ -178,6 +227,7 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
           ...DEFAULT_SETTINGS,
           awsAccessKeyId: value,
           awsSecretAccessKey: value,
+          bedrockApiKey: value,
         };
 
         // 암호화 → 복호화
@@ -198,11 +248,13 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
       fc.property(
         nonEmptyStringArb,
         nonEmptyStringArb,
-        (accessKey, secretKey) => {
+        nonEmptyStringArb,
+        (accessKey, secretKey, apiKey) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
             awsAccessKeyId: accessKey,
             awsSecretAccessKey: secretKey,
+            bedrockApiKey: apiKey,
           };
 
           const encrypted = encryptSettings(settings);
@@ -210,6 +262,7 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
 
           expect(decrypted.awsAccessKeyId).toBe(accessKey);
           expect(decrypted.awsSecretAccessKey).toBe(secretKey);
+          expect(decrypted.bedrockApiKey).toBe(apiKey);
         },
       ),
       { numRuns: 100 },

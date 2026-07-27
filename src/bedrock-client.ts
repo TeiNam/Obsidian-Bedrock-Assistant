@@ -18,25 +18,15 @@ import type {
   ContentBlock,
   ModelInfo,
 } from "./types";
-import { supportsTemperature } from "./provider-utils";
+import {
+  buildGenerationParams,
+  chatModelRank,
+  compareModelVersion,
+  inferProviderName,
+} from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
-
-/**
- * temperature 파라미터를 지원하지 않는 모델 여부 확인
- * Anthropic claude-opus-4 계열은 temperature 미지원(공통 판별 로직에 위임)
- */
-function isTemperatureDeprecated(modelId: string): boolean {
-  return !supportsTemperature(modelId);
-}
-
-// 가져올 글로벌 모델 키워드 (opus, sonnet, haiku만 필터)
-const MODEL_KEYWORDS = ["claude-opus", "claude-sonnet", "claude-haiku"];
-// 모델 정렬 우선순위 (opus > sonnet > haiku)
-const MODEL_PRIORITY: Record<string, number> = {
-  "claude-opus": 0,
-  "claude-sonnet": 1,
-  "claude-haiku": 2,
-};
+import { loadProfileCredentials, type AwsCredentials } from "./aws-profile";
+import { runtimeProfileDeps } from "./aws-profile-runtime";
 
 // Bedrock API 클라이언트 (IAiClient 인터페이스 구현)
 export class BedrockClient implements IAiClient {
@@ -54,20 +44,49 @@ export class BedrockClient implements IAiClient {
     this.client = this.createClient();
   }
 
-  // 자격증명 설정 로직
+  /**
+   * 인증 방식별 클라이언트 설정 구성.
+   *  - apiKey: Bedrock API 키를 베어러 토큰으로 전달하고 SigV4보다 우선하도록
+   *    authSchemePreference를 httpBearerAuth로 지정한다.
+   *  - profile: `~/.aws` 프로필을 읽는 비동기 공급자를 credentials에 전달한다.
+   *    SDK가 요청 시점에 호출하고 만료(expiration) 이후 자동 재호출한다.
+   *  - accessKey: 입력된 키를 그대로 사용한다. 비어 있으면 SDK 기본 체인
+   *    (환경변수, IAM 역할 등)에 위임한다.
+   */
   private buildClientConfig(): Record<string, unknown> {
     const config: Record<string, unknown> = {
       region: this.settings.awsRegion,
     };
 
-    // 수동 입력 자격증명이 있는 경우 사용
-    if (this.settings.awsAccessKeyId) {
-      config.credentials = {
-        accessKeyId: this.settings.awsAccessKeyId,
-        secretAccessKey: this.settings.awsSecretAccessKey,
-      };
+    switch (this.settings.awsAuthMethod) {
+      case "apiKey": {
+        const apiKey = this.settings.bedrockApiKey?.trim();
+        if (apiKey) {
+          config.token = { token: apiKey };
+          config.authSchemePreference = ["httpBearerAuth"];
+        }
+        break;
+      }
+      case "profile": {
+        const profile = this.settings.awsProfile?.trim();
+        if (profile) {
+          // SDK는 이 함수를 매 요청 서명 시 호출하되, 반환된 expiration 이전에는
+          // 결과를 캐시한다. 정적 자격증명(expiration 없음)은 1회만 읽는다.
+          config.credentials = (): Promise<AwsCredentials> =>
+            loadProfileCredentials(profile, runtimeProfileDeps);
+        }
+        break;
+      }
+      default: {
+        if (this.settings.awsAccessKeyId) {
+          config.credentials = {
+            accessKeyId: this.settings.awsAccessKeyId,
+            secretAccessKey: this.settings.awsSecretAccessKey,
+          };
+        }
+        break;
+      }
     }
-    // 자격증명 미지정 시 SDK 기본 체인 사용 (환경변수, IAM 역할 등)
 
     return config;
   }
@@ -94,40 +113,39 @@ export class BedrockClient implements IAiClient {
 
       if (!resp.inferenceProfileSummaries) return [];
 
-      // global.anthropic.claude-{opus,sonnet,haiku} 프로파일만 필터
-      const models: ModelInfo[] = [];
+      // 채팅 모델 계열(Claude opus/sonnet/haiku, GPT sol/terra/luna)만 필터.
+      // 계열 판별은 provider-utils.chatModelRank에 위임한다.
+      const models: Array<ModelInfo & { rank: number }> = [];
       for (const p of resp.inferenceProfileSummaries) {
         if (!p.inferenceProfileId || !p.inferenceProfileName) continue;
         // "global." 접두사가 있는 글로벌 프로파일만
         if (!p.inferenceProfileId.startsWith("global.")) continue;
 
-        const matched = MODEL_KEYWORDS.some((kw) =>
-          p.inferenceProfileId!.includes(kw)
-        );
-        if (!matched) continue;
+        const rank = chatModelRank(p.inferenceProfileId);
+        if (rank === null) continue;
 
         models.push({
           modelId: p.inferenceProfileId,
           modelName: p.inferenceProfileName,
-          provider: "Anthropic",
+          provider: inferProviderName(p.inferenceProfileId),
           isProfile: true,
+          rank,
         });
       }
 
-      // 같은 계열(opus/sonnet/haiku)에서 최신 버전만 남기기
-      const bestByFamily = new Map<string, ModelInfo>();
+      // 같은 계열에서 최신 버전만 남기기 (계열 = chatModelRank 그룹)
+      const bestByFamily = new Map<number, ModelInfo & { rank: number }>();
       for (const m of models) {
-        const family = MODEL_KEYWORDS.find((kw) => m.modelId.includes(kw)) || "";
-        const existing = bestByFamily.get(family);
-        if (!existing || m.modelId > existing.modelId) {
-          bestByFamily.set(family, m);
+        const existing = bestByFamily.get(m.rank);
+        if (!existing || compareModelVersion(m.modelId, existing.modelId) > 0) {
+          bestByFamily.set(m.rank, m);
         }
       }
 
-      // 우선순위 순으로 정렬 (opus > sonnet > haiku)
-      return Array.from(bestByFamily.entries())
-        .sort(([a], [b]) => (MODEL_PRIORITY[a] ?? 99) - (MODEL_PRIORITY[b] ?? 99))
-        .map(([, m]) => m);
+      // 계열 우선순위 순으로 정렬
+      return Array.from(bestByFamily.values())
+        .sort((a, b) => a.rank - b.rank)
+        .map(({ rank: _rank, ...m }) => m);
     } catch (e) {
       console.error("모델 목록 조회 실패:", e);
       return [];
@@ -179,17 +197,23 @@ export class BedrockClient implements IAiClient {
   ): Record<string, unknown> {
     const fullSystemPrompt = buildSystemPrompt(this.settings);
 
+    // 모델별 생성 파라미터: effort 기반 최신 모델은 effort만, 그 외는 temperature만 전달
+    const params = buildGenerationParams(this.settings.bedrockChatModel, {
+      temperature: this.settings.temperature,
+      effort: this.settings.effort,
+    });
+
     const input: Record<string, unknown> = {
       modelId: this.settings.bedrockChatModel,
       messages,
       system: [{ text: fullSystemPrompt }],
       inferenceConfig: {
         maxTokens: this.settings.maxTokens,
-        // claude-opus-4 이상 모델은 temperature 파라미터를 지원하지 않음
-        ...(!isTemperatureDeprecated(this.settings.bedrockChatModel) && {
-          temperature: this.settings.temperature,
-        }),
+        ...params.inferenceConfig,
       },
+      ...(params.additionalModelRequestFields && {
+        additionalModelRequestFields: params.additionalModelRequestFields,
+      }),
     };
 
     if (tools && tools.length > 0) {
@@ -386,11 +410,20 @@ export class BedrockClient implements IAiClient {
     systemText = "You are a helpful assistant. Respond only in JSON.",
     maxTokens = 1024
   ): Promise<{ text: string }> {
+    // 분류·요약은 결정적 출력이 바람직하므로 temperature 0 / effort는 최저 강도를 쓴다.
+    const params = buildGenerationParams(this.settings.bedrockChatModel, {
+      temperature: 0,
+      effort: "minimal",
+    });
+
     const input = {
       modelId: this.settings.bedrockChatModel,
       messages: [{ role: "user", content: [{ text: userText }] }],
       system: [{ text: systemText }],
-      inferenceConfig: { maxTokens, ...(isTemperatureDeprecated(this.settings.bedrockChatModel) ? {} : { temperature: 0 }) },
+      inferenceConfig: { maxTokens, ...params.inferenceConfig },
+      ...(params.additionalModelRequestFields && {
+        additionalModelRequestFields: params.additionalModelRequestFields,
+      }),
     };
     const command = new ConverseCommand(input as any);
     const response = await this.client.send(command);

@@ -34,6 +34,8 @@ const nodePath: any = (() => { try { return require("path"); } catch { return nu
 export const SENSITIVE_FIELDS = [
   "awsAccessKeyId",
   "awsSecretAccessKey",
+  // Bedrock API 키도 장기 자격증명이므로 data.json에 남기지 않는다.
+  "bedrockApiKey",
 ] as const;
 
 /**
@@ -144,20 +146,48 @@ export function stripSensitiveFields<T extends object>(settings: T): T {
  * 민감한 자격증명을 로컬 전용 파일에 암호화하여 저장
  * Electron userData 경로에 저장하므로 iCloud 동기화 대상이 아닙니다.
  */
+/**
+ * 파일에 기록할 자격증명 페이로드를 구성한다.
+ *
+ * OS 키체인을 쓸 수 없으면 encrypt가 평문을 그대로 돌려주는데, 장기 자격증명을
+ * 평문 파일로 남기면 키체인 미구성 환경(예: Linux libsecret 없음)에서 키가
+ * 디스크에 노출된다. 그런 필드는 페이로드에서 제외한다 — 값은 메모리의 설정에만
+ * 남으므로 이번 세션 동작에는 영향이 없고, 다음 실행에서 재입력이 필요할 뿐이다.
+ *
+ * 암호화 함수를 주입받아 순수 함수로 유지한다(테스트 가능).
+ */
+export function buildCredentialsPayload(
+  settings: Record<string, unknown>,
+  encrypt: (value: string) => string = encryptValue
+): Record<string, string> {
+  const credentials: Record<string, string> = {};
+  for (const field of SENSITIVE_FIELDS) {
+    const value = settings[field];
+    if (typeof value !== "string" || !value) continue;
+    const encrypted = encrypt(value);
+    if (!isEncrypted(encrypted)) continue;
+    credentials[field] = encrypted;
+  }
+  return credentials;
+}
+
 export function saveCredentialsToLocal(settings: Record<string, unknown>): void {
   const filePath = getCredentialsFilePath();
   if (!filePath || !nodeFs) return;
 
-  const credentials: Record<string, string> = {};
-  for (const field of SENSITIVE_FIELDS) {
-    const value = settings[field];
-    if (typeof value === "string" && value) {
-      credentials[field] = encryptValue(value);
-    }
-  }
+  const credentials = buildCredentialsPayload(settings);
 
   try {
-    nodeFs.writeFileSync(filePath, JSON.stringify(credentials, null, 2), "utf-8");
+    // 소유자만 읽고 쓸 수 있도록 제한한다(0600). 기존 파일도 권한을 재적용한다.
+    nodeFs.writeFileSync(filePath, JSON.stringify(credentials, null, 2), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    try {
+      nodeFs.chmodSync(filePath, 0o600);
+    } catch {
+      // Windows 등 chmod를 지원하지 않는 환경은 무시한다.
+    }
   } catch (e) {
     console.error("자격증명 로컬 저장 실패:", e);
   }
