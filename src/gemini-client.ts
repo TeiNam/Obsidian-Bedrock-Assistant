@@ -8,7 +8,7 @@ import type {
   ModelInfo,
 } from "./types";
 import { isAbortError } from "./abort-utils";
-import { supportsTemperature } from "./provider-utils";
+import { buildEffortParams } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -184,10 +184,12 @@ export class GeminiClient {
     const generationConfig: Record<string, unknown> = {
       maxOutputTokens: this.settings.maxTokens,
     };
-    // Gemini 3 계열은 temperature 기본값(1.0) 유지 권장 → 생략
-    if (supportsTemperature("gemini", this.settings.chatModel)) {
-      generationConfig.temperature = this.settings.temperature;
-    }
+    // 추론 강도(thinkingConfig.thinkingLevel)를 병합한다.
+    // 미지원 모델에서는 빈 객체이므로 파라미터가 생략된다.
+    Object.assign(
+      generationConfig,
+      buildEffortParams("gemini", this.settings.chatModel, this.settings.effort)
+    );
     const body: Record<string, unknown> = {
       contents,
       systemInstruction: { parts: [{ text: fullSystemPrompt }] },
@@ -443,11 +445,11 @@ export class GeminiClient {
     const model = this.settings.chatModel;
     const url = `${GEMINI_BASE}/models/${model}:generateContent?key=${this.settings.geminiApiKey}`;
 
-    // Gemini 3 계열은 temperature 기본값 유지 권장 → 생략
-    const lightGenConfig: Record<string, unknown> = { maxOutputTokens: maxTokens };
-    if (supportsTemperature("gemini", model)) {
-      lightGenConfig.temperature = 0;
-    }
+    // 분류·요약은 짧고 결정적인 출력이 바람직하므로 최저 강도를 쓴다.
+    const lightGenConfig: Record<string, unknown> = {
+      maxOutputTokens: maxTokens,
+      ...buildEffortParams("gemini", model, "minimal"),
+    };
 
     const resp = await requestUrl({
       url,

@@ -92,6 +92,21 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
   };
 }
 
+/**
+ * 추론 강도(effort). 최신 추론 모델에서 temperature를 대체하는 파라미터로,
+ * 약함 → 강함 순서로 나열한다. 공급자·모델별 허용 값은 provider-utils의
+ * effortLevels를 참고한다(예: Anthropic만 xhigh/max를 허용).
+ */
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * Bedrock 인증 방식.
+ *  - accessKey: Access Key ID + Secret Access Key 직접 입력 (기존 방식, 기본값)
+ *  - apiKey: Bedrock API 키(장기 베어러 토큰)로 인증
+ *  - profile: `~/.aws` 공유 설정의 프로필 사용(정적 자격증명 또는 `aws sso login` 결과)
+ */
+export type AwsAuthMethod = "accessKey" | "apiKey" | "profile";
+
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   // Gemini API Key
@@ -99,7 +114,12 @@ export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   chatModel: string;
   embeddingModel: string;
   maxTokens: number;
-  temperature: number;
+  /**
+   * 추론 강도. 모든 공급자에서 temperature를 대체한다.
+   * effort를 지원하지 않는 모델에는 요청 시 생략되며, 그 경우 공급자 기본
+   * 샘플링 설정이 적용된다.
+   */
+  effort: EffortLevel;
   systemPrompt: string;
   welcomeGreeting: string;
   autoAttachActiveNote: boolean;
@@ -140,10 +160,16 @@ export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   // === AI 백엔드 통합 필드 ===
   /** AI 백엔드 선택 ("bedrock" | "gemini" | "openai" | "ollama" 4값 union) */
   aiBackend: "bedrock" | "gemini" | "openai" | "ollama";
+  /** Bedrock 인증 방식 (액세스 키 / API 키 / 공유 프로필) */
+  awsAuthMethod: AwsAuthMethod;
   /** AWS Access Key ID (Bedrock 자격증명) */
   awsAccessKeyId: string;
   /** AWS Secret Access Key (Bedrock 자격증명) */
   awsSecretAccessKey: string;
+  /** Bedrock API 키 (장기 베어러 토큰). awsAuthMethod="apiKey"에서 사용 */
+  bedrockApiKey: string;
+  /** `~/.aws` 공유 설정의 프로필 이름. awsAuthMethod="profile"에서 사용 */
+  awsProfile: string;
   /** AWS 리전 (Bedrock) */
   awsRegion: string;
   /** Bedrock 채팅 모델 ID */
@@ -212,7 +238,8 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   chatModel: "gemini-3.1-flash-lite",
   embeddingModel: "text-embedding-004",
   maxTokens: 32000,
-  temperature: 0.1,
+  // effort 기본값: 품질과 지연시간의 균형점
+  effort: "medium",
   systemPrompt: "",
   welcomeGreeting: "",
   autoAttachActiveNote: true,
@@ -237,8 +264,11 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   archiveCleanFolder: "ToDo/Archive",
   // AI 백엔드 통합 기본값
   aiBackend: "bedrock",
+  awsAuthMethod: "accessKey",
   awsAccessKeyId: "",
   awsSecretAccessKey: "",
+  bedrockApiKey: "",
+  awsProfile: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
   bedrockEmbeddingModel: "",

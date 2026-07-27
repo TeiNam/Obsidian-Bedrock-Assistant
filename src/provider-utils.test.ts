@@ -14,7 +14,16 @@ import {
 	generateToolUseId,
 	toOpenAIMessages,
 	toOllamaMessages,
-	supportsTemperature,
+	supportsEffort,
+	effortLevels,
+	clampEffort,
+	buildEffortParams,
+	legacyTemperatureToEffort,
+	activeChatModelId,
+	chatModelRank,
+	compareModelVersion,
+	inferProviderName,
+	type AiProvider,
 	clampMaxTokens,
 	MIN_MAX_TOKENS,
 	MAX_MAX_TOKENS,
@@ -914,39 +923,265 @@ describe("provider-utils openAIToolCallsToBlocks JSON 파싱 실패 엣지", () 
 });
 
 // ============================================
-// 단위 테스트: temperature 지원 여부 판별 (supportsTemperature)
+// 단위 테스트: 추론 강도(effort) 판별 및 요청 파라미터 구성
 // ============================================
 
-describe("provider-utils supportsTemperature", () => {
-	it("OpenAI: gpt-5 계열/o 시리즈 추론 모델은 미지원, 그 외는 지원", () => {
-		// 미지원(기본값 1만 허용 → 생략 대상)
-		expect(supportsTemperature("openai", "gpt-5.1")).toBe(false);
-		expect(supportsTemperature("openai", "gpt-5")).toBe(false);
-		expect(supportsTemperature("openai", "o1")).toBe(false);
-		expect(supportsTemperature("openai", "o3-mini")).toBe(false);
-		expect(supportsTemperature("openai", "o4-mini")).toBe(false);
-		// 지원(일반 채팅 모델)
-		expect(supportsTemperature("openai", "gpt-4o")).toBe(true);
-		expect(supportsTemperature("openai", "gpt-4.1")).toBe(true);
+describe("provider-utils supportsEffort", () => {
+	it("OpenAI: gpt-5 이상 계열과 o 시리즈가 effort 기반이다", () => {
+		expect(supportsEffort("openai", "gpt-5.1")).toBe(true);
+		expect(supportsEffort("openai", "gpt-5")).toBe(true);
+		expect(supportsEffort("openai", "o1")).toBe(true);
+		expect(supportsEffort("openai", "o3-mini")).toBe(true);
+		// 구형 모델은 effort 미지원
+		expect(supportsEffort("openai", "gpt-4o")).toBe(false);
+		expect(supportsEffort("openai", "gpt-4.1")).toBe(false);
 	});
 
-	it("Gemini: gemini-3 계열은 미지원(기본값 유지), 그 외는 지원", () => {
-		expect(supportsTemperature("gemini", "gemini-3-pro")).toBe(false);
-		expect(supportsTemperature("gemini", "gemini-3-flash")).toBe(false);
-		expect(supportsTemperature("gemini", "gemini-2.5-flash")).toBe(true);
-		expect(supportsTemperature("gemini", "gemini-1.5-pro")).toBe(true);
+	it("OpenAI: 두 자리 버전도 낮은 버전으로 오판하지 않는다", () => {
+		expect(supportsEffort("openai", "gpt-10")).toBe(true);
 	});
 
-	it("Bedrock: claude-opus-4 계열은 미지원, 그 외는 지원", () => {
-		expect(supportsTemperature("bedrock", "global.anthropic.claude-opus-4-8")).toBe(false);
-		expect(supportsTemperature("bedrock", "global.anthropic.claude-opus-4-1")).toBe(false);
-		expect(supportsTemperature("bedrock", "global.anthropic.claude-sonnet-4-5")).toBe(true);
-		expect(supportsTemperature("bedrock", "global.anthropic.claude-haiku-4")).toBe(true);
+	it("Gemini: gemini-3 이상 계열이 effort 기반이다", () => {
+		expect(supportsEffort("gemini", "gemini-3-pro")).toBe(true);
+		expect(supportsEffort("gemini", "gemini-3.1-flash-lite")).toBe(true);
+		expect(supportsEffort("gemini", "gemini-2.5-flash")).toBe(false);
+		expect(supportsEffort("gemini", "gemini-1.5-pro")).toBe(false);
 	});
 
-	it("Ollama: 로컬 모델은 항상 지원", () => {
-		expect(supportsTemperature("ollama", "llama4")).toBe(true);
-		expect(supportsTemperature("ollama", "anything")).toBe(true);
+	it("Bedrock: Anthropic opus-4/sonnet-5/haiku-5 이상이 effort 기반이다", () => {
+		expect(supportsEffort("bedrock", "global.anthropic.claude-opus-4-8")).toBe(true);
+		expect(supportsEffort("bedrock", "global.anthropic.claude-opus-5")).toBe(true);
+		// 두 자리 버전도 매칭된다
+		expect(supportsEffort("bedrock", "global.anthropic.claude-opus-10")).toBe(true);
+		expect(supportsEffort("bedrock", "global.anthropic.claude-sonnet-5")).toBe(true);
+		expect(supportsEffort("bedrock", "global.anthropic.claude-haiku-5")).toBe(true);
+		// 구형 모델은 미지원
+		expect(supportsEffort("bedrock", "global.anthropic.claude-sonnet-4-5")).toBe(false);
+		expect(supportsEffort("bedrock", "global.anthropic.claude-haiku-4")).toBe(false);
+	});
+
+	it("Bedrock: OpenAI GPT-5.6 계열(sol/terra/luna)도 effort 기반이다", () => {
+		expect(supportsEffort("bedrock", "global.openai.gpt-5.6-sol")).toBe(true);
+		expect(supportsEffort("bedrock", "global.openai.gpt-5.6-terra")).toBe(true);
+		expect(supportsEffort("bedrock", "global.openai.gpt-5.6-luna")).toBe(true);
+	});
+
+	it("Ollama: effort 규격이 없으므로 항상 미지원이다", () => {
+		expect(supportsEffort("ollama", "llama4")).toBe(false);
+		expect(supportsEffort("ollama", "anything")).toBe(false);
+	});
+});
+
+describe("provider-utils effortLevels / clampEffort", () => {
+	it("Anthropic은 low~max를 허용한다", () => {
+		expect(effortLevels("bedrock", "global.anthropic.claude-opus-5")).toEqual([
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+	});
+
+	it("gpt-5.6 이상은 xhigh/max까지 허용한다", () => {
+		// GPT-5.6은 reasoning_effort로 xhigh/max를 지원한다
+		expect(effortLevels("bedrock", "global.openai.gpt-5.6-sol")).toEqual([
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+		expect(effortLevels("openai", "gpt-5.6")).toContain("max");
+	});
+
+	it("gpt-5.6 미만은 high까지만 허용한다", () => {
+		expect(effortLevels("openai", "gpt-5.1")).toEqual(["minimal", "low", "medium", "high"]);
+		expect(effortLevels("openai", "gpt-5.4-mini")).not.toContain("xhigh");
+	});
+
+	it("o 시리즈는 minimal을 허용하지 않는다", () => {
+		expect(effortLevels("openai", "o3-mini")).toEqual(["low", "medium", "high"]);
+		// 따라서 경량 호출의 minimal 요청은 low로 보정된다
+		expect(clampEffort("openai", "o3-mini", "minimal")).toBe("low");
+	});
+
+	it("Gemini Pro 계열은 low/high만 허용한다", () => {
+		// Pro는 minimal/medium을 거부하므로(INVALID_ARGUMENT) 허용 집합에서 제외한다
+		expect(effortLevels("gemini", "gemini-3-pro-preview")).toEqual(["low", "high"]);
+		expect(clampEffort("gemini", "gemini-3-pro-preview", "minimal")).toBe("low");
+		expect(clampEffort("gemini", "gemini-3-pro-preview", "medium")).toBe("low");
+	});
+
+	it("Gemini Flash 계열은 minimal~high를 허용한다", () => {
+		expect(effortLevels("gemini", "gemini-3.1-flash-lite")).toEqual([
+			"minimal",
+			"low",
+			"medium",
+			"high",
+		]);
+	});
+
+	it("thinkingBudget 기반 Gemini 2.5 계열은 effort 대상이 아니다", () => {
+		// 2.5는 thinking_level(문자열)이 아니라 thinkingBudget(토큰 수) 규격이므로
+		// effort를 보내지 않고 공급자 기본값을 사용한다
+		expect(effortLevels("gemini", "gemini-2.5-flash-lite")).toEqual([]);
+		expect(buildEffortParams("gemini", "gemini-2.5-flash-lite", "minimal")).toEqual({});
+	});
+
+	it("effort 미지원 모델은 빈 목록이다", () => {
+		expect(effortLevels("ollama", "llama4")).toEqual([]);
+		expect(effortLevels("openai", "gpt-4o")).toEqual([]);
+	});
+
+	it("허용 밖 값은 강도가 가장 가까운 허용 값으로 보정한다", () => {
+		// Anthropic 전용 max/xhigh → OpenAI에서는 high
+		expect(clampEffort("openai", "gpt-5.1", "max")).toBe("high");
+		expect(clampEffort("openai", "gpt-5.1", "xhigh")).toBe("high");
+		// OpenAI 전용 minimal → Anthropic에서는 low
+		expect(clampEffort("bedrock", "global.anthropic.claude-opus-5", "minimal")).toBe("low");
+	});
+
+	it("허용 값은 그대로 유지하고, 미지원 모델에서는 값을 바꾸지 않는다", () => {
+		expect(clampEffort("bedrock", "global.anthropic.claude-opus-5", "xhigh")).toBe("xhigh");
+		expect(clampEffort("ollama", "llama4", "max")).toBe("max");
+	});
+});
+
+describe("provider-utils buildEffortParams", () => {
+	it("Anthropic은 output_config로 중첩 전달한다", () => {
+		// 평면 `effort`는 Anthropic API에서 validation 오류가 발생한다
+		expect(
+			buildEffortParams("bedrock", "global.anthropic.claude-opus-5", "high")
+		).toEqual({ output_config: { effort: "high" } });
+	});
+
+	it("OpenAI는 reasoning_effort를 평면으로 전달한다", () => {
+		expect(buildEffortParams("openai", "gpt-5.1", "medium")).toEqual({
+			reasoning_effort: "medium",
+		});
+		expect(buildEffortParams("bedrock", "global.openai.gpt-5.6-terra", "low")).toEqual({
+			reasoning_effort: "low",
+		});
+	});
+
+	it("Gemini는 thinkingConfig.thinkingLevel로 전달한다", () => {
+		expect(buildEffortParams("gemini", "gemini-3-pro", "high")).toEqual({
+			thinkingConfig: { thinkingLevel: "high" },
+		});
+	});
+
+	it("허용 밖 값은 보정된 뒤 전달된다", () => {
+		expect(buildEffortParams("openai", "gpt-5.1", "max")).toEqual({
+			reasoning_effort: "high",
+		});
+	});
+
+	it("effort 미지원 모델은 빈 객체를 반환한다(파라미터 생략)", () => {
+		expect(buildEffortParams("ollama", "llama4", "high")).toEqual({});
+		expect(buildEffortParams("openai", "gpt-4o", "high")).toEqual({});
+		expect(buildEffortParams("gemini", "gemini-2.5-flash", "high")).toEqual({});
+	});
+
+	it("어떤 공급자에서도 temperature 키가 섞이지 않는다", () => {
+		const cases: Array<[AiProvider, string]> = [
+			["bedrock", "global.anthropic.claude-opus-5"],
+			["bedrock", "global.openai.gpt-5.6-sol"],
+			["openai", "gpt-5.1"],
+			["gemini", "gemini-3-pro"],
+			["ollama", "llama4"],
+		];
+		for (const [provider, modelId] of cases) {
+			const params = buildEffortParams(provider, modelId, "medium");
+			expect(JSON.stringify(params)).not.toContain("temperature");
+		}
+	});
+});
+
+describe("provider-utils legacyTemperatureToEffort", () => {
+	it("낮은 temperature는 낮은 강도로, 높은 값은 높은 강도로 환산한다", () => {
+		expect(legacyTemperatureToEffort(0)).toBe("low");
+		expect(legacyTemperatureToEffort(0.1)).toBe("low");
+		expect(legacyTemperatureToEffort(0.5)).toBe("medium");
+		expect(legacyTemperatureToEffort(0.7)).toBe("medium");
+		expect(legacyTemperatureToEffort(0.9)).toBe("high");
+		expect(legacyTemperatureToEffort(1)).toBe("high");
+	});
+
+	it("유한하지 않은 값은 medium으로 폴백한다", () => {
+		expect(legacyTemperatureToEffort(NaN)).toBe("medium");
+		expect(legacyTemperatureToEffort(Infinity)).toBe("medium");
+	});
+});
+
+describe("provider-utils activeChatModelId", () => {
+	it("백엔드별로 해당 채팅 모델 필드를 반환한다", () => {
+		const base = { ...DEFAULT_SETTINGS };
+		expect(
+			activeChatModelId({ ...base, aiBackend: "bedrock", bedrockChatModel: "B" })
+		).toBe("B");
+		expect(activeChatModelId({ ...base, aiBackend: "openai", openaiChatModel: "O" })).toBe("O");
+		expect(activeChatModelId({ ...base, aiBackend: "ollama", ollamaChatModel: "L" })).toBe("L");
+		expect(activeChatModelId({ ...base, aiBackend: "gemini", chatModel: "G" })).toBe("G");
+	});
+});
+
+// ============================================
+// 단위 테스트: Bedrock 채팅 모델 계열 판별/정렬
+// ============================================
+
+describe("provider-utils chatModelRank / compareModelVersion / inferProviderName", () => {
+	it("Claude 계열은 opus > sonnet > haiku 순이다", () => {
+		expect(chatModelRank("global.anthropic.claude-opus-5")).toBe(0);
+		expect(chatModelRank("global.anthropic.claude-sonnet-5")).toBe(1);
+		expect(chatModelRank("global.anthropic.claude-haiku-5")).toBe(2);
+	});
+
+	it("GPT variant(sol/terra/luna)는 서로 다른 계열로 취급한다", () => {
+		const sol = chatModelRank("global.openai.gpt-5.6-sol");
+		const terra = chatModelRank("global.openai.gpt-5.6-terra");
+		const luna = chatModelRank("global.openai.gpt-5.6-luna");
+		expect(new Set([sol, terra, luna]).size).toBe(3);
+		// GPT 계열은 Claude 계열보다 뒤에 표시된다
+		expect(Math.min(sol!, terra!, luna!)).toBeGreaterThan(
+			chatModelRank("global.anthropic.claude-haiku-5")!
+		);
+	});
+
+	it("채팅 모델이 아닌 ID는 null이다", () => {
+		expect(chatModelRank("amazon.titan-embed-text-v2:0")).toBeNull();
+		expect(chatModelRank("cohere.embed-english-v3")).toBeNull();
+		expect(chatModelRank("")).toBeNull();
+	});
+
+	it("버전 비교는 숫자 자연 정렬을 따른다", () => {
+		// 문자열 비교라면 opus-10 < opus-4 로 잘못 판정된다
+		expect(
+			compareModelVersion(
+				"global.anthropic.claude-opus-10",
+				"global.anthropic.claude-opus-4"
+			)
+		).toBeGreaterThan(0);
+		expect(
+			compareModelVersion(
+				"global.anthropic.claude-opus-4-8",
+				"global.anthropic.claude-opus-4-1"
+			)
+		).toBeGreaterThan(0);
+		expect(
+			compareModelVersion(
+				"global.anthropic.claude-opus-5",
+				"global.anthropic.claude-opus-5"
+			)
+		).toBe(0);
+	});
+
+	it("표시용 공급자 이름을 추론한다", () => {
+		expect(inferProviderName("global.anthropic.claude-opus-5")).toBe("Anthropic");
+		expect(inferProviderName("global.openai.gpt-5.6-sol")).toBe("OpenAI");
+		expect(inferProviderName("global.meta.llama4-instruct")).toBe("Meta");
+		expect(inferProviderName("")).toBe("Unknown");
 	});
 });
 

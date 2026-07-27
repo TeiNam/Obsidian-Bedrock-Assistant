@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import type { CustomSkill } from "./types";
+import type { AwsAuthMethod, CustomSkill, EffortLevel } from "./types";
 // Second Brain 설정 정규화 (Req 1.4, 1.5): onChange 시점 값 보정에 사용
 import { normalizeSecondBrainSettings } from "./types";
 import { SKILLS } from "./skills";
@@ -15,9 +15,14 @@ import { normalizePlannerSetting } from "./planner-settings";
 // clampMaxTokens: maxTokens 입력 범위 보정 / embeddingSignature: 임베딩 구성 변경 감지
 import {
   isValidBaseUrl,
+  activeChatModelId,
+  clampEffort,
   clampMaxTokens,
+  effortLevels,
   embeddingSignature,
 } from "./provider-utils";
+// AWS 공유 설정(~/.aws)의 프로필 이름 목록 — Bedrock 프로필 인증 드롭다운에 사용
+import { listProfileNames } from "./aws-profile-runtime";
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
@@ -47,6 +52,19 @@ export const I18N = {
     apiKeyDesc: "Your Gemini API key from Google AI Studio",
     apiKeyPlaceholder: "Enter Gemini API key",
     // Bedrock 자격증명
+    authMethodLabel: "Authentication Method",
+    authMethodDesc: "How to authenticate with Bedrock",
+    authMethodAccessKey: "Access key",
+    authMethodApiKey: "Bedrock API key",
+    authMethodProfile: "AWS profile (~/.aws)",
+    bedrockApiKeyLabel: "Bedrock API Key",
+    bedrockApiKeyDesc: "Long-term Bedrock API key, used as a bearer token",
+    bedrockApiKeyPlaceholder: "Enter Bedrock API key",
+    awsProfileLabel: "AWS Profile",
+    awsProfileDesc:
+      "Profile from ~/.aws/config or ~/.aws/credentials. For SSO profiles, run `aws sso login --profile <name>` in a terminal first.",
+    awsProfileEmpty: "No profiles found in ~/.aws",
+    awsProfileRefresh: "Reload profiles",
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "AWS Access Key ID for Bedrock",
     awsAccessKeyPlaceholder: "Enter AWS Access Key ID",
@@ -92,8 +110,9 @@ export const I18N = {
     genSettings: "Generation Settings",
     maxTokens: "Max Tokens",
     maxTokensDesc: "Maximum response tokens",
-    temperature: "Temperature",
-    temperatureDesc: "Response creativity (0.0 ~ 1.0)",
+    effortLabel: "Reasoning Effort",
+    effortDesc:
+      "Reasoning depth for the selected model. Replaces temperature on models that support it.",
     systemPrompt: "System Prompt",
     systemPromptDesc: "Extra instructions appended to the built-in base prompt. Leave empty to use only the built-in prompt.",
     systemPromptPlaceholder: "Enter system prompt...",
@@ -243,6 +262,19 @@ export const I18N = {
     apiKeyDesc: "Google AI Studio에서 발급받은 Gemini API 키",
     apiKeyPlaceholder: "Gemini API 키 입력",
     // Bedrock 자격증명
+    authMethodLabel: "인증 방식",
+    authMethodDesc: "Bedrock 인증에 사용할 방식",
+    authMethodAccessKey: "액세스 키",
+    authMethodApiKey: "Bedrock API 키",
+    authMethodProfile: "AWS 프로필 (~/.aws)",
+    bedrockApiKeyLabel: "Bedrock API 키",
+    bedrockApiKeyDesc: "Bedrock 장기 API 키. 베어러 토큰으로 전송됩니다",
+    bedrockApiKeyPlaceholder: "Bedrock API 키 입력",
+    awsProfileLabel: "AWS 프로필",
+    awsProfileDesc:
+      "~/.aws/config 또는 ~/.aws/credentials의 프로필. SSO 프로필은 터미널에서 `aws sso login --profile <이름>`을 먼저 실행하세요.",
+    awsProfileEmpty: "~/.aws에서 프로필을 찾을 수 없습니다",
+    awsProfileRefresh: "프로필 다시 읽기",
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "Bedrock용 AWS Access Key ID",
     awsAccessKeyPlaceholder: "AWS Access Key ID 입력",
@@ -288,8 +320,9 @@ export const I18N = {
     genSettings: "생성 설정",
     maxTokens: "최대 토큰",
     maxTokensDesc: "응답 최대 토큰 수",
-    temperature: "Temperature",
-    temperatureDesc: "응답 창의성 (0.0 ~ 1.0)",
+    effortLabel: "추론 강도 (Effort)",
+    effortDesc:
+      "선택한 모델의 추론 깊이입니다. 지원 모델에서는 temperature 대신 이 값을 사용합니다.",
     systemPrompt: "시스템 프롬프트",
     systemPromptDesc: "내장 기본 프롬프트에 덧붙일 추가 지침입니다. 비워두면 내장 기본 프롬프트만 사용합니다.",
     systemPromptPlaceholder: "시스템 프롬프트를 입력하세요...",
@@ -439,6 +472,19 @@ export const I18N = {
     apiKeyDesc: "Google AI Studioから取得したGemini APIキー",
     apiKeyPlaceholder: "Gemini APIキーを入力",
     // Bedrock 資格情報
+    authMethodLabel: "認証方式",
+    authMethodDesc: "Bedrock 認証に使用する方式",
+    authMethodAccessKey: "アクセスキー",
+    authMethodApiKey: "Bedrock APIキー",
+    authMethodProfile: "AWSプロファイル (~/.aws)",
+    bedrockApiKeyLabel: "Bedrock APIキー",
+    bedrockApiKeyDesc: "Bedrockの長期APIキー。ベアラートークンとして送信されます",
+    bedrockApiKeyPlaceholder: "Bedrock APIキーを入力",
+    awsProfileLabel: "AWSプロファイル",
+    awsProfileDesc:
+      "~/.aws/config または ~/.aws/credentials のプロファイル。SSOプロファイルの場合は、先にターミナルで `aws sso login --profile <名前>` を実行してください。",
+    awsProfileEmpty: "~/.aws にプロファイルが見つかりません",
+    awsProfileRefresh: "プロファイルを再読み込み",
     awsAccessKeyLabel: "AWS Access Key ID",
     awsAccessKeyDesc: "Bedrock用 AWS Access Key ID",
     awsAccessKeyPlaceholder: "AWS Access Key IDを入力",
@@ -484,8 +530,9 @@ export const I18N = {
     genSettings: "生成設定",
     maxTokens: "最大トークン数",
     maxTokensDesc: "応答の最大トークン数",
-    temperature: "Temperature",
-    temperatureDesc: "応答の創造性 (0.0 ~ 1.0)",
+    effortLabel: "推論強度 (Effort)",
+    effortDesc:
+      "選択したモデルの推論の深さです。対応モデルでは temperature の代わりにこの値を使用します。",
     systemPrompt: "システムプロンプト",
     systemPromptDesc: "内蔵の基本プロンプトに追加する指示です。空欄の場合は内蔵プロンプトのみを使用します。",
     systemPromptPlaceholder: "システムプロンプトを入力...",
@@ -742,6 +789,13 @@ export class GeminiSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             // 4값 union으로 캐스팅 (Req 1.1)
             this.plugin.settings.aiBackend = value as "bedrock" | "gemini" | "openai" | "ollama";
+            // 백엔드가 바뀌면 effort 허용 집합도 달라지므로(예: Anthropic 전용 max)
+            // 새 백엔드·모델 기준으로 저장값을 보정한다.
+            this.plugin.settings.effort = clampEffort(
+              this.plugin.settings.aiBackend,
+              activeChatModelId(this.plugin.settings),
+              this.plugin.settings.effort
+            );
             await this.plugin.saveSettings();
             this.plugin.recreateAiClient();
             updateBranding(this.plugin.settings.aiBackend);
@@ -780,41 +834,131 @@ export class GeminiSettingTab extends PluginSettingTab {
       // Bedrock (AWS) 자격증명 설정
       new Setting(containerEl).setName("AWS Bedrock").setHeading();
 
-      const awsAccessKeySetting = new Setting(containerEl)
-        .setName(t.awsAccessKeyLabel)
-        .setDesc(t.awsAccessKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.awsAccessKeyPlaceholder)
-            .setValue(this.plugin.settings.awsAccessKeyId)
+      // 인증 방식 선택. 선택된 방식에 해당하는 입력 필드만 노출한다.
+      const authMethod = this.plugin.settings.awsAuthMethod;
+      new Setting(containerEl)
+        .setName(t.authMethodLabel)
+        .setDesc(t.authMethodDesc)
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("accessKey", t.authMethodAccessKey)
+            .addOption("apiKey", t.authMethodApiKey)
+            .addOption("profile", t.authMethodProfile)
+            .setValue(authMethod)
             .onChange(async (value) => {
-              this.plugin.settings.awsAccessKeyId = value.trim();
+              this.plugin.settings.awsAuthMethod = value as AwsAuthMethod;
+              // saveSettings가 aiClient.updateSettings를 호출하고, 그 안에서 새 인증
+              // 설정으로 Bedrock 클라이언트가 재생성된다.
               await this.plugin.saveSettings();
-              // 자격증명 변경 시 모델 목록 재로드 예약
-              this.scheduleModelReload();
-            });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
+              // 노출할 입력 필드가 달라지므로 설정 탭을 다시 그린다.
+              this.display();
+            })
+        );
 
-      const awsSecretKeySetting = new Setting(containerEl)
-        .setName(t.awsSecretKeyLabel)
-        .setDesc(t.awsSecretKeyDesc)
-        .addText((text) => {
-          text
-            .setPlaceholder(t.awsSecretKeyPlaceholder)
-            .setValue(this.plugin.settings.awsSecretAccessKey)
-            .onChange(async (value) => {
-              this.plugin.settings.awsSecretAccessKey = value.trim();
+      if (authMethod === "accessKey") {
+        const awsAccessKeySetting = new Setting(containerEl)
+          .setName(t.awsAccessKeyLabel)
+          .setDesc(t.awsAccessKeyDesc)
+          .addText((text) => {
+            text
+              .setPlaceholder(t.awsAccessKeyPlaceholder)
+              .setValue(this.plugin.settings.awsAccessKeyId)
+              .onChange(async (value) => {
+                this.plugin.settings.awsAccessKeyId = value.trim();
+                await this.plugin.saveSettings();
+                // 자격증명 변경 시 모델 목록 재로드 예약
+                this.scheduleModelReload();
+              });
+            text.inputEl.type = "password";
+            text.inputEl.addClass("ba-secret-input");
+          });
+        this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
+
+        const awsSecretKeySetting = new Setting(containerEl)
+          .setName(t.awsSecretKeyLabel)
+          .setDesc(t.awsSecretKeyDesc)
+          .addText((text) => {
+            text
+              .setPlaceholder(t.awsSecretKeyPlaceholder)
+              .setValue(this.plugin.settings.awsSecretAccessKey)
+              .onChange(async (value) => {
+                this.plugin.settings.awsSecretAccessKey = value.trim();
+                await this.plugin.saveSettings();
+                // 자격증명 변경 시 모델 목록 재로드 예약
+                this.scheduleModelReload();
+              });
+            text.inputEl.type = "password";
+            text.inputEl.addClass("ba-secret-input");
+          });
+        this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
+      }
+
+      if (authMethod === "apiKey") {
+        const bedrockApiKeySetting = new Setting(containerEl)
+          .setName(t.bedrockApiKeyLabel)
+          .setDesc(t.bedrockApiKeyDesc)
+          .addText((text) => {
+            text
+              .setPlaceholder(t.bedrockApiKeyPlaceholder)
+              .setValue(this.plugin.settings.bedrockApiKey)
+              .onChange(async (value) => {
+                this.plugin.settings.bedrockApiKey = value.trim();
+                await this.plugin.saveSettings();
+                this.scheduleModelReload();
+              });
+            text.inputEl.type = "password";
+            text.inputEl.addClass("ba-secret-input");
+          });
+        this.addToggleVisibilityButton(bedrockApiKeySetting.controlEl);
+      }
+
+      if (authMethod === "profile") {
+        const profiles = listProfileNames();
+        const profileSetting = new Setting(containerEl)
+          .setName(t.awsProfileLabel)
+          .setDesc(profiles.length === 0 ? t.awsProfileEmpty : t.awsProfileDesc);
+
+        if (profiles.length === 0) {
+          // 프로필을 못 찾으면 이름을 직접 입력할 수 있게 둔다(비표준 경로 등).
+          profileSetting.addText((text) =>
+            text
+              .setPlaceholder("default")
+              .setValue(this.plugin.settings.awsProfile)
+              .onChange(async (value) => {
+                this.plugin.settings.awsProfile = value.trim();
+                await this.plugin.saveSettings();
+                this.scheduleModelReload();
+              })
+          );
+        } else {
+          // 저장된 프로필이 없으면 첫 프로필을 실제 설정값으로 확정한다.
+          // 표시값만 바꾸면 화면에는 선택된 듯 보이지만 설정은 빈 문자열이라
+          // SDK 기본 자격증명 체인으로 새는 불일치가 생긴다.
+          if (!this.plugin.settings.awsProfile) {
+            this.plugin.settings.awsProfile = profiles[0];
+            void this.plugin.saveSettings();
+          }
+          profileSetting.addDropdown((dropdown) => {
+            for (const name of profiles) dropdown.addOption(name, name);
+            const current = this.plugin.settings.awsProfile;
+            // 저장된 프로필이 목록에 없으면(파일 변경 등) 선택을 잃지 않도록 추가한다.
+            if (!profiles.includes(current)) dropdown.addOption(current, current);
+            dropdown.setValue(current);
+            dropdown.onChange(async (value) => {
+              this.plugin.settings.awsProfile = value;
               await this.plugin.saveSettings();
-              // 자격증명 변경 시 모델 목록 재로드 예약
               this.scheduleModelReload();
             });
-          text.inputEl.type = "password";
-          text.inputEl.addClass("ba-secret-input");
-        });
-      this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
+          });
+        }
+
+        profileSetting.addExtraButton((btn) =>
+          btn
+            .setIcon("refresh-cw")
+            .setTooltip(t.awsProfileRefresh)
+            .onClick(() => this.display())
+        );
+      }
 
       new Setting(containerEl)
         .setName(t.awsRegionLabel)
@@ -894,7 +1038,15 @@ export class GeminiSettingTab extends PluginSettingTab {
           dropdown.setValue(current);
           dropdown.onChange(async (value) => {
             this.plugin.settings.chatModel = value;
+            // 모델이 바뀌면 effort 허용 집합이 달라지므로 저장값을 보정한다.
+            this.plugin.settings.effort = clampEffort(
+              "gemini",
+              value,
+              this.plugin.settings.effort
+            );
             await this.plugin.saveSettings();
+            // effort 항목 노출/옵션이 모델에 따라 바뀌므로 탭을 다시 그린다.
+            this.display();
           });
           // 비동기로 모델 목록 로드 후 드롭다운 갱신
           (async () => {
@@ -937,17 +1089,34 @@ export class GeminiSettingTab extends PluginSettingTab {
           dropdown.setValue(current);
           dropdown.onChange(async (value) => {
             this.plugin.settings.bedrockChatModel = value;
+            // 모델이 바뀌면 effort 허용 집합이 달라지므로 저장값을 보정한다.
+            this.plugin.settings.effort = clampEffort(
+              "bedrock",
+              value,
+              this.plugin.settings.effort
+            );
             await this.plugin.saveSettings();
+            // effort 항목 노출/옵션이 모델에 따라 바뀌므로 탭을 다시 그린다.
+            this.display();
           });
           // 비동기로 모델 목록 로드 후 드롭다운 갱신
           (async () => {
             try {
               const models = await this.plugin.aiClient.listModels();
+              // 빈 목록이면 기존 옵션을 지우지 않는다. 목록 조회는 컨트롤 플레인
+              // 권한을 요구하므로(API 키 인증 등에서 실패 가능) 지워버리면 이미
+              // 설정된 모델까지 선택 불가가 된다.
+              if (models.length === 0) return;
               dropdown.selectEl.empty();
               for (const m of models) {
                 dropdown.addOption(m.modelId, m.modelName || m.modelId);
               }
-              dropdown.setValue(this.plugin.settings.bedrockChatModel);
+              // 저장된 모델이 목록에 없으면 옵션으로 추가해 선택을 유지한다.
+              const saved = this.plugin.settings.bedrockChatModel;
+              if (saved && !models.some((m) => m.modelId === saved)) {
+                dropdown.addOption(saved, saved);
+              }
+              dropdown.setValue(saved);
             } catch {
               // 모델 로드 실패 시 현재값 유지
             }
@@ -1052,19 +1221,31 @@ export class GeminiSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
-      .setName(t.temperature)
-      .setDesc(t.temperatureDesc)
-      .addSlider((slider) =>
-        slider
-          .setLimits(0, 1, 0.1)
-          .setValue(this.plugin.settings.temperature)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.temperature = value;
+    // 추론 강도(effort). temperature를 대체하는 파라미터로, 현재 백엔드·모델이
+    // 허용하는 값만 노출한다. 지원 모델이 없으면(예: Ollama) 항목 자체를 숨긴다.
+    const effortProvider = this.plugin.settings.aiBackend;
+    const effortModelId = activeChatModelId(this.plugin.settings);
+    const allowedEfforts = effortLevels(effortProvider, effortModelId);
+    if (allowedEfforts.length > 0) {
+      // 저장값이 허용 집합을 벗어나면 먼저 보정해 확정한다. 표시값만 보정하면
+      // 사용자가 드롭다운을 건드리지 않는 한 허용 밖 값이 요청에 실린다.
+      const effort = clampEffort(effortProvider, effortModelId, this.plugin.settings.effort);
+      if (effort !== this.plugin.settings.effort) {
+        this.plugin.settings.effort = effort;
+        void this.plugin.saveSettings();
+      }
+      new Setting(containerEl)
+        .setName(t.effortLabel)
+        .setDesc(t.effortDesc)
+        .addDropdown((dropdown) => {
+          for (const level of allowedEfforts) dropdown.addOption(level, level);
+          dropdown.setValue(effort);
+          dropdown.onChange(async (value) => {
+            this.plugin.settings.effort = value as EffortLevel;
             await this.plugin.saveSettings();
-          })
-      );
+          });
+        });
+    }
 
     new Setting(containerEl)
       .setName(t.systemPrompt)
@@ -1757,7 +1938,17 @@ export class GeminiSettingTab extends PluginSettingTab {
         dropdown.setValue(current);
         dropdown.onChange(async (value) => {
           setValue(value);
+          if (kind === "chat") {
+            // 채팅 모델이 바뀌면 effort 허용 집합이 달라지므로 저장값을 보정한다.
+            this.plugin.settings.effort = clampEffort(
+              this.plugin.settings.aiBackend,
+              value,
+              this.plugin.settings.effort
+            );
+          }
           await this.plugin.saveSettings();
+          // effort 항목 노출/옵션이 모델에 따라 바뀌므로 탭을 다시 그린다.
+          if (kind === "chat") this.display();
         });
         // 비동기로 모델 목록 로드 후 드롭다운 갱신
         (async () => {

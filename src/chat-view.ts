@@ -10,6 +10,8 @@ import { needsToolConfirmation } from "./tool-confirm-utils";
 import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
+// 모델 변경 시 effort 허용 집합 보정에 사용
+import { clampEffort } from "./provider-utils";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
@@ -1230,6 +1232,13 @@ export class ChatView extends ItemView {
         }
         item.addEventListener("click", async () => {
           this.setActiveChatModel(model.modelId);
+          // 모델이 바뀌면 effort 허용 집합이 달라진다. 요청 시점에도 보정되지만
+          // 저장값과 실제 전송값이 어긋나지 않도록 여기서 확정한다.
+          this.plugin.settings.effort = clampEffort(
+            this.plugin.settings.aiBackend,
+            model.modelId,
+            this.plugin.settings.effort
+          );
           await this.plugin.saveSettings();
           this.updateModelLabel();
           this.closeModelDropdown();

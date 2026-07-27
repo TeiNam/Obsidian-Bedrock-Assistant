@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import type {
+  EffortLevel,
   GeminiAssistantSettings,
   IAiClient,
   ToolDefinition,
@@ -16,7 +17,8 @@ import {
   toOpenAITools,
   openAIToolCallsToBlocks,
   toOpenAIMessages,
-  supportsTemperature,
+  buildEffortParams,
+  supportsEffort,
 } from "./provider-utils";
 import { isAbortError } from "./abort-utils";
 import { buildSystemPrompt } from "./system-prompt";
@@ -86,17 +88,25 @@ export class OpenAIClient implements IAiClient {
     };
   }
 
-  // temperature를 공급자 호환 범위(0.0~1.0)로 정렬한다(기존 백엔드와 일관, Req 4.6).
-  private alignedTemperature(): number {
-    const t = this.settings.temperature;
-    if (!Number.isFinite(t)) return 0;
-    return Math.max(0, Math.min(1, t));
+  /**
+   * 요청 본문에 병합할 추론 강도(effort) 파라미터.
+   * gpt-5 이상 계열과 o 시리즈는 `reasoning_effort`를 받고, 그 외 모델은
+   * 빈 객체이므로 파라미터가 생략된다(공급자 기본 설정 사용).
+   */
+  private effortParams(effort: EffortLevel): Record<string, unknown> {
+    return buildEffortParams("openai", this.settings.openaiChatModel, effort);
   }
 
-  // 현재 채팅 모델이 temperature를 지원하는지 여부.
-  // gpt-5 계열/o 시리즈 추론 모델은 temperature를 거부하므로 요청에서 생략한다.
-  private temperatureSupported(): boolean {
-    return supportsTemperature("openai", this.settings.openaiChatModel);
+  /**
+   * 출력 토큰 상한 파라미터.
+   * 추론 모델(gpt-5 이상, o 시리즈)은 `max_tokens`를 거부하며
+   * `max_completion_tokens`(가시 출력 + 추론 토큰 합계)를 요구한다.
+   * 그 외 모델은 기존 `max_tokens`를 그대로 사용한다.
+   */
+  private maxTokensParam(maxTokens: number): Record<string, number> {
+    return supportsEffort("openai", this.settings.openaiChatModel)
+      ? { max_completion_tokens: maxTokens }
+      : { max_tokens: maxTokens };
   }
 
   // HTTP 상태 코드를 식별 가능한 오류 메시지로 변환한다(Req 10.3, 10.3.1).
@@ -227,13 +237,11 @@ export class OpenAIClient implements IAiClient {
         { role: "system", content: buildSystemPrompt(this.settings) },
         ...toOpenAIMessages(messages),
       ],
-      max_tokens: this.settings.maxTokens,
+      ...this.maxTokensParam(this.settings.maxTokens),
       stream: true,
     };
-    // temperature 미지원 모델(gpt-5/o 시리즈)에는 파라미터를 생략한다(거부 방지).
-    if (this.temperatureSupported()) {
-      body.temperature = this.alignedTemperature();
-    }
+    // 추론 강도 파라미터를 병합한다(미지원 모델에서는 빈 객체이므로 생략된다).
+    Object.assign(body, this.effortParams(this.settings.effort));
     // 도구 목록이 비어 있으면 toOpenAITools가 undefined를 반환하여 tools를 생략한다(Req 5.3).
     const toolDefs = toOpenAITools(tools ?? []);
     if (toolDefs) {
@@ -483,9 +491,9 @@ export class OpenAIClient implements IAiClient {
             { role: "system", content: systemPrompt },
             { role: "user", content: prompt },
           ],
-          max_tokens: maxTokens,
-          // temperature 미지원 모델에는 생략한다(gpt-5/o 시리즈는 0을 거부).
-          ...(this.temperatureSupported() ? { temperature: 0 } : {}),
+          ...this.maxTokensParam(maxTokens),
+          // 분류·요약은 짧고 결정적인 출력이 바람직하므로 최저 강도를 쓴다.
+          ...this.effortParams("minimal"),
           stream: false,
         }),
         throw: false,

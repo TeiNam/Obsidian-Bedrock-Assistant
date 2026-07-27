@@ -31,7 +31,7 @@ function makeSettings(
 		systemPrompt: "SYS",
 		enabledSkills: [],
 		maxTokens: 2048,
-		temperature: 0.3,
+		effort: "medium",
 		...overrides,
 	};
 }
