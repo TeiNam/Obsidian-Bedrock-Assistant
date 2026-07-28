@@ -31,6 +31,7 @@ import {
   normalizeAccessLog,
   recordAccess,
   forgetPath,
+  hasPath,
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
@@ -310,13 +311,13 @@ export default class GeminiAssistantPlugin extends Plugin {
     const sb = this.settings.secondBrain;
     if (!sb) return;
 
-    const nextLog = forgetPath(normalizeAccessLog(sb.accessLog), path);
-    const nextSurfaced = forgetPath(normalizeAccessLog(sb.reviewSurfaced), path);
-    // 변경이 없으면 저장을 예약하지 않는다.
-    if (nextLog === sb.accessLog && nextSurfaced === sb.reviewSurfaced) return;
+    // 정리할 항목이 없으면 아무것도 하지 않는다. normalizeAccessLog는 항상 새
+    // 객체를 반환하므로 참조 비교로는 변경 여부를 판정할 수 없다 — 삭제되는 모든
+    // 파일마다 설정 저장이 예약되어 대량 삭제 시 디스크 쓰기가 폭증한다.
+    if (!hasPath(sb.accessLog, path) && !hasPath(sb.reviewSurfaced, path)) return;
 
-    sb.accessLog = nextLog;
-    sb.reviewSurfaced = nextSurfaced;
+    sb.accessLog = forgetPath(normalizeAccessLog(sb.accessLog), path);
+    sb.reviewSurfaced = forgetPath(normalizeAccessLog(sb.reviewSurfaced), path);
     if (this.accessLogSaveTimer) clearTimeout(this.accessLogSaveTimer);
     this.accessLogSaveTimer = setTimeout(() => {
       this.accessLogSaveTimer = null;
