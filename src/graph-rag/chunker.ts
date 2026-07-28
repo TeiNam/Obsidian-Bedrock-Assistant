@@ -202,26 +202,44 @@ function containsSurrogatePair(body: string): boolean {
 }
 
 /**
+ * 청크 최대 크기의 상한.
+ *
+ * 상한이 없으면 `maxSize`가 `Number.MAX_SAFE_INTEGER`를 넘을 수 있고, 그러면
+ * `maxSize - 1 === maxSize`가 되어 "overlap < maxSize" 불변식이 깨진다(부동소수점
+ * 정밀도 한계). 설정 입력이 자유 텍스트 + `parseInt`이므로 실제로 도달 가능한 경로다.
+ *
+ * 값 자체는 실용 상한이기도 하다. 청크 하나가 100만 자를 넘으면 어떤 임베딩 모델의
+ * 입력 한도도 초과하므로, 그보다 큰 설정은 의미가 없다.
+ */
+export const MAX_CHUNK_SIZE = 1_000_000;
+
+/**
  * 청크 설정값을 유효 범위로 보정한다 (Req 9.6, 9.7).
  *
  * 보정 규칙(불변식 보장):
  * - maxSize < 1 → 1 (Req 9.7)
+ * - maxSize > MAX_CHUNK_SIZE → MAX_CHUNK_SIZE (정밀도 한계·실용 상한)
  * - overlap < 0 → 0 (음수 겹침 방지, 설계 불변식 0 <= overlap)
  * - overlap >= maxSize → maxSize - 1 (Req 9.6)
  *
- * 결과는 항상 maxSize >= 1 이고 0 <= overlap < maxSize 를 만족한다.
+ * 결과는 항상 정수이며 maxSize >= 1 이고 0 <= overlap < maxSize 를 만족한다.
  */
 export function normalizeChunkConfig(maxSize: number, overlap: number): ChunkConfig {
-  // maxSize 보정: 유한하지 않거나 1 미만이면 1로 보정한다 (Req 9.7).
+  // maxSize 보정: 유한하지 않거나 1 미만이면 1, 상한 초과면 상한으로 맞춘다 (Req 9.7).
+  // 소수점은 버려 정수로 만든다 — 정수가 아니면 slice 경계 계산이 어긋난다.
   let normalizedMax = maxSize;
   if (!Number.isFinite(normalizedMax) || normalizedMax < 1) {
     normalizedMax = 1;
+  } else {
+    normalizedMax = Math.min(Math.floor(normalizedMax), MAX_CHUNK_SIZE);
   }
 
   // overlap 보정: 음수는 0으로, maxSize 이상이면 maxSize-1 로 보정한다 (Req 9.6).
   let normalizedOverlap = overlap;
   if (!Number.isFinite(normalizedOverlap) || normalizedOverlap < 0) {
     normalizedOverlap = 0;
+  } else {
+    normalizedOverlap = Math.floor(normalizedOverlap);
   }
   if (normalizedOverlap >= normalizedMax) {
     normalizedOverlap = normalizedMax - 1;
