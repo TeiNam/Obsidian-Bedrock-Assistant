@@ -230,11 +230,16 @@ export function buildArchitectureSections(tree: ModuleNode): Record<string, stri
   ].join("\n");
 
   // --- modules 섹션 ---
-  const moduleLines = renderModuleLines(tree, 0);
+  // 모든 파일을 한 줄씩 렌더하므로 대형 볼트에서 골격이 무한정 커진다. 프롬프트에
+  // 들어가는 크기를 제한하고, 잘라낸 분량을 명시해 LLM이 부분 정보임을 알게 한다.
+  const allModuleLines = renderModuleLines(tree, 0);
+  const moduleLines = allModuleLines.slice(0, MAX_MODULE_LINES);
+  const omittedLines = allModuleLines.length - moduleLines.length;
   const modules = [
     "## 모듈 구조",
     "",
     ...(moduleLines.length > 0 ? moduleLines : ["_모듈이 없습니다._"]),
+    ...(omittedLines > 0 ? ["", `_... 외 ${omittedLines}개 항목 생략_`] : []),
   ].join("\n");
 
   // --- decisions 섹션 ---
@@ -275,6 +280,13 @@ import { ensureWikiFolders } from "./wiki-structure";
 
 /** 아키텍처 노트 파일명(Wiki_Folder 루트에 작성). */
 const ARCHITECTURE_NOTE_NAME = "Architecture.md";
+
+/**
+ * modules 섹션 골격에 포함할 최대 라인 수.
+ * 파일 하나가 한 줄이므로 상한이 없으면 볼트 크기에 비례해 프롬프트가 커진다.
+ * 400줄이면 구조 파악에 충분하고 토큰도 안전한 범위다.
+ */
+const MAX_MODULE_LINES = 400;
 
 /**
  * 섹션별 LLM 요약 호출의 최대 토큰 수.

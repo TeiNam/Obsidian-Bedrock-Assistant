@@ -129,7 +129,14 @@ export function selectRecentNotes(
 ): VaultIndexEntry[] {
   const normalizedDays = normalizeDays(days);
   const cutoff = now - normalizedDays * MILLIS_PER_DAY;
-  return entries.filter((entry) => entry.lastModified >= cutoff);
+  // 최신순으로 정렬해 반환한다. 호출부가 개수를 제한할 때 앞에서 잘라도 최신 노트가
+  // 남도록 보장하기 위함이다(동일 시각은 경로 오름차순으로 결정적 순서를 유지).
+  return entries
+    .filter((entry) => entry.lastModified >= cutoff)
+    .sort((a, b) => {
+      if (b.lastModified !== a.lastModified) return b.lastModified - a.lastModified;
+      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    });
 }
 
 // ============================================
@@ -155,6 +162,13 @@ const CONNECT_MAX_TOKENS = 1500;
 
 /** emerge LLM 호출의 최대 토큰 수(최근 노트 전반의 패턴 발견 — 다소 넉넉히 둔다). */
 const EMERGE_MAX_TOKENS = 2000;
+
+/**
+ * emerge 프롬프트에 포함할 최대 노트 수.
+ * 노트당 최대 500자 발췌이므로 60건이면 약 30KB(≈8K 토큰) 규모다. 상한이 없으면
+ * 최근 노트가 수천 건인 볼트에서 컨텍스트 한도를 초과한다.
+ */
+const EMERGE_MAX_NOTES = 60;
 
 /**
  * 최근 노트 집합을 emerge LLM 프롬프트로 구성한다(순수, 내부 헬퍼).
@@ -282,11 +296,21 @@ export async function runEmerge(
     return `최근 ${normalizedDays}일 이내에 수정된 노트가 없습니다.`;
   }
 
-  const prompt = buildEmergeContext(normalizedDays, recent);
+  // 프롬프트에 넣는 노트 수를 제한한다. 상한이 없으면 최근 노트가 수천 건일 때
+  // 발췌 전량이 한 요청에 들어가 컨텍스트 한도를 초과한다.
+  // selectRecentNotes가 최신순으로 정렬해 반환하므로 앞에서 잘라도 최신 노트가 남는다.
+  const capped = recent.slice(0, EMERGE_MAX_NOTES);
+  const omitted = recent.length - capped.length;
+
+  const prompt = buildEmergeContext(normalizedDays, capped);
   const response = await ctx.aiClient.converseLight(
     prompt,
     SECOND_BRAIN_SYSTEM_PROMPT,
     EMERGE_MAX_TOKENS,
   );
+  // 잘라낸 노트가 있으면 사용자에게 알린다(조용한 누락 방지).
+  if (omitted > 0) {
+    return `${response.text}\n\n---\n(최근 노트 ${recent.length}건 중 최신 ${capped.length}건만 분석했습니다. 기간을 좁히면 더 정확한 결과를 얻을 수 있습니다.)`;
+  }
   return response.text;
 }

@@ -20,6 +20,40 @@ import type { NeighborResult } from "./graph-traversal";
 /** 그래프 거리 가중치 감쇠 계수 (decay). hop 1 증가마다 가중치가 이 비율로 감소한다. */
 const GRAPH_WEIGHT_DECAY = 0.5;
 
+/**
+ * 이웃 점수 산출 시 "이웃 자신의 벡터 유사도"에 부여하는 비중.
+ *
+ * 기존 구현은 이웃 점수를 `vNormOfSeed × decay^hop`으로만 계산해 두 가지 문제가 있었다.
+ *  1) 이웃 자신의 관련성이 전혀 반영되지 않아, 같은 시드에 연결된 무관한 노트와
+ *     매우 관련된 노트가 동점이 된다.
+ *  2) 시드 점수 하한(코사인 비음수 → 0.5)이 hop 1 이웃 상한(0.5)과 겹쳐,
+ *     기본 limit에서 그래프 순회 결과가 사실상 노출되지 않는다.
+ *
+ * 이웃 자신의 유사도를 알 수 있으면 시드 유사도와 가중 평균하여 위 두 문제를 함께 완화한다.
+ * 이웃 유사도를 알 수 없는 경우(임베딩 없음/차원 불일치)에는 기존 방식으로 저하된다.
+ */
+const NEIGHBOR_SELF_WEIGHT = 0.6;
+
+/**
+ * 후보로 인정하는 최소 정규화 점수.
+ *
+ * 정규화가 `(cos+1)/2`이므로 코사인 0(직교=무관)이 0.5로 매핑된다. 임계값이 없으면
+ * 무관한 노트도 "50% 관련"으로 표시되어 LLM이 근거로 사용한다. 코사인 기준 약 0.1
+ * 이상만 통과시켜(=정규화 0.55) 명백히 무관한 후보를 제외한다.
+ */
+export const MIN_COMBINED_SCORE = 0.55;
+
+/** combineAndRank 선택 옵션. */
+export interface CombineOptions {
+  /**
+   * 이웃 경로 → 이웃 자신의 원시 코사인 유사도(-1~1).
+   * 제공하면 이웃 점수에 자신의 관련성이 반영된다. 생략하면 시드 점수만 사용한다.
+   */
+  neighborScores?: ReadonlyMap<string, number> | Iterable<[string, number]>;
+  /** 후보 최소 통합 점수. 기본 MIN_COMBINED_SCORE. 0 이하면 필터 비활성. */
+  minScore?: number;
+}
+
 /** 통합 점수 산출 결과 항목. */
 export interface CombinedResult {
   /** 노트의 볼트 루트 기준 경로 */
@@ -101,8 +135,16 @@ function lookupMeta(
 export function combineAndRank(
   seeds: NoteVectorScore[],
   neighbors: NeighborResult[],
-  index: Map<string, VaultIndexEntry>
+  index: Map<string, VaultIndexEntry>,
+  options: CombineOptions = {}
 ): CombinedResult[] {
+  // 이웃 자신의 벡터 점수 조회 맵(있으면 관련성 반영에 사용).
+  const neighborSelfNorm = new Map<string, number>();
+  for (const [path, score] of options.neighborScores ?? []) {
+    neighborSelfNorm.set(path, normalizeVectorScore(score));
+  }
+  const minScore = options.minScore ?? MIN_COMBINED_SCORE;
+
   // 시드 경로 → 정규화 벡터 점수(vNorm) 맵. 이웃의 점수 참조에 사용한다.
   const seedNorm = new Map<string, number>();
   for (const seed of seeds) {
@@ -136,7 +178,7 @@ export function combineAndRank(
     });
   }
 
-  // 2) 이웃 처리: 자신을 도달시킨 시드의 정규화 점수를 사용
+  // 2) 이웃 처리: 이웃 자신의 유사도(있으면)와 시드 유사도를 가중 결합한 뒤 hop 감쇠를 적용
   for (const neighbor of neighbors) {
     const vNormOfSeed = seedNorm.get(neighbor.seedPath);
     // 참조 시드가 없으면(이론상 발생하지 않음) 해당 이웃은 건너뛴다.
@@ -144,20 +186,31 @@ export function combineAndRank(
       continue;
     }
     const meta = lookupMeta(neighbor.path, index);
+    const selfNorm = neighborSelfNorm.get(neighbor.path);
+
+    // 이웃 자신의 유사도를 알면 가중 평균으로 관련성을 반영한다. 모르면 시드 점수만 사용한다.
+    const relevance =
+      selfNorm === undefined
+        ? vNormOfSeed
+        : NEIGHBOR_SELF_WEIGHT * selfNorm + (1 - NEIGHBOR_SELF_WEIGHT) * vNormOfSeed;
+
     upsert({
       path: neighbor.path,
       title: meta.title,
       excerpt: meta.excerpt,
-      vectorScore: vNormOfSeed,
+      vectorScore: selfNorm ?? vNormOfSeed,
       hop: neighbor.hop,
       isSeed: false,
       seedPath: neighbor.seedPath,
-      combinedScore: vNormOfSeed * graphWeight(neighbor.hop),
+      combinedScore: relevance * graphWeight(neighbor.hop),
     });
   }
 
-  // 3) 정렬: combinedScore 내림차순 → vectorScore 내림차순 → path 오름차순 (Req 6.3, 6.4)
-  const results = Array.from(merged.values());
+  // 3) 최소 점수 미달 후보 제외 — 무관한 노트가 "50% 관련"으로 노출되는 것을 막는다.
+  //    임계값이 0 이하이면 필터를 적용하지 않는다(호출부가 명시적으로 비활성화한 경우).
+  const results = Array.from(merged.values()).filter(
+    (r) => minScore <= 0 || r.combinedScore >= minScore
+  );
   results.sort((a, b) => {
     if (b.combinedScore !== a.combinedScore) {
       return b.combinedScore - a.combinedScore;

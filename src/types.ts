@@ -349,6 +349,18 @@ export const CURRENT_INDEX_SCHEMA_VERSION = 1;
 export interface SerializedIndex {
   /** Index_Schema_Version (Req 8.1) */
   schemaVersion: number;
+  /**
+   * 인덱스를 생성한 임베딩 구성 시그니처(`{provider}:{modelId}`).
+   * 로드 시 현재 설정과 비교해 임베딩 공간 변경을 감지한다. 시그니처가 다르면
+   * 기존 벡터는 새 쿼리 벡터와 비교 불가하므로 인덱스를 무효로 취급한다.
+   * (구버전 데이터에는 없으므로 optional)
+   */
+  embeddingSignature?: string;
+  /**
+   * 인덱스 벡터의 차원 수. 시그니처가 같아도 공급자가 차원을 바꾸는 경우를 잡는다.
+   * (구버전 데이터에는 없으므로 optional)
+   */
+  embeddingDimension?: number;
   /** chunks/links/tags/frontmatter를 포함한 인덱스 항목 집합 */
   entries: VaultIndexEntry[];
 }
