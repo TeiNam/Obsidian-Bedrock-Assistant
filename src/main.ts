@@ -25,6 +25,13 @@ import {
 } from "./provider-utils";
 import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 import { SecondBrainScheduler, type SecondBrainContext } from "./second-brain/scheduler";
+import {
+  collectGaps,
+  buildGapReport,
+  writeGapReport,
+  GAP_REPORT_FILE,
+} from "./second-brain/knowledge-gaps";
+import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
@@ -572,6 +579,38 @@ export default class GeminiAssistantPlugin extends Plugin {
       },
     });
 
+    // 지식 공백 리포트 수동 실행 — LLM 호출 없이 구조 지표만 계산해 리포트를 갱신한다.
+    // 스케줄러 파이프라인에도 같은 단계가 있지만, 주기를 기다리지 않고 즉시 보고 싶을 때 쓴다.
+    this.addCommand({
+      id: "second-brain-knowledge-gaps",
+      name: "지식 공백 리포트 갱신",
+      callback: async () => {
+        if (!this.settings.secondBrain.enabled) {
+          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          return;
+        }
+        try {
+          const wikiFolder = this.settings.secondBrain.wikiFolder;
+          // metadataCache가 아직 준비되지 않았을 수 있다. 없으면 깨진 링크 지표만 비고,
+          // 인덱스 기반 세 지표는 그대로 계산된다.
+          const unresolved =
+            (this.app.metadataCache as
+              | { unresolvedLinks?: Record<string, Record<string, number>> }
+              | undefined)?.unresolvedLinks ?? {};
+          const gaps = collectGaps(this.indexer.getEntries(), unresolved, wikiFolder);
+          await ensureWikiFolders(this.app, wikiFolder);
+          await writeGapReport(this.app, wikiFolder, buildGapReport(gaps));
+          new Notice(
+            gaps.length === 0
+              ? "구조적 공백이 발견되지 않았습니다."
+              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${wikiFolder}/${GAP_REPORT_FILE}`
+          );
+        } catch (error) {
+          new Notice(`지식 공백 리포트 실패: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
+    });
+
     // 스케줄러 수동 실행 — 비파괴 Cleanup_Pipeline을 즉시 실행 (Req 11.1).
     // 옵트인 격리: enabled=false면 runCleanupPipeline은 단계 내부에서 쓰기를 수행하지 않는다.
     // (자동 트리거와 달리 수동 실행은 schedulerEnabled와 무관하게 사용자 명시 요청으로 동작)
@@ -593,7 +632,7 @@ export default class GeminiAssistantPlugin extends Plugin {
           if (!result.ran) {
             new Notice("Second Brain 정리가 이미 진행 중입니다.");
           } else if (result.failed === 0) {
-            new Notice("Second Brain 정리(catalog 갱신)를 실행했습니다.");
+            new Notice("Second Brain 정리(catalog·공백 리포트 갱신)를 실행했습니다.");
           } else if (result.succeeded === 0) {
             new Notice(
               `Second Brain 정리 실패: 모든 단계가 실패했습니다 (${result.failedSteps.join(", ")}). 콘솔 로그를 확인해 주세요.`
