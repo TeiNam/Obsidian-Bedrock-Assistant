@@ -135,16 +135,51 @@ describe("combineAndRank: 이웃 관련성 반영", () => {
     expect(both[0].combinedScore).toBe(both[1].combinedScore);
   });
 
-  it("관련성 높은 이웃은 무관한 시드보다 상위에 올 수 있다", () => {
-    // 과거에는 시드 하한(0.5)이 hop1 이웃 상한(0.5)과 겹쳐 이웃이 시드를 앞설 수 없었다.
-    const weakSeed = [{ path: "weak-seed.md", score: 0.05 }];
+  it("기본 임계값에서도 그래프 이웃이 결과에 포함된다(회귀 방지)", () => {
+    // 이것이 핵심 회귀 케이스다. 임계값을 감쇠 **후** combinedScore에 적용하면
+    // hop1 이웃의 이론적 최대값(1.0 × 0.5 = 0.5)이 임계값(0.55) 미달이라
+    // 모든 그래프 이웃이 제거되고 Graph RAG가 순수 벡터 검색으로 퇴화한다.
+    // 반드시 minScore 기본값으로 검증해야 한다(minScore:0 으로는 회귀가 숨는다).
+    const combined = combineAndRank(
+      [{ path: "seed.md", score: 0.9 }],
+      [{ path: "neighbor.md", hop: 1, seedPath: "seed.md" }],
+      index,
+      { neighborScores: new Map([["neighbor.md", 0.8]]) }
+    );
+
+    expect(combined.map((r) => r.path)).toContain("neighbor.md");
+  });
+
+  it("hop 2 이웃도 관련성이 충분하면 기본 임계값을 통과한다", () => {
+    const combined = combineAndRank(
+      [{ path: "seed.md", score: 0.9 }],
+      [{ path: "far.md", hop: 2, seedPath: "seed.md" }],
+      index,
+      { neighborScores: new Map([["far.md", 0.9]]) }
+    );
+
+    expect(combined.map((r) => r.path)).toContain("far.md");
+  });
+
+  it("관련성이 낮은 이웃은 hop과 무관하게 제외된다", () => {
+    // 임계값의 본래 목적(무관한 노트 제외)은 유지되어야 한다.
+    const combined = combineAndRank(
+      [{ path: "seed.md", score: 0.9 }],
+      [{ path: "unrelated.md", hop: 1, seedPath: "seed.md" }],
+      index,
+      { neighborScores: new Map([["unrelated.md", -0.9]]) }
+    );
+
+    expect(combined.map((r) => r.path)).not.toContain("unrelated.md");
+  });
+
+  it("관련성 높은 이웃은 이웃 자신의 유사도를 vectorScore로 보고한다", () => {
+    const weakSeed = [{ path: "weak-seed.md", score: 0.6 }];
     const strongNeighbor = [{ path: "strong.md", hop: 1, seedPath: "weak-seed.md" }];
     const combined = combineAndRank(weakSeed, strongNeighbor, index, {
       neighborScores: new Map([["strong.md", 1.0]]),
-      minScore: 0,
     });
 
-    // 이웃 자신의 유사도가 반영되므로 hop 감쇠에도 경쟁력이 생긴다
     const neighbor = combined.find((r) => r.path === "strong.md");
     expect(neighbor).toBeDefined();
     expect(neighbor!.vectorScore).toBeCloseTo(1.0);

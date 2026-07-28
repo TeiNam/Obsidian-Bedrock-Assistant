@@ -72,6 +72,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // 디바운스를 통과한 인덱싱 작업을 직렬 실행하는 체인(동시성 1).
+  private indexQueue: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -254,13 +256,16 @@ export default class GeminiAssistantPlugin extends Plugin {
   private scheduleIndex(file: TFile): void {
     const existing = this.indexDebounceTimers.get(file.path);
     if (existing) clearTimeout(existing);
-    const timer = setTimeout(async () => {
+    const timer = setTimeout(() => {
       this.indexDebounceTimers.delete(file.path);
-      try {
-        await this.indexer.indexFile(file);
-      } catch (error) {
-        console.error(`인덱스 갱신 실패: ${file.path}`, error);
-      }
+      // 직렬 큐에 넣는다. 다중 파일 변경(폴더 이동, 플러그인 일괄 생성)이 동시에
+      // 디바운스를 통과하면 파일 수만큼 임베딩 요청이 병렬로 나가 API 쓰로틀링을 맞는다.
+      // ponytail: 단일 체인으로 동시성 1 — 처리량이 문제되면 워커 풀로 올린다.
+      this.indexQueue = this.indexQueue
+        .then(() => this.indexer.indexFile(file))
+        .catch((error) => {
+          console.error(`인덱스 갱신 실패: ${file.path}`, error);
+        });
     }, INDEX_DEBOUNCE_MS);
     this.indexDebounceTimers.set(file.path, timer);
   }

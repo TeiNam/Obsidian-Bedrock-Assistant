@@ -49,7 +49,17 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
   // 무한 루프 방지를 위한 방어적 보정: maxSize는 최소 1, step은 최소 1을 보장한다.
   // (정상 호출 시 normalizeChunkConfig 로 maxSize>=1, 0<=overlap<maxSize 가 보장된다.)
   const maxSize = Math.max(1, Math.floor(config.maxSize));
-  const overlap = Math.min(Math.max(0, Math.floor(config.overlap)), maxSize - 1);
+  let overlap = Math.min(Math.max(0, Math.floor(config.overlap)), maxSize - 1);
+
+  // 서로게이트 페어(이모지 등)가 포함된 본문에서 overlap이 홀수면, 절단 지점과
+  // 겹침 시작 지점 중 하나는 반드시 페어 중간에 놓인다(페어는 2 코드 유닛).
+  // 그러면 청크 경계에 깨진 문자가 남으므로 overlap을 짝수로 맞춘다.
+  // overlap은 실행 전체에서 고정이므로 "인접 청크는 정확히 overlap만큼 겹친다"
+  // 불변식은 그대로 유지된다.
+  if (overlap % 2 === 1 && overlap >= 1 && containsSurrogatePair(body)) {
+    overlap -= 1;
+  }
+
   const step = Math.max(1, maxSize - overlap);
 
   // 본문 길이가 단일 청크 최대 크기 이하이면 청크 1개로 처리한다 (Req 3.3).
@@ -68,7 +78,19 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
   let start = 0;
   while (true) {
     const hardEnd = Math.min(start + maxSize, body.length);
-    const end = hardEnd >= body.length ? body.length : findBreakPoint(body, start, hardEnd, overlap);
+    let end = hardEnd >= body.length ? body.length : findBreakPoint(body, start, hardEnd, overlap);
+
+    // 청크 경계 두 곳(이번 청크의 끝 `end`, 다음 청크의 시작 `end - overlap`)이 모두
+    // 서로게이트 페어 중간에 놓이지 않아야 한다. 하나라도 페어를 쪼개면 해당 청크에
+    // 단독 서로게이트(깨진 문자)가 남아 임베딩·표시가 오염된다.
+    //
+    // overlap이 짝수로 보정돼 있으므로 두 경계의 홀짝성은 같다 → end를 한 칸 당기면
+    // 두 경계가 함께 이동해 동시에 해소된다. 시작 위치를 따로 옮기지 않으므로
+    // "인접 청크는 정확히 overlap만큼 겹친다" 불변식은 유지된다.
+    if (end < body.length) {
+      end = alignChunkEnd(body, start, end, overlap);
+    }
+
     chunks.push(body.slice(start, end));
 
     // 본문 끝까지 도달했으면 종료한다.
@@ -126,11 +148,57 @@ function findBreakPoint(body: string, start: number, hardEnd: number, overlap: n
  * 페어를 쪼개면 청크 경계에 깨진 문자(U+FFFD 유발)가 남아 임베딩·표시가 오염된다.
  */
 function avoidSurrogateSplit(body: string, index: number): number {
-  if (index <= 0 || index >= body.length) return index;
+  return splitsSurrogatePair(body, index) ? index - 1 : index;
+}
+
+/**
+ * 해당 인덱스가 서로게이트 페어(이모지 등 BMP 밖 문자) 중간을 가리키는지 판별한다.
+ * 즉 앞 문자가 high surrogate(0xD800~0xDBFF)이고 그 뒤 문자와 한 쌍인 경우.
+ */
+function splitsSurrogatePair(body: string, index: number): boolean {
+  if (index <= 0 || index >= body.length) return false;
   const prev = body.charCodeAt(index - 1);
-  // 앞 문자가 high surrogate(0xD800~0xDBFF)면 뒤 문자와 한 쌍이므로 경계를 당긴다.
-  if (prev >= 0xd800 && prev <= 0xdbff) return index - 1;
-  return index;
+  return prev >= 0xd800 && prev <= 0xdbff;
+}
+
+/**
+ * 청크 끝 위치를 서로게이트 페어 경계에 맞춘다.
+ *
+ * 두 경계가 모두 페어를 쪼개지 않아야 한다.
+ *  - 이번 청크의 끝: `end`
+ *  - 다음 청크의 시작: `end - overlap`
+ *
+ * end를 최대 2칸까지 당겨 두 조건을 함께 만족하는 위치를 찾는다. 전진 보장
+ * (청크 길이 > overlap)을 깨는 위치는 채택하지 않으며, 찾지 못하면 원래 값을 반환한다.
+ *
+ * ponytail: 홀수 폭 문자(한글·ASCII)가 페어 사이에 끼면 두 경계의 홀짝성이 어긋나
+ * 단일 고정 overlap으로는 동시 정렬이 불가능한 조합이 남는다. 이때 청크 경계에
+ * 깨진 문자 1개가 생기지만, 데이터 손실이 아니라 임베딩 입력의 미세한 품질 저하이며
+ * 무손실 커버리지·길이·겹침 불변식은 모두 유지된다(수정 전에는 보호 자체가 없었다).
+ * 완전 해결이 필요하면 청크별 가변 overlap을 허용해야 하는데, 그러면 "인접 청크는
+ * 정확히 overlap만큼 겹친다"는 계약(Req 3.5)과 그 속성 테스트를 바꿔야 한다.
+ */
+function alignChunkEnd(body: string, start: number, end: number, overlap: number): number {
+  for (let candidate = end; candidate >= end - 2; candidate--) {
+    if (candidate - start <= overlap) break; // 전진 보장 위반
+    if (candidate <= start) break;
+    const splitsEnd = splitsSurrogatePair(body, candidate);
+    const splitsNextStart = splitsSurrogatePair(body, candidate - overlap);
+    if (!splitsEnd && !splitsNextStart) return candidate;
+  }
+  return end;
+}
+
+/**
+ * 본문에 서로게이트 페어(BMP 밖 문자: 이모지, 일부 한자·악보 기호 등)가 있는지 확인한다.
+ * 있으면 청크 경계 정렬에 추가 제약(짝수 overlap)이 필요하다.
+ */
+function containsSurrogatePair(body: string): boolean {
+  for (let i = 0; i < body.length; i++) {
+    const code = body.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) return true;
+  }
+  return false;
 }
 
 /**

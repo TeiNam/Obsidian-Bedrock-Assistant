@@ -88,6 +88,8 @@ export class VaultIndexer {
   private embeddingSignature: string | null = null;
   // 로드한 인덱스의 임베딩 구성이 현재 설정과 달라 벡터를 신뢰할 수 없는 상태
   private staleIndex = false;
+  // buildEntry 진행 중에 삭제·이동된 경로. 완료 시 기록을 취소해 부활을 막는다.
+  private removedDuringIndexing: Set<string> = new Set();
 
   constructor(app: App, client: IAiClient) {
     this.app = app;
@@ -160,7 +162,8 @@ export class VaultIndexer {
       const skippedUpToDate: TFile[] = [];
       for (const file of files) {
         const existing = this.index.get(file.path);
-        if (existing && existing.lastModified >= file.stat.mtime) {
+        // needsReindex 엔트리는 mtime과 무관하게 항상 갱신 대상이다(임베딩 미완료/무효).
+        if (existing && !existing.needsReindex && existing.lastModified >= file.stat.mtime) {
           skippedUpToDate.push(file);
         } else {
           filesToIndex.push(file);
@@ -236,11 +239,11 @@ export class VaultIndexer {
       }
 
       // 임베딩이 하나도 생성되지 않은 엔트리 수를 집계해 사용자에게 알린다.
-      // buildEntry가 이 엔트리의 lastModified를 0으로 저장하므로 다음 인덱싱에서
-      // 자동 재시도되지만, 조용히 넘어가면 사용자는 검색 누락을 알 수 없다.
+      // buildEntry가 needsReindex를 세우므로 다음 인덱싱에서 자동 재시도되지만,
+      // 조용히 넘어가면 사용자는 검색 누락을 알 수 없다.
       let incompleteCount = 0;
       for (const entry of this.index.values()) {
-        if (entry.lastModified === 0) incompleteCount++;
+        if (entry.needsReindex) incompleteCount++;
       }
 
       // 인덱싱 완료 후에는 대기열 처리를 위해 플래그를 먼저 내려야 한다
@@ -274,7 +277,8 @@ export class VaultIndexer {
       }
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
       const entry = await this.buildEntry(file, content, readMtime);
-      this.index.set(file.path, entry);
+      // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
+      this.commitEntry(file.path, entry);
     }
 
     /**
@@ -353,8 +357,8 @@ export class VaultIndexer {
       const searchText = `${title}\n${content}${tagText ? `\n${tagText}` : ""}`.toLowerCase();
 
       // 임베딩을 하나도 확보하지 못했는데 실패한 청크가 있으면(API 오류) 이 엔트리는
-      // 불완전하다. lastModified를 최신으로 확정하면 mtime 기반 스킵 때문에 영구히
-      // 재시도되지 않으므로, 0을 저장해 다음 인덱싱에서 반드시 재대상이 되게 한다.
+      // 불완전하다. 그냥 두면 mtime 기반 스킵 때문에 영구히 재시도되지 않으므로
+      // needsReindex를 세워 다음 인덱싱에서 반드시 재대상이 되게 한다.
       const embedFailedCount = chunks.filter((c) => c.embedFailed).length;
       const incomplete =
         this.useEmbeddings && legacyEmbedding.length === 0 && embedFailedCount > 0;
@@ -367,7 +371,10 @@ export class VaultIndexer {
       return {
         path: file.path,
         embedding: legacyEmbedding,
-        lastModified: incomplete ? 0 : stamp,
+        lastModified: stamp,
+        // 임베딩을 확보하지 못했으면 재인덱싱 대상으로 표시한다. lastModified는 실제
+        // 수정 시각을 유지해야 하므로(최근 노트 선별 등이 이 값을 읽는다) 별도 플래그를 쓴다.
+        ...(incomplete ? { needsReindex: true } : {}),
         title,
         excerpt,
         searchText,
@@ -407,7 +414,8 @@ export class VaultIndexer {
     }
 
     const existing = this.index.get(file.path);
-    if (existing && existing.lastModified >= file.stat.mtime) {
+    // needsReindex 엔트리는 mtime과 무관하게 항상 갱신 대상이다(임베딩 미완료/무효).
+    if (existing && !existing.needsReindex && existing.lastModified >= file.stat.mtime) {
       return;
     }
 
@@ -422,7 +430,8 @@ export class VaultIndexer {
 
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
     const entry = await this.buildEntry(file, content, readMtime);
-    this.index.set(file.path, entry);
+    // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
+    this.commitEntry(file.path, entry);
   }
 
   /**
@@ -437,6 +446,24 @@ export class VaultIndexer {
 
   removeFile(path: string): void {
     this.index.delete(path);
+    // 진행 중인 인덱싱 작업이 완료 후 이 경로를 다시 써넣지 못하게 표시한다.
+    // buildEntry(임베딩 호출 포함)는 수 초가 걸리므로, 그 사이 삭제·이동된 노트가
+    // 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남을 수 있다.
+    this.removedDuringIndexing.add(path);
+    // 대기열에 남은 예약도 취소한다(삭제된 파일을 다시 인덱싱할 이유가 없다).
+    this.pendingFiles.delete(path);
+  }
+
+  /**
+   * buildEntry 완료 후 인덱스에 기록한다. 작업 중 해당 경로가 삭제·이동됐으면
+   * 기록을 취소해 삭제된 노트가 부활하지 않게 한다.
+   */
+  private commitEntry(path: string, entry: VaultIndexEntry): void {
+    if (this.removedDuringIndexing.has(path)) {
+      this.removedDuringIndexing.delete(path);
+      return;
+    }
+    this.index.set(path, entry);
   }
 
   /**
@@ -484,9 +511,14 @@ export class VaultIndexer {
     }
 
     // 4) 임베딩이 인덱스에 하나도 없으면 키워드 검색으로 폴백 (Req 4.6)
+    //    임베딩 구성 변경으로 벡터를 폐기한 경우도 이 경로를 타므로 stale 표시를 함께 전달한다.
     if (!this.useEmbeddings || !this.hasEmbeddings()) {
       const items = this.keywordSearch(query, limit);
-      return { items, usedKeywordFallback: true };
+      return {
+        items,
+        usedKeywordFallback: true,
+        ...(this.staleIndex ? { staleEmbeddings: true } : {}),
+      };
     }
 
     // 5) 쿼리 임베딩 생성 후 Vector_Search로 시드 확보 (Req 4.5)
@@ -531,6 +563,19 @@ export class VaultIndexer {
 
     // 7) ScoreCombiner — 통합 점수 산출 및 재정렬 (Req 6.1~6.4, 6.8)
     const combined = combineAndRank(seeds, neighbors, this.index, { neighborScores });
+
+    // 7-1) 최소 관련성 임계값으로 후보가 전부 걸러진 경우 키워드 검색으로 폴백한다.
+    //      인덱스는 정상인데 "검색 결과 없음"만 반환하면 사용자가 불필요한 재인덱싱을
+    //      하게 되고, Second Brain 기능들(synthesize/reconcile/challenge/connect)이
+    //      조용히 no-op이 된다. 임베딩 점수가 낮아도 키워드로는 찾을 수 있는 경우가 많다.
+    if (combined.length === 0) {
+      const items = this.keywordSearch(query, limit);
+      return {
+        items,
+        usedKeywordFallback: true,
+        ...(staleEmbeddings ? { staleEmbeddings } : {}),
+      };
+    }
 
     // 8) limit 적용 (Req 6.5) 후 GraphRagSearchItem으로 매핑
     const items: GraphRagSearchItem[] = combined.slice(0, limit).map((r) => ({
@@ -646,9 +691,45 @@ export class VaultIndexer {
   /**
    * 현재 인덱스가 사용하는 임베딩 시그니처를 설정한다(main.ts가 설정에서 주입).
    * 저장 시 함께 기록되고, 로드 시 비교 대상이 된다.
+   *
+   * 런타임에 시그니처가 바뀌면(사용자가 설정에서 임베딩 모델·백엔드를 변경) 기존
+   * 벡터는 즉시 무효가 된다. 차원이 같은 다른 모델이면 검색이 오류 없이 무의미한
+   * 유사도를 계산하므로, 여기서 곧바로 벡터를 폐기해야 한다. 재시작을 기다리면
+   * 그 사이 검색이 오염되고, 다음 저장이 새 시그니처로 기록되어 감지 기회도 사라진다.
    */
   setEmbeddingSignature(signature: string): void {
+    const previous = this.embeddingSignature;
     this.embeddingSignature = signature;
+
+    // 최초 주입(previous=null)이나 동일 값이면 아무것도 하지 않는다.
+    if (previous === null || previous === signature) return;
+    // 인덱스가 비어 있으면 폐기할 것이 없다.
+    if (this.index.size === 0) return;
+
+    this.invalidateEmbeddings(
+      `임베딩 구성이 변경되었습니다 (이전=${previous}, 현재=${signature}). 재인덱싱이 필요합니다.`
+    );
+  }
+
+  /**
+   * 인덱스의 모든 임베딩 벡터를 폐기하고 재인덱싱 대상으로 표시한다.
+   * 본문·메타데이터는 보존하므로 키워드 검색은 계속 동작한다.
+   */
+  private invalidateEmbeddings(reason: string): void {
+    this.staleIndex = true;
+    for (const entry of this.index.values()) {
+      entry.embedding = [];
+      for (const chunk of entry.chunks ?? []) {
+        chunk.embedding = [];
+        chunk.embedFailed = true;
+      }
+      // 재인덱싱 대상으로 표시한다. lastModified(실제 수정 시각)는 보존해야 하며,
+      // 0으로 덮으면 최근 노트 선별(emerge) 등이 이 노트를 영구 과거로 취급한다.
+      entry.needsReindex = true;
+    }
+    // 임베딩이 0개가 되었으므로 검색은 키워드 폴백으로 흐른다.
+    this.useEmbeddings = false;
+    console.error(reason);
   }
 
   /**
@@ -693,17 +774,7 @@ export class VaultIndexer {
     }
 
     // 시그니처 불일치: 벡터를 폐기해 키워드 검색으로 폴백시키고 재인덱싱을 유도한다.
-    this.staleIndex = true;
-    for (const entry of this.index.values()) {
-      entry.embedding = [];
-      for (const chunk of entry.chunks ?? []) {
-        chunk.embedding = [];
-        chunk.embedFailed = true;
-      }
-      // 재인덱싱 대상이 되도록 최신성 도장을 무효화한다.
-      entry.lastModified = 0;
-    }
-    console.error(
+    this.invalidateEmbeddings(
       `인덱스 임베딩 구성이 변경되었습니다 (저장=${stored}, 현재=${current}). 재인덱싱이 필요합니다.`
     );
   }

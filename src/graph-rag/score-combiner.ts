@@ -35,11 +35,17 @@ const GRAPH_WEIGHT_DECAY = 0.5;
 const NEIGHBOR_SELF_WEIGHT = 0.6;
 
 /**
- * 후보로 인정하는 최소 정규화 점수.
+ * 후보로 인정하는 최소 **관련성**(hop 감쇠 적용 전) 점수.
  *
  * 정규화가 `(cos+1)/2`이므로 코사인 0(직교=무관)이 0.5로 매핑된다. 임계값이 없으면
  * 무관한 노트도 "50% 관련"으로 표시되어 LLM이 근거로 사용한다. 코사인 기준 약 0.1
  * 이상만 통과시켜(=정규화 0.55) 명백히 무관한 후보를 제외한다.
+ *
+ * ⚠️ 이 임계값은 **감쇠 전 관련성**에 적용한다. 감쇠 후 combinedScore에 적용하면
+ * hop 1 이웃의 이론적 최대값(1.0 × 0.5 = 0.5)이 임계값보다 낮아 모든 그래프 이웃이
+ * 제거되고 Graph RAG가 순수 벡터 검색으로 퇴화한다. 관련성 자체는 "이 노트가 쿼리와
+ * 얼마나 가까운가"이고 감쇠는 "시드에서 얼마나 멀리 있는가"라 서로 다른 축이므로,
+ * 무관함을 걸러내는 판정은 감쇠 전 값으로 해야 한다.
  */
 export const MIN_COMBINED_SCORE = 0.55;
 
@@ -154,8 +160,14 @@ export function combineAndRank(
   // 경로 → 통합 결과 맵. 동일 노트 병합 시 더 높은 combinedScore 를 유지한다 (Req 6.8).
   const merged = new Map<string, CombinedResult>();
 
-  // 후보를 맵에 병합한다. 기존 항목보다 combinedScore 가 클 때만 교체한다.
-  const upsert = (candidate: CombinedResult): void => {
+  /**
+   * 후보를 맵에 병합한다.
+   * @param relevance hop 감쇠를 적용하기 전의 관련성 점수. 최소 임계값 판정에 사용한다.
+   */
+  const upsert = (candidate: CombinedResult, relevance: number): void => {
+    // 관련성이 임계값 미달이면 후보에서 제외한다(감쇠 후 값이 아니라 관련성으로 판정 —
+    // 감쇠 후 값으로 판정하면 hop>=1 이웃이 전부 탈락한다).
+    if (minScore > 0 && relevance < minScore) return;
     const existing = merged.get(candidate.path);
     if (existing === undefined || candidate.combinedScore > existing.combinedScore) {
       merged.set(candidate.path, candidate);
@@ -166,16 +178,19 @@ export function combineAndRank(
   for (const seed of seeds) {
     const vNorm = seedNorm.get(seed.path) ?? normalizeVectorScore(seed.score);
     const meta = lookupMeta(seed.path, index);
-    upsert({
-      path: seed.path,
-      title: meta.title,
-      excerpt: meta.excerpt,
-      vectorScore: vNorm,
-      hop: 0,
-      isSeed: true,
-      seedPath: null,
-      combinedScore: vNorm * graphWeight(0),
-    });
+    upsert(
+      {
+        path: seed.path,
+        title: meta.title,
+        excerpt: meta.excerpt,
+        vectorScore: vNorm,
+        hop: 0,
+        isSeed: true,
+        seedPath: null,
+        combinedScore: vNorm * graphWeight(0),
+      },
+      vNorm
+    );
   }
 
   // 2) 이웃 처리: 이웃 자신의 유사도(있으면)와 시드 유사도를 가중 결합한 뒤 hop 감쇠를 적용
@@ -194,23 +209,23 @@ export function combineAndRank(
         ? vNormOfSeed
         : NEIGHBOR_SELF_WEIGHT * selfNorm + (1 - NEIGHBOR_SELF_WEIGHT) * vNormOfSeed;
 
-    upsert({
-      path: neighbor.path,
-      title: meta.title,
-      excerpt: meta.excerpt,
-      vectorScore: selfNorm ?? vNormOfSeed,
-      hop: neighbor.hop,
-      isSeed: false,
-      seedPath: neighbor.seedPath,
-      combinedScore: relevance * graphWeight(neighbor.hop),
-    });
+    upsert(
+      {
+        path: neighbor.path,
+        title: meta.title,
+        excerpt: meta.excerpt,
+        vectorScore: selfNorm ?? vNormOfSeed,
+        hop: neighbor.hop,
+        isSeed: false,
+        seedPath: neighbor.seedPath,
+        combinedScore: relevance * graphWeight(neighbor.hop),
+      },
+      relevance
+    );
   }
 
-  // 3) 최소 점수 미달 후보 제외 — 무관한 노트가 "50% 관련"으로 노출되는 것을 막는다.
-  //    임계값이 0 이하이면 필터를 적용하지 않는다(호출부가 명시적으로 비활성화한 경우).
-  const results = Array.from(merged.values()).filter(
-    (r) => minScore <= 0 || r.combinedScore >= minScore
-  );
+  // 3) 정렬 (임계값 판정은 upsert에서 관련성 기준으로 이미 수행됐다)
+  const results = Array.from(merged.values());
   results.sort((a, b) => {
     if (b.combinedScore !== a.combinedScore) {
       return b.combinedScore - a.combinedScore;
