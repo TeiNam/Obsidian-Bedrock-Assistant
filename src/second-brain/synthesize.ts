@@ -23,6 +23,9 @@ import {
 } from "./search-adapter";
 import { buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { ensureWikiFolders } from "./wiki-structure";
+// 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
+import { ensureWithinFolder } from "./vault-path-guard";
 
 /** 종합 본문을 감싸는 Sentinel_Block 키 (Req 7.4). */
 const SYNTHESIS_BLOCK_KEY = "synthesis";
@@ -121,9 +124,11 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   const fileName = `${trimmedTopic}.md`;
   const notePath = normalizePath(`${wikiFolder}/${fileName}`);
 
-  // Wiki_Folder 범위 검증 — 주제에 "../" 등 경로 탈출이 포함되면 정규화 후 차단한다.
-  if (notePath !== wikiFolder && !notePath.startsWith(`${wikiFolder}/`)) {
-    return `Wiki 폴더(${wikiFolder}) 밖으로의 쓰기는 허용되지 않습니다: ${notePath}`;
+  // Wiki_Folder 범위 검증 — 주제에 "../" 등 경로 탈출이 포함되면 거부한다.
+  // normalizePath는 ".." 를 해석하지 않으므로 세그먼트 단위 검사가 필요하다.
+  const guard = ensureWithinFolder(notePath, wikiFolder);
+  if (!guard.ok) {
+    return guard.reason;
   }
 
   const existing = ctx.app.vault.getAbstractFileByPath(notePath);
@@ -146,6 +151,9 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   };
   const body = upsertGeneratedBlock("", SYNTHESIS_BLOCK_KEY, synthesisBody);
   const noteContent = buildAiFirstNote({ meta, body });
+  // Wiki_Folder가 없으면 create가 실패한다(LLM 호출 비용만 소진). 다른 쓰기 경로와
+  // 동일하게 부모 폴더를 먼저 보장한다.
+  await ensureWikiFolders(ctx.app, ctx.wikiFolder);
   await ctx.app.vault.create(notePath, noteContent);
   return `종합 노트를 생성했습니다: ${notePath}`;
 }

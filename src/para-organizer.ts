@@ -15,6 +15,28 @@ const PARA_FOLDERS = [
 /** LLM 분류 결과 타입 */
 type ParaCategory = "projects" | "areas" | "resources" | "archives";
 
+/** 허용 카테고리 목록 (응답 검증용) */
+const PARA_CATEGORIES: readonly ParaCategory[] = [
+  "projects",
+  "areas",
+  "resources",
+  "archives",
+] as const;
+
+/**
+ * 분류 응답 최대 토큰.
+ * 카테고리 한 단어만 필요하지만, 추론 모델은 사고 토큰을 함께 소비하므로
+ * 20토큰으로는 응답이 잘려 분류가 실패한다. 여유를 둔다.
+ */
+const CLASSIFY_MAX_TOKENS = 256;
+
+/**
+ * 한 번의 P.A.R.A 정리에서 허용하는 최대 LLM 분류 호출 수.
+ * 노트당 1회 호출이므로 상한이 없으면 대형 볼트에서 비용이 폭증한다.
+ * 초과분은 건너뛰고 사용자에게 알려 다시 실행하도록 안내한다.
+ */
+export const PARA_MAX_CLASSIFICATIONS = 200;
+
 /** 분류 결과 */
 export interface ParaResult {
   created: string[];
@@ -60,7 +82,7 @@ async function classifyNote(
   plugin: GeminiAssistantPlugin,
   title: string,
   excerpt: string
-): Promise<ParaCategory> {
+): Promise<ParaCategory | null> {
   const systemPrompt = `You are a note classifier. Classify the given note into exactly one P.A.R.A category.
 
 P.A.R.A categories:
@@ -74,15 +96,14 @@ Respond with ONLY one word: projects, areas, resources, or archives. No explanat
   const prompt = `Title: ${title}\nContent preview: ${excerpt.slice(0, 500)}`;
 
   try {
-    const result = await plugin.aiClient.converseLight(prompt, systemPrompt, 20);
-    const category = result.text.trim().toLowerCase() as ParaCategory;
-    if (["projects", "areas", "resources", "archives"].includes(category)) {
-      return category;
-    }
-    // 파싱 실패 시 기본값
-    return "resources";
+    const result = await plugin.aiClient.converseLight(prompt, systemPrompt, CLASSIFY_MAX_TOKENS);
+    // 응답에 설명이 섞여도 카테고리 단어를 찾아낸다(추론 모델은 서두를 붙이는 경우가 있다).
+    const text = result.text.trim().toLowerCase();
+    const matched = PARA_CATEGORIES.find((c) => text.includes(c));
+    // 분류에 실패하면 임의 카테고리로 이동시키지 않고 null을 반환해 호출부가 건너뛰게 한다.
+    return matched ?? null;
   } catch {
-    return "resources";
+    return null;
   }
 }
 
@@ -125,9 +146,14 @@ export async function organizeVaultPara(
   }
 
   // 3) 각 파일을 LLM으로 분류 후 이동
-  for (let i = 0; i < rootFiles.length; i++) {
-    const file = rootFiles[i];
-    onProgress?.(i + 1, rootFiles.length, file.name);
+  //    호출 수 상한을 적용한다. 노트당 1회 LLM 호출이므로 상한이 없으면
+  //    대형 볼트에서 비용과 소요 시간이 통제 불가로 커진다.
+  const targets = rootFiles.slice(0, PARA_MAX_CLASSIFICATIONS);
+  const deferred = rootFiles.length - targets.length;
+
+  for (let i = 0; i < targets.length; i++) {
+    const file = targets[i];
+    onProgress?.(i + 1, targets.length, file.name);
 
     try {
       // 파일 내용 일부 읽기 (분류용)
@@ -137,6 +163,12 @@ export async function organizeVaultPara(
 
       // LLM 분류
       const category = await classifyNote(plugin, title, excerpt);
+      // 분류 실패(응답 오류·형식 불일치)는 건너뛴다. 과거에는 무조건 resources로
+      // 이동시켜 사용자 폴더 구조를 임의로 재배치했다.
+      if (category === null) {
+        result.skipped.push(file.path);
+        continue;
+      }
       const targetFolder = CATEGORY_FOLDER[category];
       const newPath = `${targetFolder}/${file.name}`;
 
@@ -151,6 +183,13 @@ export async function organizeVaultPara(
     } catch (e: any) {
       result.errors.push(`${file.path}: ${e?.message || String(e)}`);
     }
+  }
+
+  // 상한으로 처리하지 못한 파일을 사용자에게 알린다(조용한 누락 방지).
+  if (deferred > 0) {
+    result.errors.push(
+      `LLM 호출 상한(${PARA_MAX_CLASSIFICATIONS}건)에 도달해 ${deferred}개 파일을 처리하지 않았습니다. 다시 실행하면 이어서 정리됩니다.`
+    );
   }
 
   // 4) 비어있는 원래 폴더 정리 (P.A.R.A 폴더 제외)

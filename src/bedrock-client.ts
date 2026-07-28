@@ -28,6 +28,69 @@ import { buildSystemPrompt } from "./system-prompt";
 import { loadProfileCredentials, type AwsCredentials } from "./aws-profile";
 import { runtimeProfileDeps } from "./aws-profile-runtime";
 
+/** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
+const EMBEDDING_MAX_CHARS = 20000;
+
+/** Titan 임베딩 요청 시 지정할 출력 차원. Titan v2만 이 파라미터를 받는다. */
+const TITAN_EMBED_DIMENSIONS = 512;
+
+/**
+ * 지원하는 임베딩 모델인지 판별한다.
+ * 요청/응답 스키마를 구현한 벤더만 허용한다(Amazon Titan, Cohere Embed).
+ */
+export function isSupportedEmbeddingModel(modelId: string): boolean {
+  const id = (modelId ?? "").toLowerCase();
+  return /titan-embed/.test(id) || /cohere\.embed/.test(id);
+}
+
+/**
+ * 모델별 임베딩 요청 본문을 구성한다.
+ *  - Amazon Titan v2: `{ inputText, dimensions, normalize }`
+ *  - Amazon Titan v1: `{ inputText }` (dimensions 미지원 — 전달하면 오류)
+ *  - Cohere Embed: `{ texts: [...], input_type }`
+ */
+export function buildEmbeddingRequest(modelId: string, text: string): Record<string, unknown> {
+  const id = (modelId ?? "").toLowerCase();
+
+  if (/cohere\.embed/.test(id)) {
+    // Cohere는 배열 입력과 용도(input_type) 지정을 요구한다.
+    return { texts: [text], input_type: "search_document" };
+  }
+
+  // Titan: v2만 dimensions/normalize를 받는다. v1에 전달하면 ValidationException.
+  const isTitanV2 = /titan-embed-text-v2/.test(id);
+  return isTitanV2
+    ? { inputText: text, dimensions: TITAN_EMBED_DIMENSIONS, normalize: true }
+    : { inputText: text };
+}
+
+/**
+ * 모델별 임베딩 응답에서 벡터를 추출한다. 해석할 수 없으면 null.
+ *  - Titan: `{ embedding: number[] }`
+ *  - Cohere: `{ embeddings: number[][] }`
+ */
+export function extractEmbedding(modelId: string, body: unknown): number[] | null {
+  if (!body || typeof body !== "object") return null;
+  const obj = body as Record<string, unknown>;
+
+  // Titan 형식
+  if (Array.isArray(obj.embedding)) return obj.embedding as number[];
+
+  // Cohere 형식(배열의 배열) — 첫 벡터를 사용한다(입력 텍스트가 1개이므로).
+  if (Array.isArray(obj.embeddings)) {
+    const first = (obj.embeddings as unknown[])[0];
+    if (Array.isArray(first)) return first as number[];
+    // 일부 응답은 { embeddings: { float: number[][] } } 형태를 쓴다.
+  }
+  const nested = obj.embeddings as Record<string, unknown> | undefined;
+  if (nested && Array.isArray(nested.float)) {
+    const first = (nested.float as unknown[])[0];
+    if (Array.isArray(first)) return first as number[];
+  }
+
+  return null;
+}
+
 // Bedrock API 클라이언트 (IAiClient 인터페이스 구현)
 export class BedrockClient implements IAiClient {
   private client: BedrockRuntimeClient;
@@ -169,6 +232,9 @@ export class BedrockClient implements IAiClient {
         // 텍스트 임베딩 모델만 노출(이미지 전용 임베딩 등 제외)
         const inputs = m.inputModalities ?? [];
         if (inputs.length > 0 && !inputs.includes("TEXT")) continue;
+        // 요청/응답 형식을 지원하는 모델만 노출한다. 지원하지 않는 모델을 고르면
+        // 모든 임베딩 호출이 실패하므로 드롭다운에서 제외하는 것이 안전하다.
+        if (!isSupportedEmbeddingModel(m.modelId)) continue;
 
         models.push({
           modelId: m.modelId,
@@ -380,25 +446,32 @@ export class BedrockClient implements IAiClient {
     return { contentBlocks, stopReason };
   }
 
-  // Titan 임베딩 생성
+  /**
+   * 텍스트 임베딩 생성.
+   *
+   * Bedrock의 임베딩 모델은 벤더마다 요청/응답 스키마가 다르다. 과거에는 Titan 형식을
+   * 하드코딩해, 드롭다운에 노출되는 Cohere 모델을 고르면 모든 임베딩이 실패했다.
+   * 모델 ID로 벤더를 판별해 각 스키마에 맞게 요청·파싱한다.
+   */
   async getEmbedding(text: string): Promise<number[]> {
     // 텍스트 길이 제한 (Titan v2 최대 8192 토큰)
-    const truncated = text.slice(0, 20000);
+    const truncated = text.slice(0, EMBEDDING_MAX_CHARS);
+    const modelId = this.settings.bedrockEmbeddingModel;
 
     const command = new InvokeModelCommand({
-      modelId: this.settings.bedrockEmbeddingModel,
+      modelId,
       contentType: "application/json",
       accept: "application/json",
-      body: JSON.stringify({
-        inputText: truncated,
-        dimensions: 512,
-        normalize: true,
-      }),
+      body: JSON.stringify(buildEmbeddingRequest(modelId, truncated)),
     });
 
     const response = await this.client.send(command);
     const body = JSON.parse(new TextDecoder().decode(response.body));
-    return body.embedding;
+    const embedding = extractEmbedding(modelId, body);
+    if (embedding === null) {
+      throw new Error(`임베딩 응답을 해석할 수 없습니다 (model=${modelId})`);
+    }
+    return embedding;
   }
 
   /**

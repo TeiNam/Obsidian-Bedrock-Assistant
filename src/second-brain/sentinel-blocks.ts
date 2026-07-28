@@ -37,6 +37,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Generated_Region 에 기록할 내용에서 sentinel 마커를 무력화한다.
+ *
+ * `<!-- @generated:X -->` / `<!-- @end:X -->` 형태를 `<!-- @generated​:X -->` 처럼
+ * 제로폭 공백을 끼워 치환한다. 사람이 읽을 때는 동일하게 보이지만 마커 정규식과는
+ * 일치하지 않으므로 블록 경계를 침범하지 못한다. 원문의 정보는 보존된다.
+ */
+export function sanitizeGeneratedContent(content: string): string {
+  if (typeof content !== "string" || content === "") return content ?? "";
+  return content.replace(
+    /<!--\s*@(generated|end):/g,
+    (_match, kind: string) => `<!-- @${kind}​:`
+  );
+}
+
 /** 주어진 Block_Key 의 시작 마커 문자열을 만든다. */
 export function startMarker(key: string): string {
   return `<!-- @generated:${key} -->`;
@@ -156,8 +171,13 @@ export function getGeneratedBlock(doc: string, key: string): string | null {
  *    손실 없이 보존된다 (Req 2.7).
  */
 export function upsertGeneratedBlock(doc: string, key: string, content: string): string {
-  // 내부 내용은 항상 앞뒤 개행 1개로 감싼다(가독성 + 라운드트립 보존).
-  const region = `\n${content}\n`;
+  // LLM 출력에 섞인 마커 문자열을 무력화한다.
+  //
+  // content에 `<!-- @generated:KEY -->` / `<!-- @end:KEY -->`가 그대로 들어가면 블록
+  // 경계가 어긋나 마커 잔존물이 문서에 남고(다음 실행에서 User_Region처럼 취급됨)
+  // 멱등성이 깨진다. 노트 발췌가 프롬프트로 되돌아오는 자기참조 경로가 있어 실제로
+  // 발생 가능하므로, 기록 전에 마커를 무해한 형태로 치환한다.
+  const region = `\n${sanitizeGeneratedContent(content)}\n`;
   const block = matchBlock(doc, key);
 
   if (block !== null) {

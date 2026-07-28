@@ -18,6 +18,8 @@ import { runReconcile } from "./second-brain/reconcile";
 import { runArchitect } from "./second-brain/architect";
 // Second Brain Layer — 사고 도구(challenge/connect/emerge) 실행 래퍼 (읽기 전용)
 import { runChallenge, runConnect, runEmerge } from "./second-brain/thinking-tools";
+// 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
+import { ensureWithinFolder } from "./second-brain/vault-path-guard";
 import type { SecondBrainContext } from "./second-brain/scheduler";
 
 // Obsidian 제어 도구 목록
@@ -395,9 +397,15 @@ export class ToolExecutor {
       return "검색 쿼리가 비어 있습니다. 검색어를 입력해 주세요.";
     }
 
+    // 임베딩 모델 변경으로 기존 벡터를 신뢰할 수 없는 상태를 명시한다. 이 안내가 없으면
+    // 사용자와 LLM 모두 검색 품질이 떨어진 사실을 알 수 없다.
+    const staleWarning = result.staleEmbeddings
+      ? "\n\n⚠️ 임베딩 모델이 변경되어 기존 인덱스를 벡터 검색에 사용할 수 없습니다. 볼트를 다시 인덱싱해 주세요."
+      : "";
+
     // 결과가 비어 있으면 안내 메시지 반환 (Req 7.5)
     if (result.items.length === 0) {
-      return "검색 결과가 없습니다. 볼트 인덱싱이 필요할 수 있습니다.";
+      return `검색 결과가 없습니다. 볼트 인덱싱이 필요할 수 있습니다.${staleWarning}`;
     }
 
     // 결과 헤더 — 키워드 폴백이 사용된 경우 대체 검색 사실을 표시 (Req 4.6)
@@ -409,7 +417,7 @@ export class ToolExecutor {
       .map((item, i) => this.formatSearchItem(item, i + 1))
       .join("\n\n");
 
-    return `${header}\n\n${body}`;
+    return `${header}\n\n${body}${staleWarning}`;
   }
 
   // 단일 검색 결과 항목을 Seed/Neighbor 구분 및 관계 정보와 함께 렌더링한다 (Req 7.2~7.4).
@@ -473,6 +481,11 @@ export class ToolExecutor {
 
     // 부분 수정 모드 (find/replace)
     if (find !== undefined && replace !== undefined) {
+      // 빈 find는 거부한다. `"abc".includes("")`가 항상 true라 아래 가드를 통과하고,
+      // `split("").join(replace)`가 모든 문자 사이에 replace를 삽입해 노트를 파괴한다.
+      if (find === "") {
+        return "교체할 텍스트(find)가 비어 있습니다. 찾을 문자열을 지정해 주세요.";
+      }
       const current = await this.app.vault.read(file);
       if (!current.includes(find)) {
         return `교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`;
@@ -738,10 +751,12 @@ export class ToolExecutor {
       : `${wikiFolder}/${fileName}`;
     const notePath = normalizePath(rawPath);
 
-    // Wiki_Folder 범위 검증 — 정규화 후 위키 폴더 밖이면 거부 (Req 6.3).
-    // title에 "../" 등 디렉터리 탈출이 포함되면 정규화 후 prefix를 벗어나므로 차단된다.
-    if (notePath !== wikiFolder && !notePath.startsWith(`${wikiFolder}/`)) {
-      return `Wiki 폴더(${wikiFolder}) 밖으로의 쓰기는 허용되지 않습니다: ${notePath}`;
+    // Wiki_Folder 범위 검증 (Req 6.3).
+    // normalizePath는 ".." 를 해석하지 않으므로 문자열 prefix 검사만으로는 탈출을 막을 수
+    // 없다. ensureWithinFolder가 세그먼트 단위로 ".."·절대경로를 먼저 거부한다.
+    const guard = ensureWithinFolder(notePath, wikiFolder);
+    if (!guard.ok) {
+      return guard.reason;
     }
 
     // 경로 충돌 확인 — 기존 노트를 덮어쓰지 않는다 (Req 6.6)

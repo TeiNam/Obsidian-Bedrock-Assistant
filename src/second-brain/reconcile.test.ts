@@ -166,10 +166,23 @@ describe("runReconcile — 모순 0건 안내 (Req 8.5)", () => {
     expect(message).toBe("발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.");
   });
 
-  it("LLM 응답이 파싱 불가(모순 0건으로 수렴)여도 '모순 없음' 안내를 반환한다", async () => {
+  it("LLM 응답이 파싱 불가면 '모순 없음'이 아니라 해석 실패를 보고한다", async () => {
     const searchResult: GraphRagResult = { items: [makeItem()] };
-    // 손상된 JSON → parseContradictionReport가 빈 배열을 반환 → 모순 없음 분기
+    // 손상된 JSON → 파싱 실패. 이를 "모순 없음"으로 보고하면 거짓 음성이 된다.
     const { ctx } = makeContext(searchResult, "이건 JSON이 아닙니다");
+
+    const message = await runReconcile(ctx, "주제 X");
+
+    expect(message).toContain("해석할 수 없었습니다");
+    // 모순이 없다는 잘못된 결론을 내리지 않아야 한다
+    expect(message).not.toContain("발견된 모순이 없습니다");
+    // 어떤 노트도 변경하지 않았음은 유지된다
+    expect(message).toContain("변경하지 않았습니다");
+  });
+
+  it("LLM이 빈 배열([])을 반환하면 '모순 없음'으로 보고한다", async () => {
+    const searchResult: GraphRagResult = { items: [makeItem()] };
+    const { ctx } = makeContext(searchResult, "[]");
 
     const message = await runReconcile(ctx, "주제 X");
 
