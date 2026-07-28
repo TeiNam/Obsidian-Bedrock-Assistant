@@ -5,7 +5,6 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
@@ -15,9 +14,14 @@ Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
 
 ## Features
 
-- **AWS Bedrock Backend** — Powered by AWS Bedrock (Claude) models
+- **AWS Bedrock Backend** — Powered by AWS Bedrock (Claude) models, with three authentication methods: access key, Bedrock API key, or a `~/.aws` shared profile
 - **Streaming Chat** — Real-time streaming responses in the sidebar
-- **Semantic Vault Search** — Index notes with embeddings (Titan / Gemini) and search by meaning
+- **Graph RAG Vault Search** — Chunk-level embeddings combined with link-graph traversal, filtered by a minimum relevance threshold
+- **Second Brain Layer (opt-in, off by default)** — Thinking tools that only read your notes, plus generation tools that write into a single wiki folder
+- **Knowledge Gaps Report** — Structural gaps computed locally from index data (0 LLM calls)
+- **Review Queue** — Surfaces well-linked notes you have not opened in a while (0 LLM calls)
+- **Conversation Harvest** — Extract conclusions, decisions, rationale, and open questions from a saved chat session into a searchable note
+- **Daily Retrospective** — Type `회고`, `retrospective`, or `振り返り` in chat to generate a review of today's To-Do. The prompt also carries the retrospective sections of the previous 7 days, with no extra LLM calls
 - **Auto Tag Generation** — Analyze note content and suggest relevant tags
 - **To-Do Management** — Daily to-do creation from templates, automatic carry-over of incomplete items (preserving hierarchy), archiving
 - **Archive Cleanup** — Clean up old archived files from the settings tab
@@ -28,13 +32,10 @@ Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
 - **Multilingual UI** — English, Korean (한국어), Japanese (日本語)
 - **File Attachments** — Attach context via drag-and-drop, clipboard, file search, or images/PDFs
 - **Chat Session History** — Save and restore past conversations with search
-- **Daily Retrospective** — Generate an AI-powered daily review based on your To-Do
-- **Chat Retrospective Command** — Type "회고", "retrospective", or "振り返り" in chat to auto-generate a retrospective
 - **Chat Export** — Export conversations as markdown files
-- **Conversation Search** — Search through saved chat sessions
 - **MCP JSON Editor** — Real-time validation, auto-formatting, bracket matching, and templates
 - **Context Window Indicator** — Visual ring showing token usage
-- **Obsidian Skills** — Enable Obsidian-specific knowledge (Dataview, Tasks, Templater) in the system prompt
+- **Obsidian Skills** — Obsidian Markdown, Obsidian Bases, and JSON Canvas knowledge is always part of the system prompt; the Korean writing, business English writing, and Second Brain packs are toggles, and you can add your own custom skills
 - **Destructive Tool Confirmation** — Optional confirmation dialog before file-modifying operations
 
 ## Installation
@@ -54,36 +55,36 @@ Built and maintained with [Kiro](https://kiro.dev), an AI-powered IDE.
 ## Quick Start
 
 1. Open Settings → Assistant Kiro Settings
-2. Choose your AI backend (Gemini or Bedrock)
-3. Enter your credentials:
-   - **Gemini**: Paste your API key from [Google AI Studio](https://aistudio.google.com/apikey)
-   - **Bedrock**: Enter AWS Access Key, Secret Key, and Region
+2. Under **AWS Bedrock**, pick an authentication method and fill in the fields it shows
+3. Enter your AWS Region (e.g. `us-east-1`), then pick a chat model from the dropdown
 4. Click the Assistant Kiro icon in the left ribbon to open the sidebar
 5. Start chatting!
 
-## AI Backend Configuration
+## AWS Bedrock Configuration
 
-### Switching Backends
+This edition uses AWS Bedrock as its only backend. There is no backend selector.
 
-Open Settings → Assistant Kiro Settings → AI Backend dropdown. Switching instantly updates the sidebar icon, branding, and model list. Your credentials for each backend are saved independently.
+### Authentication Methods
 
-### Google Gemini
+Choose one in Settings → Assistant Kiro Settings → AWS Bedrock → Authentication Method. Only the fields for the selected method are shown.
+
+| Method | Fields | Notes |
+|--------|--------|-------|
+| Access key | Access Key ID, Secret Access Key | Standard IAM credentials. If both are left empty, the AWS SDK default credential chain (environment variables, IAM role) is used instead. |
+| Bedrock API key | Bedrock API Key | A long-term Bedrock API key, sent as a bearer token instead of SigV4 signing. |
+| AWS profile (`~/.aws`) | Profile (dropdown) | Reads a profile from `~/.aws/config` or `~/.aws/credentials`. Static-credential and SSO profiles are both supported. For an SSO profile, run `aws sso login --profile <name>` in a terminal first — the plugin does not run the browser login flow itself, and it reports when the cached token is missing or expired. |
+
+A **Region** is required for all three methods.
+
+### Settings
 
 | Setting | Description |
 |---------|-------------|
-| API Key | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) |
-| Chat Model | Select from available Gemini models (dropdown) |
-| Embedding Model | Model for vault indexing (default: `text-embedding-004`) |
-
-### AWS Bedrock
-
-| Setting | Description |
-|---------|-------------|
-| Access Key ID | AWS IAM access key |
-| Secret Access Key | AWS IAM secret key |
-| Region | AWS region (e.g. `us-east-1`) |
+| Region | AWS region for the Bedrock API (e.g. `us-east-1`) |
 | Chat Model | Select from available Bedrock models (dropdown) |
-| Embedding Model | Model for vault indexing (default: `amazon.titan-embed-text-v2:0`) |
+| Embedding Model | Model used for vault indexing. Selected from a dropdown of available Bedrock embedding models; there is no default, so pick one before indexing |
+| Max Tokens | Maximum response tokens |
+| Reasoning Effort | Reasoning depth. Shown only for models that accept it; for models that do not, a temperature slider is shown instead |
 
 #### Required IAM Permissions
 
@@ -112,12 +113,24 @@ bedrock:ListFoundationModels
 | Clipboard paste | Paste screenshots or images from clipboard |
 | Binary files | Attach images (PNG, JPG, GIF, WebP) and PDFs via the paperclip icon |
 
-### Vault Indexing
+### Graph RAG Vault Search
 
-1. Click the search icon in the sidebar header (or use the command palette: "Index vault")
-2. The plugin indexes all markdown files using embeddings
-3. Once indexed, the AI can search your vault semantically when answering questions
-4. Files are automatically re-indexed when modified (2-second debounce)
+Notes are split into chunks and embedded, then a search walks outlinks and backlinks
+from the best matches to pull in related neighbours. Start indexing from the search icon
+in the sidebar header, or the `볼트 인덱싱` command. Edited files are re-indexed automatically.
+
+Details: [Graph RAG & Second Brain](docs/second-brain-en.md)
+
+### Second Brain Layer
+
+A layer that creates and maintains wiki notes grounded in your existing notes.
+It is **off by default** — enable it explicitly under Settings → Second Brain.
+
+- Read-only tools (challenge, connect, emerge, reconcile) never create notes; they only return analysis.
+- Generation tools (synthesize, architect, and others) write only inside the wiki folder you configure.
+- Generated regions are wrapped in `<!-- @generated:KEY -->` markers, so regenerating **keeps any notes you wrote yourself in the same file**.
+
+Details: [Graph RAG & Second Brain](docs/second-brain-en.md)
 
 ### Tag Generation
 
@@ -135,16 +148,16 @@ bedrock:ListFoundationModels
 
 ### Daily Retrospective
 
-1. Click the book icon in the action toolbar
-2. Confirm that you've finished today's tasks
-3. The AI generates a retrospective summary and appends it to today's To-Do
+Type `회고`, `retrospective`, or `振り返り` into the chat input and send it. The message is intercepted before any normal chat request, so it works in any UI language. The AI generates a retrospective summary and appends it to today's To-Do.
+
+The prompt also includes the retrospective sections from the previous 7 days (up to 1000 characters each), so recurring problems and whether they improved stay visible instead of resetting every day. Only the retrospective section is included, not the whole daily note, and this adds **no extra LLM calls**. With no past retrospectives present, behaviour is the same as before.
 
 ### Web Clipper
 
 1. Click the globe icon in the action toolbar
 2. Enter a URL
 3. The AI fetches the page, translates (if needed), and summarizes it
-4. Saved as a markdown note with frontmatter (source URL, date, language)
+4. Saved as a markdown note with frontmatter: `source`, `created`, `type: web-clip`, and `tags: [web-clip]`
 
 ### Archive Cleanup
 
@@ -154,8 +167,8 @@ bedrock:ListFoundationModels
 
 ### P.A.R.A Organizer
 
-1. Open Settings → Assistant Kiro Settings → User Experience section
-2. Click the "Set up P.A.R.A" button below the welcome greeting
+1. Open Settings → Assistant Kiro Settings → Vault section
+2. Click the "Set Up P.A.R.A" button, just below the Template Folder setting
 3. The plugin creates four root folders: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
 4. If existing notes are found, the currently configured AI model classifies each note into the appropriate folder
 5. A progress modal shows real-time status and a summary when complete
@@ -163,7 +176,9 @@ bedrock:ListFoundationModels
 
 ### Web Search
 
-Toggle the globe button in the input toolbar to enable web search. When enabled, the AI will search the web for up-to-date information and include source URLs.
+Web search requires a search MCP server — one whose server or tool name contains `fetch`, `exa`, or `brave`. Configure it under Settings → MCP Servers first; without one, the globe button in the input toolbar shows a notice and stays off.
+
+Once a search MCP is connected, toggle the globe button in the input toolbar to enable web search. The AI then searches the web for up-to-date information and includes source URLs.
 
 ## MCP Server Setup
 
@@ -192,8 +207,8 @@ Credentials are stored in a **local-only path** (`~/Library/Application Support/
 
 This plugin makes network requests to the following external services:
 
-- **AWS Bedrock API** — When using the Bedrock backend, requests are sent to AWS Bedrock endpoints for chat, embedding, and model listing. The specific region endpoint depends on your configured AWS Region (e.g., `bedrock-runtime.us-east-1.amazonaws.com`).
-- **Google Gemini API** — When using the Gemini backend, requests are sent to `generativelanguage.googleapis.com` for chat, embedding, and model listing.
+- **AWS Bedrock API** — Requests are sent to AWS Bedrock endpoints for chat, embedding, and model listing. The specific region endpoint depends on your configured AWS Region (e.g., `bedrock-runtime.us-east-1.amazonaws.com`).
+- **AWS SSO** — With AWS profile authentication and an SSO profile, the plugin calls the SSO portal to exchange the access token cached by `aws sso login` for temporary credentials.
 - **Web Clipper** — When using the Web Clipper feature, the plugin fetches the target URL to retrieve page content for summarization.
 - **MCP Servers** — When MCP servers are configured, the plugin communicates with locally spawned MCP server processes via stdio.
 
