@@ -273,3 +273,26 @@ describe("needsReindex: 재인덱싱 표시가 최근 노트 선별을 망치지
     expect(entry.chunks?.[0].embedding.length).toBeGreaterThan(0);
   });
 });
+
+describe("needsReindex: 임베딩 없이 인덱싱된 엔트리도 재시도 대상이다", () => {
+  it("임베딩 비활성 상태에서 인덱싱된 노트는 needsReindex로 남는다", async () => {
+    // 임베딩 모델 접근이 안 되는 상황(프리플라이트 실패) → useEmbeddings=false
+    const file = makeTFile("note.md", 5000);
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+    const indexer = new VaultIndexer(makeApp([file], contents), makeClient({ failAfter: 0 }));
+
+    await indexer.indexVault();
+
+    const entry = indexer.getEntries()[0];
+    // 벡터가 없으므로, 접근이 복구된 뒤 반드시 다시 인덱싱돼야 한다.
+    // 표시가 없으면 mtime 스킵 때문에 이 노트만 영구히 벡터를 갖지 못한다.
+    expect(entry.embedding).toEqual([]);
+    expect(entry.needsReindex).toBe(true);
+
+    // 접근 복구 후 재인덱싱하면 벡터가 채워진다.
+    indexer.client = makeClient();
+    await indexer.indexVault();
+    expect(indexer.getEntries()[0].needsReindex).toBeUndefined();
+    expect(indexer.getEntries()[0].embedding.length).toBeGreaterThan(0);
+  });
+});

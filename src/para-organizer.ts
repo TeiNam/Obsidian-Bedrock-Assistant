@@ -38,11 +38,15 @@ const CLASSIFY_MAX_TOKENS = 256;
 export const PARA_MAX_CLASSIFICATIONS = 200;
 
 /**
- * 분류가 연속으로 실패하는 것을 허용하는 횟수.
- * 백엔드 장애·자격증명 오류라면 남은 파일도 전부 실패하므로, 상한까지 호출을
+ * 호출이 연속으로 예외를 던지는 것을 허용하는 횟수.
+ * 자격증명 오류·네트워크 단절이면 남은 파일도 전부 실패하므로, 상한까지 호출을
  * 소진하지 말고 즉시 중단해 비용과 시간을 아낀다.
+ *
+ * 주의: "형식 불일치(분류 불가)"는 여기에 세지 않는다. 특정 노트가 항상 분류
+ * 불가여도 그건 그 노트의 문제이므로, 중단하면 정렬상 뒤에 있는 정상 노트가
+ * 매 실행마다 처리되지 않는다(굶주림).
  */
-const MAX_CONSECUTIVE_FAILURES = 10;
+const MAX_CONSECUTIVE_ERRORS = 10;
 
 /** 분류 결과 */
 export interface ParaResult {
@@ -101,11 +105,14 @@ export function parseCategory(responseText: string): ParaCategory | null {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
+  // 뒤에서부터 훑되, 실제 내용이 있는 첫 줄에서 판정을 끝낸다. 계속 거슬러 올라가면
+  // "projects\nCorrection: I cannot classify this note." 처럼 마지막에 철회한 응답에서
+  // 앞선 후보를 채택해 노트를 잘못 옮긴다. 구분선(`---`)처럼 글자가 없는 줄만 건너뛴다.
   for (let i = lines.length - 1; i >= 0; i--) {
     // 구두점·따옴표·마크다운 강조를 제거한 순수 토큰만 남긴다.
     const token = lines[i].replace(/[^a-z]/g, "");
-    const exact = PARA_CATEGORIES.find((c) => c === token);
-    if (exact) return exact;
+    if (token === "") continue;
+    return PARA_CATEGORIES.find((c) => c === token) ?? null;
   }
 
   // 어느 줄도 단독 카테고리가 아니면 분류 실패로 본다.
@@ -113,7 +120,10 @@ export function parseCategory(responseText: string): ParaCategory | null {
 }
 
 /**
- * LLM을 사용하여 노트를 P.A.R.A 카테고리로 분류
+ * LLM을 사용하여 노트를 P.A.R.A 카테고리로 분류.
+ *
+ * @returns 카테고리, 응답을 카테고리로 판별할 수 없으면 null
+ * @throws 백엔드 호출이 실패하면 그대로 전파한다(호출부가 중단 여부를 판단)
  */
 async function classifyNote(
   plugin: GeminiAssistantPlugin,
@@ -132,12 +142,11 @@ Respond with ONLY one word: projects, areas, resources, or archives. No explanat
 
   const prompt = `Title: ${title}\nContent preview: ${excerpt.slice(0, 500)}`;
 
-  try {
-    const result = await plugin.aiClient.converseLight(prompt, systemPrompt, CLASSIFY_MAX_TOKENS);
-    return parseCategory(result.text);
-  } catch {
-    return null;
-  }
+  // 호출 예외는 삼키지 않고 그대로 던진다. 호출부가 "백엔드 장애(예외)"와
+  // "응답 형식 불일치(null)"를 구분해야 한다 — 전자는 남은 파일도 전부 실패하므로
+  // 중단이 맞고, 후자는 그 노트만의 문제이므로 계속 진행해야 한다.
+  const result = await plugin.aiClient.converseLight(prompt, systemPrompt, CLASSIFY_MAX_TOKENS);
+  return parseCategory(result.text);
 }
 
 /** 카테고리 → 폴더 매핑 */
@@ -183,7 +192,7 @@ export async function organizeVaultPara(
   //    상한을 소진하면, 재실행 때마다 같은 파일들이 앞자리를 점거해 나머지가
   //    영구히 처리되지 않는다(굶주림).
   let calls = 0;
-  let consecutiveFailures = 0;
+  let consecutiveErrors = 0;
   let deferred = 0;
   let aborted = false;
 
@@ -218,17 +227,9 @@ export async function organizeVaultPara(
       // 이동시켜 사용자 폴더 구조를 임의로 재배치했다.
       // "이름 중복으로 건너뜀"과 구분해 오류로 보고한다(조용한 실패 방지).
       if (category === null) {
-        consecutiveFailures++;
-        result.errors.push(`${file.path}: 분류 실패(응답 오류 또는 형식 불일치)`);
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-          aborted = true;
-          result.errors.push(
-            `분류가 ${MAX_CONSECUTIVE_FAILURES}회 연속 실패해 중단했습니다. AI 백엔드 설정을 확인하세요.`
-          );
-        }
+        result.errors.push(`${file.path}: 분류 실패(응답 형식 불일치)`);
         continue;
       }
-      consecutiveFailures = 0;
 
       const targetFolder = CATEGORY_FOLDER[category];
       const newPath = `${targetFolder}/${file.name}`;
@@ -242,8 +243,18 @@ export async function organizeVaultPara(
       await app.vault.rename(file, newPath);
       result.moved.push({ from: file.path, to: newPath });
     } catch (e: any) {
+      // 예외는 백엔드 장애 신호로 본다(자격증명·네트워크·쓰로틀링).
+      consecutiveErrors++;
       result.errors.push(`${file.path}: ${e?.message || String(e)}`);
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        aborted = true;
+        result.errors.push(
+          `호출이 ${MAX_CONSECUTIVE_ERRORS}회 연속 실패해 중단했습니다. AI 백엔드 설정을 확인하세요.`
+        );
+      }
+      continue;
     }
+    consecutiveErrors = 0;
   }
 
   // 상한으로 처리하지 못한 파일을 사용자에게 알린다(조용한 누락 방지).
@@ -266,7 +277,9 @@ export async function organizeVaultPara(
  * 그렇다면 어떤 분류 결과가 나와도 이동 대상이 충돌하므로 LLM 호출이 낭비다.
  */
 function isUnmovable(app: App, fileName: string): boolean {
-  return PARA_FOLDERS.every((folder) => app.vault.getAbstractFileByPath(`${folder}/${fileName}`) !== null);
+  // truthy 검사를 쓴다. `!== null`로 비교하면 undefined를 반환하는 구현에서
+  // 모든 파일이 "충돌"로 판정되어 아무것도 정리되지 않는다.
+  return PARA_FOLDERS.every((folder) => Boolean(app.vault.getAbstractFileByPath(`${folder}/${fileName}`)));
 }
 
 /**

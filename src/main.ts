@@ -278,6 +278,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.indexDebounceTimers.clear();
 
     this.mcpManager?.disconnectAll();
+
+    // 진행 중인 인덱싱을 먼저 끝낸다. 기다리지 않고 저장하면 대기 중 변경분이
+    // 반영되지 않은 인덱스가 디스크에 남고, 다음 로드는 그 저장본을 그대로 믿는다
+    // (자동 전체 인덱싱이 없으므로 해당 변경은 사용자가 수동 재인덱싱할 때까지 누락된다).
+    await this.indexQueue.catch(() => {});
     await this.saveIndex();
   }
 

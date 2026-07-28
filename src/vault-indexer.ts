@@ -356,12 +356,14 @@ export class VaultIndexer {
       const tagText = metadata.tags.join(" ");
       const searchText = `${title}\n${content}${tagText ? `\n${tagText}` : ""}`.toLowerCase();
 
-      // 임베딩을 하나도 확보하지 못했는데 실패한 청크가 있으면(API 오류) 이 엔트리는
-      // 불완전하다. 그냥 두면 mtime 기반 스킵 때문에 영구히 재시도되지 않으므로
-      // needsReindex를 세워 다음 인덱싱에서 반드시 재대상이 되게 한다.
-      const embedFailedCount = chunks.filter((c) => c.embedFailed).length;
-      const incomplete =
-        this.useEmbeddings && legacyEmbedding.length === 0 && embedFailedCount > 0;
+      // 벡터를 하나도 확보하지 못한 엔트리는 불완전하다. 그냥 두면 mtime 기반 스킵
+      // 때문에 영구히 재시도되지 않으므로 needsReindex를 세워 다음 인덱싱에서 반드시
+      // 재대상이 되게 한다.
+      //
+      // 임베딩 호출을 아예 하지 않은 경우(useEmbeddings=false)도 포함해야 한다.
+      // 임베딩 모델 접근 불가·모델 변경 직후 편집된 노트가 "벡터 없음 + 최신 mtime"으로
+      // 굳으면, 접근이 복구되거나 재인덱싱을 해도 이 노트만 영구히 벡터를 못 갖는다.
+      const incomplete = legacyEmbedding.length === 0;
 
       // lastModified는 "본문을 읽은 시점"의 mtime을 사용한다. 임베딩 호출이 끝난 뒤
       // file.stat.mtime을 읽으면, 그 사이 사용자가 편집한 내용에 최신 도장을 찍어
