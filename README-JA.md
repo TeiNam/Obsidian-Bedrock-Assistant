@@ -5,7 +5,6 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
 ![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI/CD-2088FF.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/teinam)
@@ -15,9 +14,11 @@ AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされてい�
 
 ## 主な機能
 
-- **AWS Bedrockバックエンド** — AWS Bedrock (Claude) モデルを基盤
+- **AWS Bedrockバックエンド** — AWS Bedrock (Claude) モデルを基盤。認証はアクセスキー / Bedrock APIキー / `~/.aws` 共有プロファイルの3方式
 - **ストリーミングチャット** — サイドバーでリアルタイムストリーミング応答
-- **ボルトセマンティック検索** — 埋め込み (Titan / Gemini) でノートをインデックスし、意味ベースで検索
+- **Graph RAG ボルト検索** — ノートをチャンク単位で埋め込みインデックスし、リンクグラフをたどって関連ノートを拡張
+- **Second Brain レイヤー（オプトイン・デフォルト無効）** — ボルトの内容をもとにWikiノートを生成・更新する書き込みレイヤー
+- **累積学習** — 振り返りチェーン、会話結論の収穫、ナレッジギャップレポート、復習キュー
 - **タグ自動生成** — ノート内容を分析してタグを自動推薦
 - **To-Do管理** — テンプレートベースの日次To-Do作成、未完了項目の自動引き継ぎ（階層構造維持）、アーカイブ
 - **アーカイブ整理** — 設定タブから古いアーカイブファイルを整理
@@ -28,13 +29,12 @@ AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされてい�
 - **多言語対応** — English / 한국어 / 日本語
 - **ファイル添付** — ドラッグ＆ドロップ、クリップボード、ファイル検索、画像/PDF添付
 - **チャットセッション管理** — 過去の会話の保存・復元・検索
-- **日次振り返り** — To-Doベースのai日次レビュー生成
-- **チャット振り返りコマンド** — チャットで「회고」「retrospective」「振り返り」と入力すると自動で振り返りを生成
+- **日次振り返り** — チャットで「회고」「retrospective」「振り返り」と入力すると、今日のTo-Doをもとに日次レビューを生成
 - **チャットエクスポート** — 会話をマークダウンファイルにエクスポート
 - **会話検索** — 保存されたチャットセッションを検索
 - **MCP JSONエディタ** — リアルタイム検証、自動フォーマット、括弧マッチング、テンプレート挿入
 - **コンテキストウィンドウ表示** — トークン使用量をビジュアルリングで表示
-- **Obsidianスキル** — システムプロンプトにObsidian専用知識 (Dataview, Tasks, Templater) を追加
+- **Obsidianスキル** — システムプロンプトにObsidian専用知識を追加。obsidian-markdown / obsidian-bases / json-canvas は常時有効、korean-writing（人間らしい韓国語ライティング）/ business-english-writing（ビジネス英語）/ second-brain は設定でトグル
 - **破壊的ツール実行確認** — ファイル変更操作前のオプション確認ダイアログ
 
 ## インストール
@@ -54,36 +54,43 @@ AI搭載IDE [Kiro](https://kiro.dev) で開発・メンテナンスされてい�
 ## クイックスタート
 
 1. 設定 → Assistant Kiro 設定を開く
-2. AIバックエンドを選択（GeminiまたはBedrock）
-3. 資格情報を入力：
-   - **Gemini**: [Google AI Studio](https://aistudio.google.com/apikey) から取得したAPIキーを入力
-   - **Bedrock**: AWS Access Key、Secret Key、Regionを入力
+2. 認証方式を選択し、資格情報を入力：
+   - **アクセスキー**: AWS Access Key ID、Secret Access Key、リージョン
+   - **Bedrock APIキー**: Bedrockの長期APIキーとリージョン
+   - **AWSプロファイル (~/.aws)**: `~/.aws` のプロファイル名を選択（SSOプロファイルの場合は事前に `aws sso login --profile <名前>`）
+3. チャットモデルと埋め込みモデルを選択
 4. 左リボンのAssistant Kiroアイコンをクリックしてサイドバーを開く
 5. チャット開始！
 
-## AIバックエンド設定
+> **コマンドパレットのラベルについて:** 現在、コマンドの表示名は韓国語のみです（i18n未対応）。以下の説明では実際に表示される韓国語の名前をそのまま記載します。
 
-### バックエンド切り替え
+## AWS Bedrock 設定
 
-設定 → Assistant Kiro 設定 → AIバックエンドドロップダウンで切り替えます。切り替え時にサイドバーアイコン、ブランディング、モデルリストが即座に更新されます。各バックエンドの資格情報は独立して保存されます。
+このエディションのバックエンドは AWS Bedrock のみです。
 
-### Google Gemini
+### 認証方式
+
+設定 → Assistant Kiro 設定 → 認証方式で選択します。選択した方式に対応する入力欄だけが表示されます。
+
+| 方式 | 必要な設定 | 説明 |
+|------|-----------|------|
+| アクセスキー | Access Key ID / Secret Access Key / リージョン | AWS IAMの静的な資格情報を直接入力します |
+| Bedrock APIキー | Bedrock APIキー / リージョン | Bedrockの長期APIキー。ベアラートークンとして送信されます |
+| AWSプロファイル (~/.aws) | プロファイル名 / リージョン | `~/.aws/config` または `~/.aws/credentials` のプロファイルを使用します。SSOプロファイルの場合は、先にターミナルで `aws sso login --profile <名前>` を実行してください |
+
+### モデル・生成設定
 
 | 設定 | 説明 |
 |------|------|
-| APIキー | [Google AI Studio](https://aistudio.google.com/apikey) から取得したGemini APIキー |
-| チャットモデル | 利用可能なGeminiモデルから選択（ドロップダウン） |
-| 埋め込みモデル | ボルトインデックス用モデル（デフォルト: `text-embedding-004`） |
+| AWSリージョン | Bedrock API用リージョン（例: `us-east-1`） |
+| Bedrockチャットモデル | 利用可能なBedrockモデルから選択（ドロップダウン） |
+| Bedrock埋め込みモデル | ボルトインデックス用モデル。ドロップダウンから選択します（初期状態では未選択） |
+| 最大トークン数 | 応答の最大トークン数 |
+| 推論強度 (Effort) | 推論の深さ。effortに対応するモデルを選択している場合に表示されます |
+| Temperature | 応答の創造性（0.0〜1.0）。effortに対応していないモデルを選択している場合に表示されます |
+| システムプロンプト | 内蔵の基本プロンプトに追加する指示 |
 
-### AWS Bedrock
-
-| 設定 | 説明 |
-|------|------|
-| Access Key ID | AWS IAMアクセスキー |
-| Secret Access Key | AWS IAMシークレットキー |
-| Region | AWSリージョン（例: `us-east-1`） |
-| チャットモデル | 利用可能なBedrockモデルから選択（ドロップダウン） |
-| 埋め込みモデル | ボルトインデックス用モデル（デフォルト: `amazon.titan-embed-text-v2:0`） |
+推論強度とTemperatureは排他です。チャットモデルを切り替えると、そのモデルが受け付けるパラメータに応じて表示される項目が入れ替わります。
 
 #### 必要なIAM権限
 
@@ -114,10 +121,31 @@ bedrock:ListFoundationModels
 
 ### ボルトインデックス
 
-1. サイドバーヘッダーの検索アイコンをクリック（またはコマンドパレット:「ボルトインデックス」）
-2. すべてのマークダウンファイルが埋め込みでインデックスされます
-3. インデックス完了後、AIが質問に答える際にボルトをセマンティック検索できます
-4. ファイル変更時に自動で再インデックスされます（2秒デバウンス）
+1. サイドバーヘッダーの検索アイコンをクリック（またはコマンドパレットの「볼트 인덱싱」）
+2. マークダウンファイルがチャンクに分割され、チャンクごとに埋め込みが生成されます
+3. インデックス完了後、AIが質問に答える際にボルトを検索できます
+4. ファイルの作成・変更・リネーム・削除を検知して自動で再インデックスされます（2秒デバウンス、直列キューでAPIスロットリングを回避）
+
+埋め込みモデルを変更すると、インデックスに保存された `{プロバイダ}:{モデル}` シグネチャと次元が一致しなくなります。この場合、古いベクトルは破棄され、キーワード検索にフォールバックしたうえで再インデックスを案内します。次元が異なるベクトルは「比較不可」として扱われ、無関係なノートが同点で並ぶことはありません。
+
+### Graph RAG ボルト検索
+
+ノートをチャンクに分割して埋め込みを作成し、見つかったノートのリンク（アウトリンク・バックリンク）を
+辿って隣接ノートまで広げて関連ノートを探します。サイドバーヘッダーの検索アイコン、または
+コマンド `볼트 인덱싱` でインデックスを開始します。ファイルを編集すると自動的に再インデックスされます。
+
+詳細: [Graph RAG & Second Brain](docs/second-brain-ja.md)
+
+### Second Brain レイヤー（LLM Wiki）
+
+検索したノートを根拠にウィキノートを作成・管理するレイヤーです。**デフォルトでは無効**で、
+設定 → Second Brain で明示的に有効化する必要があります。
+
+- 読み取り専用ツール（challenge・connect・emerge・reconcile）はノートを作成せず、分析結果のみを返します。
+- 生成ツール（synthesize・architect など）は指定したWikiフォルダ内にのみ書き込みます。
+- 生成領域は `<!-- @generated:KEY -->` マーカーで囲まれており、再生成しても**同じノートに自分で書いたメモはそのまま残ります**。
+
+詳細: [Graph RAG & Second Brain](docs/second-brain-ja.md)
 
 ### タグ生成
 
@@ -135,16 +163,17 @@ bedrock:ListFoundationModels
 
 ### 日次振り返り
 
-1. アクションツールバーのブックアイコンをクリック
-2. 今日のタスクをすべて完了したか確認
-3. AIが振り返りサマリーを生成して今日のTo-Doに追加
+1. チャット入力に「회고」「retrospective」「振り返り」のいずれかを送信する（前後の空白を除いた完全一致で判定します）
+2. AIが今日のTo-Doをもとに振り返りサマリーを生成し、今日のTo-Doに追記します
+
+生成結果はチャットにもそのまま表示されます。今日のTo-Doがない場合はその旨が返ります。
 
 ### Webクリッパー
 
 1. アクションツールバーのグローブアイコンをクリック
 2. URLを入力
 3. AIがページを取得し、翻訳（必要に応じて）して要約
-4. フロントマター（ソースURL、日付、言語）付きのマークダウンノートとして保存
+4. フロントマター（`source`、`created`、`type: web-clip`、`tags: [web-clip]`）付きのマークダウンノートとして保存
 
 ### アーカイブ整理
 
@@ -154,14 +183,16 @@ bedrock:ListFoundationModels
 
 ### P.A.R.A セットアップ
 
-1. 設定 → Assistant Kiro 設定 → ユーザー体験セクションを開く
-2. ウェルカムメッセージの下にある「P.A.R.A セットアップ」ボタンをクリック
+1. 設定 → Assistant Kiro 設定 → ボルト管理セクションを開く
+2. テンプレートフォルダの次にある「P.A.R.A セットアップ」ボタンをクリック
 3. ボルトのルートに4つのフォルダが作成されます：`01. Projects`、`02. Areas`、`03. Resources`、`04. Archives`
 4. 既存のノートがある場合、現在設定されているAIモデルが各ノートを適切なフォルダに自動分類します
 5. 進捗モーダルでリアルタイムの状態と完了時のサマリーを確認できます
 6. すでにP.A.R.Aフォルダ内にあるノートは自動的にスキップされます
 
 ### Web検索
+
+**前提条件:** 検索用のMCPサーバー（`fetch`、`exa`、`brave` のいずれか）が接続されている必要があります。接続されていない状態でトグルしても有効にはならず、MCPの設定を促す通知が表示されます。
 
 入力ツールバーのグローブボタンをトグルしてWeb検索を有効にします。有効時、AIが最新情報をWebで検索してソースURLと共に回答に含めます。
 
@@ -192,8 +223,7 @@ bedrock:ListFoundationModels
 
 このプラグインは以下の外部サービスにネットワークリクエストを送信します：
 
-- **AWS Bedrock API** — Bedrockバックエンド使用時、チャット・埋め込み・モデル一覧取得のためにAWS Bedrockエンドポイントにリクエストします。設定されたAWSリージョンによりエンドポイントが決まります（例：`bedrock-runtime.us-east-1.amazonaws.com`）。
-- **Google Gemini API** — Geminiバックエンド使用時、チャット・埋め込み・モデル一覧取得のために`generativelanguage.googleapis.com`にリクエストします。
+- **AWS Bedrock API** — チャット・埋め込み・モデル一覧取得のためにAWS Bedrockエンドポイントにリクエストします。設定されたAWSリージョンによりエンドポイントが決まります（例：`bedrock-runtime.us-east-1.amazonaws.com`）。
 - **Webクリッパー** — Webクリッパー機能使用時、要約のために対象URLのページコンテンツを取得します。
 - **MCPサーバー** — MCPサーバーが設定されている場合、ローカルで起動されたMCPサーバープロセスとstdioで通信します。
 
