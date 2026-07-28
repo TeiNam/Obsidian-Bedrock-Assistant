@@ -6,6 +6,7 @@ import {
   normalizeAccessLog,
   recordAccess,
   forgetPath,
+  hasPath,
   REVIEW_QUEUE_SIZE,
   REVIEW_COOLDOWN_DAYS,
   MIN_BODY_CHARS,
@@ -277,5 +278,24 @@ describe("forgetPath: 삭제된 노트를 이력에서 제거", () => {
   it("빈 경로는 무시한다", () => {
     const log: AccessLog = { "a.md": 1000 };
     expect(forgetPath(log, "")).toBe(log);
+  });
+});
+
+describe("hasPath: 정리 필요 여부 판정", () => {
+  it("이력에 있는 경로면 true", () => {
+    expect(hasPath({ "a.md": 1000 }, "a.md")).toBe(true);
+  });
+
+  it("없는 경로·빈 경로·비객체면 false", () => {
+    // main.ts의 forgetNoteAccess가 이 값으로 "저장 예약을 건너뛸지"를 결정한다.
+    // normalizeAccessLog는 항상 새 객체를 반환하므로 참조 비교로는 판정할 수 없다.
+    expect(hasPath({ "a.md": 1000 }, "missing.md")).toBe(false);
+    expect(hasPath({ "a.md": 1000 }, "")).toBe(false);
+    expect(hasPath(null as unknown as AccessLog, "a.md")).toBe(false);
+  });
+
+  it("값이 유효하지 않은 항목은 정리 대상이 아니다", () => {
+    // normalizeAccessLog가 이미 걸러낼 값이므로 별도 저장을 유발하지 않아야 한다.
+    expect(hasPath({ "a.md": Number.NaN } as AccessLog, "a.md")).toBe(false);
   });
 });

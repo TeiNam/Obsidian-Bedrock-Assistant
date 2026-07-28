@@ -193,6 +193,20 @@ export function recordAccess(log: AccessLog, path: string, now: number): AccessL
 }
 
 /**
+ * 해당 경로가 이력에 유효한 항목으로 존재하는지 확인한다 — 순수 함수.
+ *
+ * 호출부가 "정리할 것이 있는가"를 판정해 불필요한 저장을 건너뛰는 데 쓴다.
+ * normalizeAccessLog는 입력이 이미 정규화돼 있어도 항상 새 객체를 반환하므로,
+ * 참조 비교(===)로는 변경 여부를 알 수 없다.
+ */
+export function hasPath(log: AccessLog, path: string): boolean {
+  if (!path) return false;
+  if (!log || typeof log !== "object") return false;
+  const value = (log as Record<string, unknown>)[path];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
  * 삭제·이동된 노트를 이력에서 제거한 새 객체를 반환한다 — 순수 함수(불변).
  *
  * 이력을 정리하지 않으면 삭제된 노트가 영구 잔존해 data.json이 계속 자란다.
