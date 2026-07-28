@@ -18,8 +18,15 @@ import { DESTRUCTIVE_TOOLS, needsToolConfirmation } from "./tool-confirm-utils";
 // --- DESTRUCTIVE_TOOLS 상수 검증 ---
 
 describe("DESTRUCTIVE_TOOLS 상수", () => {
-  it("파괴적 도구 5개가 정의되어 있다", () => {
-    expect(DESTRUCTIVE_TOOLS).toHaveLength(5);
+  it("기본 파일 도구 5개 + Second Brain 쓰기 도구 4개가 정의되어 있다", () => {
+    expect(DESTRUCTIVE_TOOLS).toHaveLength(9);
+  });
+
+  it("볼트에 쓰기를 수행하는 Second Brain 도구가 모두 포함되어 있다", () => {
+    // 이 도구들이 빠져 있으면 확인 설정을 켜도 LLM이 노트를 확인 없이 생성·수정한다.
+    for (const tool of ["create_wiki_note", "update_index", "synthesize_topic", "architect"]) {
+      expect(DESTRUCTIVE_TOOLS).toContain(tool);
+    }
   });
 
   it("edit_note가 포함되어 있다", () => {

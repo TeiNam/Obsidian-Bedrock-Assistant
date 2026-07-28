@@ -8,7 +8,11 @@ import {
   type MetadataSource,
   type ExtractedMetadata,
 } from "./graph-rag/graph-extractor";
-import { vectorSearchByChunk, type NoteVectorScore } from "./graph-rag/vector-search";
+import {
+  searchWithDiagnostics,
+  compareVectors,
+  type NoteVectorScore,
+} from "./graph-rag/vector-search";
 import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { combineAndRank } from "./graph-rag/score-combiner";
 
@@ -46,7 +50,21 @@ export interface GraphRagResult {
   invalidQuery?: boolean;
   /** 인덱스에 임베딩이 0개여서 키워드 검색으로 폴백한 경우 true (Req 4.6) */
   usedKeywordFallback?: boolean;
+  /**
+   * 인덱스 임베딩이 현재 임베딩 모델과 차원이 달라(모델 변경) 벡터 검색을 신뢰할 수
+   * 없는 경우 true. 호출부는 사용자에게 재인덱싱을 안내해야 한다.
+   */
+  staleEmbeddings?: boolean;
 }
+
+/** 발췌(excerpt) 최대 길이. 검색 결과 미리보기와 LLM 컨텍스트에 사용된다. */
+const EXCERPT_MAX_CHARS = 500;
+
+/**
+ * 벡터 검색 시 확보할 최소 시드 수.
+ * limit이 이보다 작아도 그래프 순회의 출발점을 충분히 확보하기 위한 하한이다.
+ */
+const SEED_MIN_COUNT = 10;
 
 // 볼트 인덱싱 및 검색
 export class VaultIndexer {
@@ -66,6 +84,12 @@ export class VaultIndexer {
   // 옵시디언 metadataCache 어댑터 (task 11.1에서 main.ts가 실제 어댑터를 주입)
   // 미주입 시 buildEntry는 메타데이터 없이(빈 값) 본문 전체를 청킹하여 우아하게 저하한다
   private metadataSource: MetadataSource | null = null;
+  // 현재 임베딩 구성 시그니처(`{provider}:{modelId}`). main.ts가 설정에서 주입한다.
+  private embeddingSignature: string | null = null;
+  // 로드한 인덱스의 임베딩 구성이 현재 설정과 달라 벡터를 신뢰할 수 없는 상태
+  private staleIndex = false;
+  // buildEntry 진행 중에 삭제·이동된 경로. 완료 시 기록을 취소해 부활을 막는다.
+  private removedDuringIndexing: Set<string> = new Set();
 
   constructor(app: App, client: IAiClient) {
     this.app = app;
@@ -105,6 +129,20 @@ export class VaultIndexer {
       }
 
       this.indexing = true;
+      // 아래 본문은 try/finally로 감싸 어떤 예외에서도 indexing 플래그를 반드시 해제한다.
+      // 플래그가 켜진 채로 남으면 이후 모든 증분 인덱싱(indexFile)이 대기열로만 흘러가
+      // 세션 전체의 인덱스 갱신이 멈춘다.
+      try {
+        return await this.runIndexVault(onProgress);
+      } finally {
+        this.indexing = false;
+      }
+    }
+
+    /** indexVault 본문. 플래그 관리는 호출자(indexVault)가 담당한다. */
+    private async runIndexVault(
+      onProgress?: (current: number, total: number) => void
+    ): Promise<IndexResult> {
       const files = this.app.vault.getMarkdownFiles();
 
       // 삭제된 파일 인덱스에서 제거
@@ -124,7 +162,8 @@ export class VaultIndexer {
       const skippedUpToDate: TFile[] = [];
       for (const file of files) {
         const existing = this.index.get(file.path);
-        if (existing && existing.lastModified >= file.stat.mtime) {
+        // needsReindex 엔트리는 mtime과 무관하게 항상 갱신 대상이다(임베딩 미완료/무효).
+        if (existing && !existing.needsReindex && existing.lastModified >= file.stat.mtime) {
           skippedUpToDate.push(file);
         } else {
           filesToIndex.push(file);
@@ -139,7 +178,6 @@ export class VaultIndexer {
       let maxReportedProgress = 0;
 
       if (totalFiles === 0) {
-        this.indexing = false;
         const msg = removedPaths.length > 0
           ? `인덱스 정리 완료: ${removedPaths.length}개 삭제됨, 변경 파일 없음`
           : "모든 파일이 최신 상태입니다.";
@@ -165,6 +203,8 @@ export class VaultIndexer {
         try {
           const content = await this.app.vault.cachedRead(file);
           if (!content.trim()) {
+            // 비워진 노트의 기존 엔트리를 제거한다(이전 본문이 계속 검색되는 것을 방지).
+            this.index.delete(file.path);
             skippedEmpty++;
             const currentProgress = processed + failures.length + skippedEmpty;
             maxReportedProgress = Math.max(maxReportedProgress, currentProgress);
@@ -198,6 +238,16 @@ export class VaultIndexer {
         if (this.useEmbeddings) await sleep(200);
       }
 
+      // 임베딩이 하나도 생성되지 않은 엔트리 수를 집계해 사용자에게 알린다.
+      // buildEntry가 needsReindex를 세우므로 다음 인덱싱에서 자동 재시도되지만,
+      // 조용히 넘어가면 사용자는 검색 누락을 알 수 없다.
+      let incompleteCount = 0;
+      for (const entry of this.index.values()) {
+        if (entry.needsReindex) incompleteCount++;
+      }
+
+      // 인덱싱 완료 후에는 대기열 처리를 위해 플래그를 먼저 내려야 한다
+      // (processPendingFiles가 indexFile을 호출하며, 플래그가 켜져 있으면 다시 큐잉된다).
       this.indexing = false;
 
       // 인덱싱 중 큐잉된 파일들을 순차 처리
@@ -208,6 +258,7 @@ export class VaultIndexer {
       if (skippedEmpty > 0) msg += `, ${skippedEmpty}개 빈 파일`;
       if (removedPaths.length > 0) msg += `, ${removedPaths.length}개 삭제 정리`;
       if (failures.length > 0) msg += `, ${failures.length}개 실패`;
+      if (incompleteCount > 0) msg += `, ${incompleteCount}개 임베딩 미완료(다음 인덱싱에서 재시도)`;
       new Notice(msg);
 
       return { processed, skipped: skippedUpToDate.length + skippedEmpty, errors: failures };
@@ -215,11 +266,19 @@ export class VaultIndexer {
 
     // lastModified 체크 없이 강제 인덱싱
     private async forceIndexFile(file: TFile): Promise<void> {
+      // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+      const readMtime = file.stat.mtime;
       const content = await this.app.vault.cachedRead(file);
-      if (!content.trim()) return;
+      // 내용이 비워진 노트는 인덱스에서 제거한다. 그냥 반환하면 이전 본문과 임베딩이
+      // 계속 검색되어, 사용자가 지운 내용이 LLM에 노출된다.
+      if (!content.trim()) {
+        this.index.delete(file.path);
+        return;
+      }
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
-      const entry = await this.buildEntry(file, content);
-      this.index.set(file.path, entry);
+      const entry = await this.buildEntry(file, content, readMtime);
+      // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
+      this.commitEntry(file.path, entry);
     }
 
     /**
@@ -240,11 +299,14 @@ export class VaultIndexer {
      * 재인덱싱 시 호출자가 결과 Entry로 기존 Entry를 통째로 교체하므로,
      * 링크/태그/청크 목록은 항상 갱신 시점 상태와 일치하며 잔존 항목이 없다 (Req 1.4).
      */
-    private async buildEntry(file: TFile, content: string): Promise<VaultIndexEntry> {
-      // 1) 제목: 본문 첫 H1 헤딩, 없으면 파일명. 발췌: 앞 500자 (기존 정책 유지)
+    private async buildEntry(
+      file: TFile,
+      content: string,
+      readMtime?: number
+    ): Promise<VaultIndexEntry> {
+      // 1) 제목: 본문 첫 H1 헤딩, 없으면 파일명
       const titleMatch = content.match(/^#\s+(.+)$/m);
       const title = titleMatch ? titleMatch[1] : file.basename;
-      const excerpt = content.slice(0, 500);
 
       // 2) 메타데이터 추출 (어댑터 미주입 시 빈 값으로 저하)
       const metadata: ExtractedMetadata = this.metadataSource
@@ -255,6 +317,10 @@ export class VaultIndexer {
       const body = this.metadataSource
         ? stripFrontmatter(content, this.metadataSource, file.path)
         : content;
+
+      // 발췌: 프론트매터를 제외한 본문 앞 500자.
+      // 원문에서 자르면 YAML 블록이 발췌를 채워 LLM이 본문 내용을 보지 못한다.
+      const excerpt = body.slice(0, EXCERPT_MAX_CHARS).trim();
 
       // 본문을 청크로 분할 (무손실 커버리지 보장, Req 3.7)
       const chunkTexts = splitIntoChunks(body, this.chunkConfig);
@@ -290,10 +356,27 @@ export class VaultIndexer {
       const tagText = metadata.tags.join(" ");
       const searchText = `${title}\n${content}${tagText ? `\n${tagText}` : ""}`.toLowerCase();
 
+      // 벡터를 하나도 확보하지 못한 엔트리는 불완전하다. 그냥 두면 mtime 기반 스킵
+      // 때문에 영구히 재시도되지 않으므로 needsReindex를 세워 다음 인덱싱에서 반드시
+      // 재대상이 되게 한다.
+      //
+      // 임베딩 호출을 아예 하지 않은 경우(useEmbeddings=false)도 포함해야 한다.
+      // 임베딩 모델 접근 불가·모델 변경 직후 편집된 노트가 "벡터 없음 + 최신 mtime"으로
+      // 굳으면, 접근이 복구되거나 재인덱싱을 해도 이 노트만 영구히 벡터를 못 갖는다.
+      const incomplete = legacyEmbedding.length === 0;
+
+      // lastModified는 "본문을 읽은 시점"의 mtime을 사용한다. 임베딩 호출이 끝난 뒤
+      // file.stat.mtime을 읽으면, 그 사이 사용자가 편집한 내용에 최신 도장을 찍어
+      // 다음 편집까지 낡은 본문이 인덱스에 남는다(TOCTOU).
+      const stamp = readMtime ?? file.stat.mtime;
+
       return {
         path: file.path,
         embedding: legacyEmbedding,
-        lastModified: file.stat.mtime,
+        lastModified: stamp,
+        // 임베딩을 확보하지 못했으면 재인덱싱 대상으로 표시한다. lastModified는 실제
+        // 수정 시각을 유지해야 하므로(최근 노트 선별 등이 이 값을 읽는다) 별도 플래그를 쓴다.
+        ...(incomplete ? { needsReindex: true } : {}),
         title,
         excerpt,
         searchText,
@@ -333,20 +416,56 @@ export class VaultIndexer {
     }
 
     const existing = this.index.get(file.path);
-    if (existing && existing.lastModified >= file.stat.mtime) {
+    // needsReindex 엔트리는 mtime과 무관하게 항상 갱신 대상이다(임베딩 미완료/무효).
+    if (existing && !existing.needsReindex && existing.lastModified >= file.stat.mtime) {
       return;
     }
 
+    // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+    const readMtime = file.stat.mtime;
     const content = await this.app.vault.cachedRead(file);
-    if (!content.trim()) return;
+    // 내용이 비워진 노트는 인덱스에서 제거한다(이전 본문이 계속 검색되는 것을 방지).
+    if (!content.trim()) {
+      this.index.delete(file.path);
+      return;
+    }
 
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
-    const entry = await this.buildEntry(file, content);
-    this.index.set(file.path, entry);
+    const entry = await this.buildEntry(file, content, readMtime);
+    // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
+    this.commitEntry(file.path, entry);
+  }
+
+  /**
+   * 파일 이름 변경/이동을 인덱스에 반영한다.
+   * 구 경로 엔트리를 제거하고 새 경로를 인덱싱한다. 이 처리가 없으면 구 경로 엔트리가
+   * 영구 잔존해 존재하지 않는 노트가 검색 결과에 나온다.
+   */
+  async renameFile(oldPath: string, file: TFile): Promise<void> {
+    this.index.delete(oldPath);
+    await this.indexFile(file);
   }
 
   removeFile(path: string): void {
     this.index.delete(path);
+    // 진행 중인 인덱싱 작업이 완료 후 이 경로를 다시 써넣지 못하게 표시한다.
+    // buildEntry(임베딩 호출 포함)는 수 초가 걸리므로, 그 사이 삭제·이동된 노트가
+    // 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남을 수 있다.
+    this.removedDuringIndexing.add(path);
+    // 대기열에 남은 예약도 취소한다(삭제된 파일을 다시 인덱싱할 이유가 없다).
+    this.pendingFiles.delete(path);
+  }
+
+  /**
+   * buildEntry 완료 후 인덱스에 기록한다. 작업 중 해당 경로가 삭제·이동됐으면
+   * 기록을 취소해 삭제된 노트가 부활하지 않게 한다.
+   */
+  private commitEntry(path: string, entry: VaultIndexEntry): void {
+    if (this.removedDuringIndexing.has(path)) {
+      this.removedDuringIndexing.delete(path);
+      return;
+    }
+    this.index.set(path, entry);
   }
 
   /**
@@ -394,19 +513,39 @@ export class VaultIndexer {
     }
 
     // 4) 임베딩이 인덱스에 하나도 없으면 키워드 검색으로 폴백 (Req 4.6)
+    //    임베딩 구성 변경으로 벡터를 폐기한 경우도 이 경로를 타므로 stale 표시를 함께 전달한다.
     if (!this.useEmbeddings || !this.hasEmbeddings()) {
       const items = this.keywordSearch(query, limit);
-      return { items, usedKeywordFallback: true };
+      return {
+        items,
+        usedKeywordFallback: true,
+        ...(this.staleIndex ? { staleEmbeddings: true } : {}),
+      };
     }
 
-    // 5) 쿼리 임베딩 생성 후 Vector_Search로 시드 상위 10개 확보 (Req 4.5)
+    // 5) 쿼리 임베딩 생성 후 Vector_Search로 시드 확보 (Req 4.5)
+    //    시드 수를 limit에 맞춰 확장한다. 과거에는 10으로 고정돼 limit 11~100이
+    //    무의미했다(11위 이후는 그래프 이웃만 채울 수 있었다).
     const queryEmbedding = await this.client.getEmbedding(query);
     const entries = Array.from(this.index.values());
-    const seeds: NoteVectorScore[] = vectorSearchByChunk(queryEmbedding, entries, 10);
+    const seedCount = Math.max(SEED_MIN_COUNT, Math.min(limit, entries.length));
+    const diag = searchWithDiagnostics(queryEmbedding, entries, seedCount);
+    const seeds: NoteVectorScore[] = diag.results;
+
+    // 5-1) 임베딩 차원 불일치 감지 — 임베딩 모델이 바뀌면 기존 벡터는 비교 불가하다.
+    //      비교 가능한 노트가 하나도 없으면 벡터 검색 결과가 무의미하므로 키워드 검색으로
+    //      폴백하고, 사용자에게 재인덱싱이 필요함을 알린다.
+    if (diag.comparableCount === 0 && diag.dimensionMismatchCount > 0) {
+      const items = this.keywordSearch(query, limit);
+      return { items, usedKeywordFallback: true, staleEmbeddings: true };
+    }
+    // 일부만 불일치하는 경우(재인덱싱 진행 중 등)는 비교 가능한 후보로 검색을 계속하되
+    // 인덱스가 낡았음을 함께 보고한다.
+    const staleEmbeddings = diag.dimensionMismatchCount > 0;
 
     // 시드가 없으면 후보 0개 → 빈 결과 (Req 6.9)
     if (seeds.length === 0) {
-      return { items: [] };
+      return { items: [], ...(staleEmbeddings ? { staleEmbeddings } : {}) };
     }
 
     // 6) Graph_Traversal — depth=0이면 순회를 생략하고 시드만 후보로 사용한다 (Req 5.1, 5.2)
@@ -415,8 +554,30 @@ export class VaultIndexer {
         ? traverseGraph(seeds, this.index, this.traversalDepth, MAX_GRAPH_CANDIDATES)
         : [];
 
+    // 6-1) 이웃 자신의 벡터 유사도를 계산해 결합 점수에 반영한다.
+    //      이 값이 없으면 같은 시드에 연결된 무관한 이웃과 관련된 이웃이 동점이 된다.
+    const neighborScores = new Map<string, number>();
+    for (const neighbor of neighbors) {
+      if (neighborScores.has(neighbor.path)) continue;
+      const score = this.bestChunkSimilarity(queryEmbedding, neighbor.path);
+      if (score !== null) neighborScores.set(neighbor.path, score);
+    }
+
     // 7) ScoreCombiner — 통합 점수 산출 및 재정렬 (Req 6.1~6.4, 6.8)
-    const combined = combineAndRank(seeds, neighbors, this.index);
+    const combined = combineAndRank(seeds, neighbors, this.index, { neighborScores });
+
+    // 7-1) 최소 관련성 임계값으로 후보가 전부 걸러진 경우 키워드 검색으로 폴백한다.
+    //      인덱스는 정상인데 "검색 결과 없음"만 반환하면 사용자가 불필요한 재인덱싱을
+    //      하게 되고, Second Brain 기능들(synthesize/reconcile/challenge/connect)이
+    //      조용히 no-op이 된다. 임베딩 점수가 낮아도 키워드로는 찾을 수 있는 경우가 많다.
+    if (combined.length === 0) {
+      const items = this.keywordSearch(query, limit);
+      return {
+        items,
+        usedKeywordFallback: true,
+        ...(staleEmbeddings ? { staleEmbeddings } : {}),
+      };
+    }
 
     // 8) limit 적용 (Req 6.5) 후 GraphRagSearchItem으로 매핑
     const items: GraphRagSearchItem[] = combined.slice(0, limit).map((r) => ({
@@ -432,7 +593,25 @@ export class VaultIndexer {
       seedTitle: r.seedPath ? this.index.get(r.seedPath)?.title ?? null : null,
     }));
 
-    return { items };
+    return { items, ...(staleEmbeddings ? { staleEmbeddings } : {}) };
+  }
+
+  /**
+   * 한 노트의 청크 중 쿼리와 가장 유사한 값을 반환한다(비교 가능한 임베딩이 없으면 null).
+   * 그래프 이웃의 관련성을 결합 점수에 반영하기 위해 사용한다.
+   */
+  private bestChunkSimilarity(queryEmbedding: number[], path: string): number | null {
+    const entry = this.index.get(path);
+    if (!entry) return null;
+
+    let best: number | null = null;
+    for (const chunk of entry.chunks ?? []) {
+      const sim = compareVectors(queryEmbedding, chunk.embedding);
+      if (sim !== null && (best === null || sim > best)) best = sim;
+    }
+    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다.
+    if (best === null) best = compareVectors(queryEmbedding, entry.embedding);
+    return best;
   }
 
   // 키워드 검색 (임베딩이 0개일 때 폴백, Req 4.6)
@@ -499,7 +678,107 @@ export class VaultIndexer {
       schemaVersion: CURRENT_INDEX_SCHEMA_VERSION,
       entries: Array.from(this.index.values()),
     };
+    // 임베딩 구성 시그니처와 차원을 함께 저장한다. 로드 시 현재 설정과 비교해
+    // 임베딩 모델 변경(벡터 공간 변경)을 감지하기 위한 정보다.
+    if (this.embeddingSignature !== null) {
+      payload.embeddingSignature = this.embeddingSignature;
+    }
+    const dimension = this.detectIndexDimension();
+    if (dimension !== null) {
+      payload.embeddingDimension = dimension;
+    }
     return JSON.stringify(payload);
+  }
+
+  /**
+   * 현재 인덱스가 사용하는 임베딩 시그니처를 설정한다(main.ts가 설정에서 주입).
+   * 저장 시 함께 기록되고, 로드 시 비교 대상이 된다.
+   *
+   * 런타임에 시그니처가 바뀌면(사용자가 설정에서 임베딩 모델·백엔드를 변경) 기존
+   * 벡터는 즉시 무효가 된다. 차원이 같은 다른 모델이면 검색이 오류 없이 무의미한
+   * 유사도를 계산하므로, 여기서 곧바로 벡터를 폐기해야 한다. 재시작을 기다리면
+   * 그 사이 검색이 오염되고, 다음 저장이 새 시그니처로 기록되어 감지 기회도 사라진다.
+   */
+  setEmbeddingSignature(signature: string): void {
+    const previous = this.embeddingSignature;
+    this.embeddingSignature = signature;
+
+    // 최초 주입(previous=null)이나 동일 값이면 아무것도 하지 않는다.
+    if (previous === null || previous === signature) return;
+    // 인덱스가 비어 있으면 폐기할 것이 없다.
+    if (this.index.size === 0) return;
+
+    this.invalidateEmbeddings(
+      `임베딩 구성이 변경되었습니다 (이전=${previous}, 현재=${signature}). 재인덱싱이 필요합니다.`
+    );
+  }
+
+  /**
+   * 인덱스의 모든 임베딩 벡터를 폐기하고 재인덱싱 대상으로 표시한다.
+   * 본문·메타데이터는 보존하므로 키워드 검색은 계속 동작한다.
+   */
+  private invalidateEmbeddings(reason: string): void {
+    this.staleIndex = true;
+    for (const entry of this.index.values()) {
+      entry.embedding = [];
+      for (const chunk of entry.chunks ?? []) {
+        chunk.embedding = [];
+        chunk.embedFailed = true;
+      }
+      // 재인덱싱 대상으로 표시한다. lastModified(실제 수정 시각)는 보존해야 하며,
+      // 0으로 덮으면 최근 노트 선별(emerge) 등이 이 노트를 영구 과거로 취급한다.
+      entry.needsReindex = true;
+    }
+    // 임베딩이 0개가 되었으므로 검색은 키워드 폴백으로 흐른다.
+    this.useEmbeddings = false;
+    console.error(reason);
+  }
+
+  /**
+   * 로드한 인덱스의 임베딩 구성이 현재 설정과 다른지 여부.
+   * true면 기존 벡터를 신뢰할 수 없어 재인덱싱이 필요하다.
+   */
+  get hasStaleEmbeddings(): boolean {
+    return this.staleIndex;
+  }
+
+  /** 인덱스에서 관측되는 임베딩 차원(첫 유효 벡터 기준). 벡터가 없으면 null. */
+  private detectIndexDimension(): number | null {
+    for (const entry of this.index.values()) {
+      for (const chunk of entry.chunks ?? []) {
+        if (chunk.embedding && chunk.embedding.length > 0) return chunk.embedding.length;
+      }
+      if (entry.embedding && entry.embedding.length > 0) return entry.embedding.length;
+    }
+    return null;
+  }
+
+  /**
+   * 로드한 인덱스의 임베딩 구성을 현재 설정과 비교해 무효 여부를 판정한다.
+   *
+   * 시그니처가 다르면 임베딩 모델(또는 백엔드)이 바뀐 것이므로 기존 벡터는 새 쿼리와
+   * 비교할 수 없다. 이 경우 벡터를 모두 폐기해 검색이 키워드 폴백으로 흐르게 한다.
+   * 벡터를 남겨 두면 차원이 같은 다른 모델일 때 무의미한 유사도가 계산된다.
+   */
+  private reconcileEmbeddingSignature(loaded: SerializedIndex): void {
+    const current = this.embeddingSignature;
+    // 현재 시그니처를 모르면(주입 전) 판정을 보류한다.
+    if (current === null) return;
+
+    const stored = loaded.embeddingSignature;
+    // 구버전 인덱스는 시그니처가 없다. 차원 정보도 없으므로 판정하지 않고 그대로 쓴다
+    // (검색 시점의 차원 비교가 최종 안전망이다).
+    if (stored === undefined) return;
+
+    if (stored === current) {
+      this.staleIndex = false;
+      return;
+    }
+
+    // 시그니처 불일치: 벡터를 폐기해 키워드 검색으로 폴백시키고 재인덱싱을 유도한다.
+    this.invalidateEmbeddings(
+      `인덱스 임베딩 구성이 변경되었습니다 (저장=${stored}, 현재=${current}). 재인덱싱이 필요합니다.`
+    );
   }
 
   /**
@@ -545,6 +824,13 @@ export class VaultIndexer {
     for (const entry of entries) {
       this.index.set(entry.path, entry);
     }
+
+    // 임베딩 구성 변경 감지: 시그니처가 다르면 기존 벡터를 폐기해 무의미한 유사도가
+    // 계산되지 않게 하고, 재인덱싱 필요 상태를 기록한다.
+    if (!Array.isArray(parsed)) {
+      this.reconcileEmbeddingSignature(parsed as SerializedIndex);
+    }
+
     this.useEmbeddings = this.hasEmbeddings();
   }
 

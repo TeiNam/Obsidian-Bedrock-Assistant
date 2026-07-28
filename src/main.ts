@@ -20,11 +20,15 @@ import { migratePlannerSettings } from "./planner-settings";
 import {
   activeChatModelId,
   clampEffort,
+  embeddingSignature,
   legacyTemperatureToEffort,
 } from "./provider-utils";
 import { LEGACY_DEFAULT_SYSTEM_PROMPTS } from "./system-prompt";
 import { SecondBrainScheduler, type SecondBrainContext } from "./second-brain/scheduler";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
+
+/** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
+const INDEX_DEBOUNCE_MS = 2000;
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -89,6 +93,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // 디바운스를 통과한 인덱싱 작업을 직렬 실행하는 체인(동시성 1).
+  private indexQueue: Promise<void> = Promise.resolve();
   // 마지막으로 관측한 계정 스코프(백엔드·인증·리전). 변경 시 모델 캐시를 비운다.
   private lastAccountScope = "";
 
@@ -149,18 +155,30 @@ export default class GeminiAssistantPlugin extends Plugin {
       this.app.workspace.onLayoutReady(() => refreshMcpIndicator());
     }).catch((e) => console.error("MCP 설정 로드 실패:", e));
 
-    // 인덱스 로드는 레이아웃 준비 후 실행 (볼트 파일 시스템이 완전히 준비된 상태에서 로드)
-    this.app.workspace.onLayoutReady(() => {
-      this.loadIndex().catch((e) => console.error("인덱스 로드 실패:", e));
-    });
-
-    // Second Brain 스케줄러 자동 트리거 (Req 11.1).
+    // 인덱스 로드 후 Second Brain 스케줄러를 트리거한다 (Req 11.1).
+    //
+    // 두 작업을 각각 별도 onLayoutReady 콜백으로 등록하면, 인덱스 로드가 첫 await에서
+    // 중단된 사이 스케줄러가 시작되어 "빈 인덱스"로 카탈로그를 덮어쓴다. 반드시
+    // 로드 완료를 기다린 뒤 실행해야 한다.
+    //
     // maybeRunOnStartup 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
     // 여기서는 무조건 호출해도 옵트인 격리가 보장된다(비활성 시 아무 동작 없음).
     this.app.workspace.onLayoutReady(() => {
-      this.secondBrainScheduler
-        .maybeRunOnStartup(this.buildSecondBrainContext(), Date.now())
-        .catch((e) => console.error("Second Brain 스케줄러 시작 실패:", e));
+      void (async () => {
+        try {
+          await this.loadIndex();
+        } catch (e) {
+          console.error("인덱스 로드 실패:", e);
+        }
+        try {
+          await this.secondBrainScheduler.maybeRunOnStartup(
+            this.buildSecondBrainContext(),
+            Date.now()
+          );
+        } catch (e) {
+          console.error("Second Brain 스케줄러 시작 실패:", e);
+        }
+      })();
     });
 
     // 리본 아이콘 추가
@@ -209,20 +227,39 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.registerSecondBrainCommands();
 
     // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
-    // indexVault 진행 중에는 modify 이벤트 인덱싱을 건너뛰어 동시 실행 방지
+    // indexVault 진행 중이면 indexer가 내부 대기열(pendingFiles)로 큐잉하므로
+    // 여기서 걸러내지 않는다. 걸러내면 인덱싱 중 편집이 영구 유실된다.
     this.registerEvent(
-      this.app.vault.on("modify", async (file) => {
-        if (file instanceof TFile && file.extension === "md" && !this.indexer.isIndexing) {
-          // 기존 타이머 취소
-          const existing = this.indexDebounceTimers.get(file.path);
-          if (existing) clearTimeout(existing);
-          // 2초 디바운스
-          const timer = setTimeout(async () => {
-            this.indexDebounceTimers.delete(file.path);
-            try { await this.indexer.indexFile(file); } catch { }
-          }, 2000);
-          this.indexDebounceTimers.set(file.path, timer);
+      this.app.vault.on("modify", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.scheduleIndex(file);
         }
+      })
+    );
+
+    // 신규 생성 노트도 인덱싱한다. create 이벤트가 없으면 플러그인이 만든 노트
+    // (create_note/웹클리퍼/To-Do)가 전체 재인덱싱까지 검색되지 않는다.
+    this.registerEvent(
+      this.app.vault.on("create", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.scheduleIndex(file);
+        }
+      })
+    );
+
+    // 이름 변경/이동: 구 경로 엔트리를 제거하고 새 경로를 인덱싱한다.
+    // 이 처리가 없으면 존재하지 않는 노트가 검색 결과에 영구 잔존한다.
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile)) return;
+        // 구 경로에 예약된 인덱싱 타이머는 무의미하므로 취소한다.
+        const pending = this.indexDebounceTimers.get(oldPath);
+        if (pending) {
+          clearTimeout(pending);
+          this.indexDebounceTimers.delete(oldPath);
+        }
+        this.indexer.removeFile(oldPath);
+        if (file.extension === "md") this.scheduleIndex(file);
       })
     );
 
@@ -235,6 +272,27 @@ export default class GeminiAssistantPlugin extends Plugin {
     );
   }
 
+  /**
+   * 파일 인덱싱을 디바운스하여 예약한다(파일별 2초).
+   * 연속 편집 중 매 키 입력마다 임베딩을 호출하지 않도록 마지막 변경만 처리한다.
+   */
+  private scheduleIndex(file: TFile): void {
+    const existing = this.indexDebounceTimers.get(file.path);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.indexDebounceTimers.delete(file.path);
+      // 직렬 큐에 넣는다. 다중 파일 변경(폴더 이동, 플러그인 일괄 생성)이 동시에
+      // 디바운스를 통과하면 파일 수만큼 임베딩 요청이 병렬로 나가 API 쓰로틀링을 맞는다.
+      // ponytail: 단일 체인으로 동시성 1 — 처리량이 문제되면 워커 풀로 올린다.
+      this.indexQueue = this.indexQueue
+        .then(() => this.indexer.indexFile(file))
+        .catch((error) => {
+          console.error(`인덱스 갱신 실패: ${file.path}`, error);
+        });
+    }, INDEX_DEBOUNCE_MS);
+    this.indexDebounceTimers.set(file.path, timer);
+  }
+
   async onunload(): Promise<void> {
     // 디바운스 타이머 정리
     for (const timer of this.indexDebounceTimers.values()) {
@@ -243,6 +301,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.indexDebounceTimers.clear();
 
     this.mcpManager?.disconnectAll();
+
+    // 진행 중인 인덱싱을 먼저 끝낸다. 기다리지 않고 저장하면 대기 중 변경분이
+    // 반영되지 않은 인덱스가 디스크에 남고, 다음 로드는 그 저장본을 그대로 믿는다
+    // (자동 전체 인덱싱이 없으므로 해당 변경은 사용자가 수동 재인덱싱할 때까지 누락된다).
+    await this.indexQueue.catch(() => {});
     await this.saveIndex();
   }
 
@@ -521,11 +584,25 @@ export default class GeminiAssistantPlugin extends Plugin {
           return;
         }
         try {
-          await this.secondBrainScheduler.runCleanupPipeline(
+          // 실행 결과를 그대로 보고한다. 과거에는 모든 단계가 실패해도 성공 Notice를
+          // 띄워 사용자가 실패를 알 수 없었다.
+          const result = await this.secondBrainScheduler.runCleanupPipeline(
             this.buildSecondBrainContext(),
             Date.now(),
           );
-          new Notice("Second Brain 정리(catalog 갱신)를 실행했습니다.");
+          if (!result.ran) {
+            new Notice("Second Brain 정리가 이미 진행 중입니다.");
+          } else if (result.failed === 0) {
+            new Notice("Second Brain 정리(catalog 갱신)를 실행했습니다.");
+          } else if (result.succeeded === 0) {
+            new Notice(
+              `Second Brain 정리 실패: 모든 단계가 실패했습니다 (${result.failedSteps.join(", ")}). 콘솔 로그를 확인해 주세요.`
+            );
+          } else {
+            new Notice(
+              `Second Brain 정리 일부 실패: ${result.succeeded}개 성공, ${result.failed}개 실패 (${result.failedSteps.join(", ")}).`
+            );
+          }
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
           new Notice(`Second Brain 정리 실행 실패: ${reason}`);
@@ -681,6 +758,9 @@ export default class GeminiAssistantPlugin extends Plugin {
       chunkMaxSize: this.settings.chunkMaxSize,
       chunkOverlap: this.settings.chunkOverlap,
     });
+    // 임베딩 구성 시그니처를 주입한다. 인덱스 저장 시 함께 기록되고, 로드 시
+    // 비교되어 임베딩 모델 변경(벡터 공간 변경)을 감지한다.
+    this.indexer?.setEmbeddingSignature(embeddingSignature(this.settings));
   }
 
   /** 백엔드 전환 시 기존 클라이언트를 폐기하고 새 클라이언트를 생성한다 */

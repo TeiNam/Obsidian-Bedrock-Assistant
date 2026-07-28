@@ -165,6 +165,18 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
  * 동시 실행 가드(running 플래그)로 중복 트리거를 무시하고, 각 파이프라인 단계를 개별
  * try/catch로 감싸 실패 격리한다. 완료 시 lastScheduledRun을 갱신하고 영속화한다.
  */
+/** Cleanup_Pipeline 실행 결과. 호출부가 성공/실패를 사용자에게 정확히 알리는 데 사용한다. */
+export interface CleanupRunResult {
+  /** 실제로 실행되었는지(동시 실행 가드로 무시된 경우 false) */
+  ran: boolean;
+  /** 성공한 단계 수 */
+  succeeded: number;
+  /** 실패한 단계 수 */
+  failed: number;
+  /** 실패한 단계 이름 목록 */
+  failedSteps: string[];
+}
+
 export class SecondBrainScheduler {
   /** 동시 실행 가드 (Req 11.5). 파이프라인 실행 중이면 true. */
   private running = false;
@@ -185,35 +197,53 @@ export class SecondBrainScheduler {
    * @param ctx Second Brain 실행 컨텍스트
    * @param now 트리거 시각 (epoch ms). lastScheduledRun 완료 시각으로 사용된다.
    */
-  async runCleanupPipeline(ctx: SecondBrainContext, now: number): Promise<void> {
+  async runCleanupPipeline(ctx: SecondBrainContext, now: number): Promise<CleanupRunResult> {
     // 동시 실행 가드 — 두 번째 트리거는 무시한다 (Req 11.5)
-    if (this.running) return;
+    if (this.running) return { ran: false, succeeded: 0, failed: 0, failedSteps: [] };
     this.running = true;
+
+    let succeeded = 0;
+    const failedSteps: string[] = [];
 
     try {
       for (const step of CLEANUP_PIPELINE) {
         try {
           await step.run(ctx, now);
+          succeeded++;
         } catch (error) {
           // 단계 실패는 기록만 하고 나머지 단계를 계속 수행한다 (Req 11.7).
           const reason = error instanceof Error ? error.message : String(error);
+          failedSteps.push(step.name);
           console.error(`[SecondBrainScheduler] 파이프라인 단계 실패 (${step.name}): ${reason}`);
         }
       }
     } finally {
-      // 완료 시각으로 lastScheduledRun 갱신 후 영속화 (Req 11.6).
-      // settings는 this.settings.secondBrain의 동일 참조이므로 이 갱신이 플러그인 설정에 반영된다.
-      ctx.settings.lastScheduledRun = now;
-      try {
-        await ctx.persist();
-      } catch (error) {
-        // 영속화 실패도 가드 해제를 막지 않도록 기록만 한다.
-        const reason = error instanceof Error ? error.message : String(error);
-        console.error(`[SecondBrainScheduler] 설정 영속화 실패: ${reason}`);
+      // lastScheduledRun은 "한 단계라도 성공했을 때"만 완료 시각으로 갱신한다 (Req 11.6).
+      //
+      // 전 단계가 실패했는데도 갱신하면 다음 주기(기본 24시간)까지 재시도가 막혀
+      // 실패가 조용히 은닉된다. 전부 실패한 경우 시각을 유지해 다음 트리거에서
+      // 곧바로 재시도되게 한다.
+      if (succeeded > 0) {
+        // settings는 this.settings.secondBrain의 동일 참조이므로 이 갱신이 플러그인 설정에 반영된다.
+        ctx.settings.lastScheduledRun = now;
+        try {
+          await ctx.persist();
+        } catch (error) {
+          // 영속화 실패도 가드 해제를 막지 않도록 기록만 한다.
+          const reason = error instanceof Error ? error.message : String(error);
+          console.error(`[SecondBrainScheduler] 설정 영속화 실패: ${reason}`);
+        }
       }
       // 가드 해제 — 다음 트리거 허용
       this.running = false;
     }
+
+    return {
+      ran: true,
+      succeeded,
+      failed: failedSteps.length,
+      failedSteps,
+    };
   }
 
   /**
@@ -227,12 +257,14 @@ export class SecondBrainScheduler {
    * @param ctx Second Brain 실행 컨텍스트
    * @param now 현재 시각 (epoch ms). main.ts에서 Date.now()를 주입한다.
    */
-  async maybeRunOnStartup(ctx: SecondBrainContext, now: number): Promise<void> {
+  async maybeRunOnStartup(ctx: SecondBrainContext, now: number): Promise<CleanupRunResult> {
+    const skipped: CleanupRunResult = { ran: false, succeeded: 0, failed: 0, failedSteps: [] };
+
     // 옵트인 격리: 기능 비활성 시 아무 동작도 하지 않는다 (Req 1.6)
-    if (!ctx.settings.enabled) return;
+    if (!ctx.settings.enabled) return skipped;
 
     // 자동 트리거는 schedulerEnabled가 true일 때만 동작한다 (Req 11.1)
-    if (!ctx.settings.schedulerEnabled) return;
+    if (!ctx.settings.schedulerEnabled) return skipped;
 
     // 주기 경계 판정 (Req 11.2, 11.3)
     if (
@@ -242,9 +274,9 @@ export class SecondBrainScheduler {
         now,
       )
     ) {
-      return;
+      return skipped;
     }
 
-    await this.runCleanupPipeline(ctx, now);
+    return await this.runCleanupPipeline(ctx, now);
   }
 }

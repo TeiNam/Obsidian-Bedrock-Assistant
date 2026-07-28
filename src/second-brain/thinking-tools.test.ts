@@ -71,6 +71,11 @@ function daysArb(): fc.Arbitrary<number> {
   );
 }
 
+/** 경로 오름차순 비교자 — 정렬 순서와 무관하게 집합 동일성을 비교할 때 사용한다. */
+function byPathAsc(a: { path: string }, b: { path: string }): number {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
 describe("selectRecentNotes — Property 11 (최근 노트 선별 경계)", () => {
   // Feature: second-brain-layer, Property 11: 최근 노트 선별은 N일 경계를 지킨다
   // Validates: Requirements 9.4, 9.5
@@ -96,11 +101,18 @@ describe("selectRecentNotes — Property 11 (최근 노트 선별 경계)", () =
             expect(entry.lastModified).toBeGreaterThanOrEqual(cutoff);
           }
 
-          // (2) 결과는 cutoff 기준 필터 집합과 정확히 동일해야 한다.
-          //     - 포함되어야 할 항목이 누락되지 않고, 제외되어야 할 항목이 포함되지 않으며,
-          //     - 원래 순서가 보존된다.
+          // (2) 결과는 cutoff 기준 필터 집합과 동일한 원소를 가져야 한다.
+          //     포함되어야 할 항목이 누락되지 않고, 제외되어야 할 항목이 포함되지 않는다.
+          //     단 순서는 입력 순서가 아니라 최신순이다(호출부가 개수를 제한할 때
+          //     최신 노트가 남도록 보장하기 위한 계약).
           const expected = entries.filter((e) => e.lastModified >= cutoff);
-          expect(result).toEqual(expected);
+          expect(result).toHaveLength(expected.length);
+          expect([...result].sort(byPathAsc)).toEqual([...expected].sort(byPathAsc));
+
+          // (2-1) 최신순(lastModified 내림차순) 정렬이 보장된다.
+          for (let i = 1; i < result.length; i++) {
+            expect(result[i - 1].lastModified).toBeGreaterThanOrEqual(result[i].lastModified);
+          }
 
           // (3) 입력 배열을 변경하지 않는다(순수성).
           expect(result).not.toBe(entries);

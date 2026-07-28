@@ -142,6 +142,8 @@ interface TestHarness {
 function buildHarness(overrides: {
   firstCreateFolderDeferred?: { promise: Promise<void>; resolve: () => void };
   getEntriesThrows?: boolean;
+  /** true면 모든 Vault 쓰기가 throw 하여 파이프라인 전 단계가 실패한다. */
+  allStepsThrow?: boolean;
   settings?: Partial<SecondBrainSettings>;
 } = {}): TestHarness {
   const settings: SecondBrainSettings = {
@@ -160,14 +162,23 @@ function buildHarness(overrides: {
   let createFolderCalls = 0;
   const createFolder = vi.fn(() => {
     createFolderCalls += 1;
+    if (overrides.allStepsThrow) {
+      return Promise.reject(new Error("의도적 단계 실패: createFolder"));
+    }
     if (createFolderCalls === 1 && overrides.firstCreateFolderDeferred) {
       return overrides.firstCreateFolderDeferred.promise;
     }
     return Promise.resolve();
   });
 
-  const create = vi.fn(async () => undefined);
-  const modify = vi.fn(async () => undefined);
+  /** allStepsThrow가 켜지면 모든 쓰기 호출이 실패해 전 단계가 실패한다. */
+  const failIfRequested = async (label: string): Promise<undefined> => {
+    if (overrides.allStepsThrow) throw new Error(`의도적 단계 실패: ${label}`);
+    return undefined;
+  };
+
+  const create = vi.fn(() => failIfRequested("create"));
+  const modify = vi.fn(() => failIfRequested("modify"));
   const read = vi.fn(async () => "");
 
   const vault: MockVault = {
@@ -180,7 +191,7 @@ function buildHarness(overrides: {
 
   // indexer.getEntries: 기본은 빈 배열, 옵션 시 throw로 2단계(update-catalog)를 실패시킨다.
   const getEntries = vi.fn(() => {
-    if (overrides.getEntriesThrows) {
+    if (overrides.getEntriesThrows || overrides.allStepsThrow) {
       throw new Error("의도적 단계 실패: getEntries");
     }
     return [];
@@ -248,7 +259,13 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
     const now = 2_000_000;
 
     // 단계 실패가 전체 실행을 중단시키지 않으므로 reject 없이 정상 완료해야 한다.
-    await expect(scheduler.runCleanupPipeline(ctx, now)).resolves.toBeUndefined();
+    // 반환값은 성공/실패 집계이며, 호출부가 이를 사용자에게 정확히 보고한다.
+    const result = await scheduler.runCleanupPipeline(ctx, now);
+    expect(result.ran).toBe(true);
+    // 1·3단계 성공, 2단계(update-catalog) 실패가 집계에 반영되어야 한다.
+    expect(result.failed).toBe(1);
+    expect(result.succeeded).toBeGreaterThan(0);
+    expect(result.failedSteps).toContain("update-catalog");
 
     // 실패 단계(update-catalog)가 실제로 트리거되었는지 확인.
     expect(getEntries).toHaveBeenCalled();
@@ -260,11 +277,29 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
     const createPaths = vault.create.mock.calls.map((call) => String(call[0]));
     expect(createPaths.some((p) => p.endsWith("log.md"))).toBe(true);
 
-    // 완료 시각으로 lastScheduledRun 갱신 + 영속화 보장 (Req 11.6).
+    // 일부 단계가 성공했으므로 완료 시각을 갱신하고 영속화한다 (Req 11.6).
     expect(ctx.settings.lastScheduledRun).toBe(now);
     expect(persist).toHaveBeenCalledTimes(1);
 
     // 가드는 finally에서 해제됨.
+    expect(scheduler.isRunning).toBe(false);
+  });
+
+  it("모든 단계가 실패하면 lastScheduledRun을 갱신하지 않는다(다음 트리거에서 재시도)", async () => {
+    // 전 단계 실패 시에도 완료 시각을 갱신하면 다음 주기(기본 24시간)까지 재시도가
+    // 막혀 실패가 조용히 은닉된다.
+    const { ctx, persist } = buildHarness({ allStepsThrow: true });
+    const scheduler = new SecondBrainScheduler();
+    const before = ctx.settings.lastScheduledRun;
+
+    const result = await scheduler.runCleanupPipeline(ctx, 5_000_000);
+
+    expect(result.ran).toBe(true);
+    expect(result.succeeded).toBe(0);
+    expect(result.failed).toBeGreaterThan(0);
+    // 시각 유지 + 영속화 생략 → 다음 트리거에서 곧바로 재시도된다.
+    expect(ctx.settings.lastScheduledRun).toBe(before);
+    expect(persist).not.toHaveBeenCalled();
     expect(scheduler.isRunning).toBe(false);
   });
 });

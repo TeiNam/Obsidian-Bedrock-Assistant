@@ -110,8 +110,10 @@ describe("VaultIndexer limit 검증 및 결과 개수 제한", () => {
         fc.integer({ min: 1, max: 100 }),
         async (n, limit) => {
           const indexer = await buildPopulatedIndexer(n);
-          // 임베딩 보유 노트 N개 → 벡터 검색 경로 사용, depth=0이므로 후보 = min(10, N)
-          const candidateCount = Math.min(10, n);
+          // 임베딩 보유 노트 N개 → 벡터 검색 경로 사용, depth=0이므로 후보는 시드뿐이다.
+          // 시드 수는 max(10, min(limit, N))이므로 후보 = min(N, max(10, limit)).
+          // (과거에는 시드가 10으로 고정돼 limit>10이 무의미했다.)
+          const candidateCount = Math.min(n, Math.max(10, limit));
 
           const result = await indexer.search("쿼리 텍스트", limit);
 
