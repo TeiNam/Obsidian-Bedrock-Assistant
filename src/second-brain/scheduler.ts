@@ -26,6 +26,7 @@ import {
   WIKI_CATEGORIES,
   type CatalogEntry,
 } from "./wiki-structure";
+import { collectGaps, buildGapReport, writeGapReport } from "./knowledge-gaps";
 
 /**
  * Second Brain 실행 컨텍스트 (실행 래퍼에 주입).
@@ -123,7 +124,9 @@ function inferCategory(path: string, wikiFolder: string): string {
  * 1) ensure-folders: Wiki_Folder/카테고리 폴더 보장(없으면 생성, 있으면 유지)
  * 2) update-catalog: 인덱스의 Wiki_Folder 노트로 카탈로그를 빌드하여 index.md 갱신
  *    (catalog Sentinel_Block만 교체 → 사용자 메모 보존)
- * 3) activity-log: 스케줄 실행 이력을 log.md에 한 줄 append(기존 로그 불변)
+ * 3) knowledge-gaps: 구조적 공백(깨진 링크·스텁·고아·단방향)을 계산해 리포트 갱신
+ *    (LLM 호출 없음, sentinel 블록만 교체 → 사용자 메모 보존)
+ * 4) activity-log: 스케줄 실행 이력을 log.md에 한 줄 append(기존 로그 불변)
  */
 const CLEANUP_PIPELINE: PipelineStep[] = [
   {
@@ -152,9 +155,25 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
     },
   },
   {
+    name: "knowledge-gaps",
+    run: async (ctx) => {
+      // 구조적 공백을 로컬 계산한다(LLM 호출 0회). 인덱스는 존재하는 링크만
+      // 보존하므로 깨진 링크는 metadataCache에서 따로 가져온다.
+      // metadataCache가 없거나 아직 채워지지 않은 환경(초기 로드·테스트 스텁)에서도
+      // 이 단계가 실패하지 않아야 한다. 깨진 링크 정보만 비어 있을 뿐, 나머지 세
+      // 지표(스텁·고아·단방향)는 인덱스만으로 계산된다.
+      const unresolved =
+        (ctx.app.metadataCache as
+          | { unresolvedLinks?: Record<string, Record<string, number>> }
+          | undefined)?.unresolvedLinks ?? {};
+      const gaps = collectGaps(ctx.indexer.getEntries(), unresolved, ctx.wikiFolder);
+      await writeGapReport(ctx.app, ctx.wikiFolder, buildGapReport(gaps));
+    },
+  },
+  {
     name: "activity-log",
     run: async (ctx) => {
-      await appendActivityLog(ctx.app, ctx.wikiFolder, "스케줄 정리 실행(catalog 갱신)");
+      await appendActivityLog(ctx.app, ctx.wikiFolder, "스케줄 정리 실행(catalog·공백 리포트 갱신)");
     },
   },
 ];

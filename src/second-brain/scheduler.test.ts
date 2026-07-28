@@ -262,10 +262,12 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
     // 반환값은 성공/실패 집계이며, 호출부가 이를 사용자에게 정확히 보고한다.
     const result = await scheduler.runCleanupPipeline(ctx, now);
     expect(result.ran).toBe(true);
-    // 1·3단계 성공, 2단계(update-catalog) 실패가 집계에 반영되어야 한다.
-    expect(result.failed).toBe(1);
+    // getEntries에 의존하는 두 단계(update-catalog, knowledge-gaps)가 실패하고
+    // 나머지(ensure-folders, activity-log)는 성공해야 한다.
+    expect(result.failed).toBe(2);
     expect(result.succeeded).toBeGreaterThan(0);
     expect(result.failedSteps).toContain("update-catalog");
+    expect(result.failedSteps).toContain("knowledge-gaps");
 
     // 실패 단계(update-catalog)가 실제로 트리거되었는지 확인.
     expect(getEntries).toHaveBeenCalled();
@@ -273,7 +275,7 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
     // 1단계(ensure-folders)는 실패 단계 이전이라 수행됨.
     expect(vault.createFolder).toHaveBeenCalled();
 
-    // 3단계(activity-log)는 실패 단계 이후지만 계속 수행되어 log.md를 생성해야 한다(격리 증거).
+    // 마지막 단계(activity-log)는 실패 단계 이후지만 계속 수행되어 log.md를 생성해야 한다(격리 증거).
     const createPaths = vault.create.mock.calls.map((call) => String(call[0]));
     expect(createPaths.some((p) => p.endsWith("log.md"))).toBe(true);
 

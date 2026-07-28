@@ -83,6 +83,8 @@ describe("normalizeSecondBrainSettings", () => {
         schedulerEnabled: true,
         schedulerIntervalHours: 24,
         lastScheduledRun: 0,
+        accessLog: {},
+        reviewSurfaced: {},
       });
     });
 
@@ -93,6 +95,8 @@ describe("normalizeSecondBrainSettings", () => {
         schedulerEnabled: true,
         schedulerIntervalHours: 12,
         lastScheduledRun: 1700000000000,
+        accessLog: { "note.md": 1700000000000 },
+        reviewSurfaced: { "note.md": 1700000000000 },
       };
       expect(normalizeSecondBrainSettings(full)).toEqual(full);
     });
