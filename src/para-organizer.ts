@@ -37,6 +37,13 @@ const CLASSIFY_MAX_TOKENS = 256;
  */
 export const PARA_MAX_CLASSIFICATIONS = 200;
 
+/**
+ * 분류가 연속으로 실패하는 것을 허용하는 횟수.
+ * 백엔드 장애·자격증명 오류라면 남은 파일도 전부 실패하므로, 상한까지 호출을
+ * 소진하지 말고 즉시 중단해 비용과 시간을 아낀다.
+ */
+const MAX_CONSECUTIVE_FAILURES = 10;
+
 /** 분류 결과 */
 export interface ParaResult {
   created: string[];
@@ -76,6 +83,36 @@ function shouldSkip(path: string, pluginConfigDir: string): boolean {
 }
 
 /**
+ * LLM 응답에서 P.A.R.A 카테고리를 추출한다 — 순수 함수.
+ *
+ * 프롬프트는 카테고리 한 단어만 요구하지만, 추론 모델은 서두나 설명을 붙이는 경우가
+ * 있어 마지막 줄을 우선 확인한다. 단순 `includes` 매칭은 위험하다 —
+ * "cannot choose projects, areas, resources, or archives" 같은 **실패 응답**도
+ * 첫 카테고리로 오판해 노트를 임의 폴더로 옮기기 때문이다.
+ * 따라서 카테고리 단어가 단독(또는 최소한의 구두점과 함께) 등장할 때만 인정한다.
+ *
+ * @returns 판별된 카테고리, 판별 불가 시 null(호출부가 건너뛴다)
+ */
+export function parseCategory(responseText: string): ParaCategory | null {
+  const text = String(responseText ?? "").toLowerCase();
+  // 마지막 비어있지 않은 줄을 최종 답으로 본다(사고 과정 뒤 결론을 쓰는 패턴 대응).
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    // 구두점·따옴표·마크다운 강조를 제거한 순수 토큰만 남긴다.
+    const token = lines[i].replace(/[^a-z]/g, "");
+    const exact = PARA_CATEGORIES.find((c) => c === token);
+    if (exact) return exact;
+  }
+
+  // 어느 줄도 단독 카테고리가 아니면 분류 실패로 본다.
+  return null;
+}
+
+/**
  * LLM을 사용하여 노트를 P.A.R.A 카테고리로 분류
  */
 async function classifyNote(
@@ -97,11 +134,7 @@ Respond with ONLY one word: projects, areas, resources, or archives. No explanat
 
   try {
     const result = await plugin.aiClient.converseLight(prompt, systemPrompt, CLASSIFY_MAX_TOKENS);
-    // 응답에 설명이 섞여도 카테고리 단어를 찾아낸다(추론 모델은 서두를 붙이는 경우가 있다).
-    const text = result.text.trim().toLowerCase();
-    const matched = PARA_CATEGORIES.find((c) => text.includes(c));
-    // 분류에 실패하면 임의 카테고리로 이동시키지 않고 null을 반환해 호출부가 건너뛰게 한다.
-    return matched ?? null;
+    return parseCategory(result.text);
   } catch {
     return null;
   }
@@ -146,14 +179,31 @@ export async function organizeVaultPara(
   }
 
   // 3) 각 파일을 LLM으로 분류 후 이동
-  //    호출 수 상한을 적용한다. 노트당 1회 LLM 호출이므로 상한이 없으면
-  //    대형 볼트에서 비용과 소요 시간이 통제 불가로 커진다.
-  const targets = rootFiles.slice(0, PARA_MAX_CLASSIFICATIONS);
-  const deferred = rootFiles.length - targets.length;
+  //    LLM "호출 수"에 상한을 적용한다(파일 수가 아니다). 호출 없이 건너뛴 파일이
+  //    상한을 소진하면, 재실행 때마다 같은 파일들이 앞자리를 점거해 나머지가
+  //    영구히 처리되지 않는다(굶주림).
+  let calls = 0;
+  let consecutiveFailures = 0;
+  let deferred = 0;
+  let aborted = false;
 
-  for (let i = 0; i < targets.length; i++) {
-    const file = targets[i];
-    onProgress?.(i + 1, targets.length, file.name);
+  for (let i = 0; i < rootFiles.length; i++) {
+    const file = rootFiles[i];
+
+    if (calls >= PARA_MAX_CLASSIFICATIONS || aborted) {
+      deferred++;
+      continue;
+    }
+
+    // 네 폴더 모두에 같은 이름이 있으면 어떤 분류가 나와도 이동할 수 없다.
+    // 이런 파일에 호출을 쓰면, 매 실행마다 예산만 소진해 뒤쪽 파일이 영구히
+    // 처리되지 않는다(굶주림). 호출 전에 걸러낸다.
+    if (isUnmovable(app, file.name)) {
+      result.skipped.push(file.path);
+      continue;
+    }
+
+    onProgress?.(i + 1, rootFiles.length, file.name);
 
     try {
       // 파일 내용 일부 읽기 (분류용)
@@ -162,13 +212,24 @@ export async function organizeVaultPara(
       const title = file.basename;
 
       // LLM 분류
+      calls++;
       const category = await classifyNote(plugin, title, excerpt);
-      // 분류 실패(응답 오류·형식 불일치)는 건너뛴다. 과거에는 무조건 resources로
+      // 분류 실패(응답 오류·형식 불일치)는 이동하지 않는다. 과거에는 무조건 resources로
       // 이동시켜 사용자 폴더 구조를 임의로 재배치했다.
+      // "이름 중복으로 건너뜀"과 구분해 오류로 보고한다(조용한 실패 방지).
       if (category === null) {
-        result.skipped.push(file.path);
+        consecutiveFailures++;
+        result.errors.push(`${file.path}: 분류 실패(응답 오류 또는 형식 불일치)`);
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          aborted = true;
+          result.errors.push(
+            `분류가 ${MAX_CONSECUTIVE_FAILURES}회 연속 실패해 중단했습니다. AI 백엔드 설정을 확인하세요.`
+          );
+        }
         continue;
       }
+      consecutiveFailures = 0;
+
       const targetFolder = CATEGORY_FOLDER[category];
       const newPath = `${targetFolder}/${file.name}`;
 
@@ -186,16 +247,26 @@ export async function organizeVaultPara(
   }
 
   // 상한으로 처리하지 못한 파일을 사용자에게 알린다(조용한 누락 방지).
-  if (deferred > 0) {
+  if (deferred > 0 && !aborted) {
     result.errors.push(
       `LLM 호출 상한(${PARA_MAX_CLASSIFICATIONS}건)에 도달해 ${deferred}개 파일을 처리하지 않았습니다. 다시 실행하면 이어서 정리됩니다.`
     );
+  } else if (deferred > 0) {
+    result.errors.push(`중단으로 ${deferred}개 파일을 처리하지 않았습니다.`);
   }
 
   // 4) 비어있는 원래 폴더 정리 (P.A.R.A 폴더 제외)
   await cleanEmptyFolders(app, configDir);
 
   return result;
+}
+
+/**
+ * 파일 이름이 네 P.A.R.A 폴더 모두에서 이미 사용 중인지 확인한다.
+ * 그렇다면 어떤 분류 결과가 나와도 이동 대상이 충돌하므로 LLM 호출이 낭비다.
+ */
+function isUnmovable(app: App, fileName: string): boolean {
+  return PARA_FOLDERS.every((folder) => app.vault.getAbstractFileByPath(`${folder}/${fileName}`) !== null);
 }
 
 /**

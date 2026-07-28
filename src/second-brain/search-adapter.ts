@@ -49,6 +49,19 @@ export function hasNoHits(result: GraphRagResult): boolean {
 }
 
 /**
+ * 인덱스가 낡아(임베딩 모델 변경) 검색 근거를 신뢰할 수 없을 때 붙이는 경고 문구.
+ *
+ * Second Brain 기능은 검색 결과를 근거로 노트를 생성·수정하므로, 인덱스가 무효인
+ * 상태를 사용자에게 알리지 않으면 낡은 근거로 만든 결과가 볼트에 기록된다.
+ * 결과가 없으면 빈 문자열을 반환해 호출부가 무조건 이어붙일 수 있게 한다.
+ */
+export function staleIndexWarning(result: GraphRagResult): string {
+  return result?.staleEmbeddings
+    ? "\n\n⚠️ 임베딩 모델이 변경되어 검색 인덱스가 낡았습니다. 볼트를 다시 인덱싱한 뒤 재실행하면 더 정확한 결과를 얻을 수 있습니다."
+    : "";
+}
+
+/**
  * 모든 run* 래퍼가 converseLight의 systemPrompt 인자로 공유하는 고정 지침.
  * 백엔드 무관: 특정 백엔드 표시 이름을 하드코딩/보간하지 않는다(Req 5.4 제약 동일).
  */

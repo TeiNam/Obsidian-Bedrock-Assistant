@@ -18,6 +18,7 @@ import type { SecondBrainContext } from "./scheduler";
 import {
   toSearchHits,
   hasNoHits,
+  staleIndexWarning,
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
@@ -102,9 +103,12 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   // 1) 기존 Graph RAG 검색 재사용 (Req 7.2)
   const result = await ctx.indexer.search(trimmedTopic);
 
+  // 인덱스가 낡은 경우(임베딩 모델 변경) 결과 메시지에 경고를 덧붙인다.
+  const staleNote = staleIndexWarning(result);
+
   // 2) 검색 결과 없음 → 노트 생성 없이 안내 (Req 7.6)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 종합 노트를 생성하지 않았습니다.`;
+    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 종합 노트를 생성하지 않았습니다.${staleNote}`;
   }
 
   // 3) 검색 히트 → 종합 프롬프트 (Req 7.3)
@@ -139,7 +143,7 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
     if (updated !== current) {
       await ctx.app.vault.modify(existing, updated);
     }
-    return `종합 노트를 갱신했습니다: ${notePath}`;
+    return `종합 노트를 갱신했습니다: ${notePath}${staleNote}`;
   }
 
   // 신규 종합 노트: AI_First_Note 본문에 synthesis 블록을 담아 생성한다.
@@ -155,5 +159,5 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   // 동일하게 부모 폴더를 먼저 보장한다.
   await ensureWikiFolders(ctx.app, ctx.wikiFolder);
   await ctx.app.vault.create(notePath, noteContent);
-  return `종합 노트를 생성했습니다: ${notePath}`;
+  return `종합 노트를 생성했습니다: ${notePath}${staleNote}`;
 }

@@ -18,6 +18,7 @@ import type { SecondBrainContext } from "./scheduler";
 import {
   toSearchHits,
   hasNoHits,
+  staleIndexWarning,
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
@@ -258,9 +259,12 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
   // 1) 기존 Graph RAG 검색 재사용 (읽기 전용, 비파괴)
   const result = await ctx.indexer.search(trimmedTopic);
 
+  // 인덱스가 낡은 경우(임베딩 모델 변경) 결과 메시지에 경고를 덧붙인다.
+  const staleNote = staleIndexWarning(result);
+
   // 2) 관련 노트 없음 → 점검할 모순 없음 안내 (노트 미변경)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.`;
+    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`;
   }
 
   // 3) 검색 히트 → 모순 점검 프롬프트
@@ -291,11 +295,11 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
 
   // 6) 모순 0건 → 안내, 노트 미변경 (Req 8.5)
   if (contradictions.length === 0) {
-    return "발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.";
+    return `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`;
   }
 
   // 7) 모순 리포트 반환 — 어떤 노트도 수정하지 않는다 (Req 8.2)
-  return formatReconcileReport(contradictions);
+  return `${formatReconcileReport(contradictions)}${staleNote}`;
 }
 
 /**

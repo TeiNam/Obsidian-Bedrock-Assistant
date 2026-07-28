@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { VaultIndexer } from "./vault-indexer";
 import { TFile } from "obsidian";
+import { selectRecentNotes } from "./second-brain/thinking-tools";
 
 // ============================================
 // 인덱스 정합성 회귀 테스트
@@ -83,7 +84,7 @@ describe("빈 노트: 이전 내용이 인덱스에 남지 않는다", () => {
 });
 
 describe("임베딩 실패: 영구 누락되지 않고 재시도 대상으로 남는다", () => {
-  it("모든 청크 임베딩이 실패하면 lastModified=0으로 저장해 다음 인덱싱에서 재시도한다", async () => {
+  it("모든 청크 임베딩이 실패하면 needsReindex로 표시해 다음 인덱싱에서 재시도한다", async () => {
     const file = makeTFile("note.md", 5000);
     const contents = new Map([["note.md", "# 노트\n본문"]]);
     // 프리플라이트("test") 1회만 성공 → 실제 청크 임베딩은 모두 실패
@@ -93,8 +94,10 @@ describe("임베딩 실패: 영구 누락되지 않고 재시도 대상으로 �
 
     const entry = indexer.getEntries()[0];
     expect(entry).toBeDefined();
-    // 핵심: mtime을 확정하면 스킵되어 영구히 재시도되지 않는다
-    expect(entry.lastModified).toBe(0);
+    // 핵심: 재시도 표시가 없으면 mtime 스킵으로 영구히 재시도되지 않는다.
+    // lastModified는 실제 수정 시각을 유지해야 한다(최근 노트 선별이 이 값을 읽는다).
+    expect(entry.needsReindex).toBe(true);
+    expect(entry.lastModified).toBe(5000);
     expect(entry.chunks?.every((c) => c.embedFailed)).toBe(true);
   });
 
@@ -172,8 +175,9 @@ describe("임베딩 시그니처: 모델 변경 시 낡은 벡터를 폐기한�
     // 벡터를 폐기해 무의미한 유사도 계산을 막는다
     expect(entry.embedding).toEqual([]);
     expect(entry.chunks?.every((c) => c.embedding.length === 0)).toBe(true);
-    // 재인덱싱 대상이 되도록 최신성 도장을 무효화한다
-    expect(entry.lastModified).toBe(0);
+    // 재인덱싱 대상으로 표시하되 실제 수정 시각은 보존한다
+    expect(entry.needsReindex).toBe(true);
+    expect(entry.lastModified).toBe(1000);
   });
 
   it("시그니처가 같으면 벡터를 그대로 유지한다", async () => {
@@ -230,5 +234,42 @@ describe("indexing 플래그: 예외가 증분 인덱싱을 영구 정지시키�
 
     // 플래그가 해제되어야 한다. 켜진 채면 이후 모든 indexFile이 대기열로만 흘러간다.
     expect(indexer.isIndexing).toBe(false);
+  });
+});
+
+describe("needsReindex: 재인덱싱 표시가 최근 노트 선별을 망치지 않는다", () => {
+  it("임베딩 무효화 후에도 최근 노트 선별(emerge)에 노트가 남는다", async () => {
+    const now = 10_000_000;
+    const file = makeTFile("note.md", now - 1000); // 방금 수정된 노트
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+    const indexer = new VaultIndexer(makeApp([file], contents), makeClient());
+
+    indexer.setEmbeddingSignature("bedrock:titan-v2");
+    await indexer.indexFile(file);
+    // 임베딩 모델 변경 → 벡터 폐기 + 재인덱싱 표시
+    indexer.setEmbeddingSignature("openai:text-embedding-3-large");
+
+    const recent = selectRecentNotes(indexer.getEntries(), 7, now);
+    // 핵심: 재인덱싱 표시 때문에 최근 노트가 사라지면 emerge가 항상 "없습니다"를 반환한다
+    expect(recent.map((e) => e.path)).toEqual(["note.md"]);
+  });
+
+  it("needsReindex 엔트리는 mtime이 같아도 indexVault에서 재처리된다", async () => {
+    const file = makeTFile("note.md", 5000);
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+    // 1회차: 프리플라이트만 성공 → 모든 청크 임베딩 실패
+    const failing = makeClient({ failAfter: 1 });
+    const indexer = new VaultIndexer(makeApp([file], contents), failing);
+    await indexer.indexVault();
+    expect(indexer.getEntries()[0].needsReindex).toBe(true);
+
+    // 2회차: 정상 클라이언트로 교체. mtime은 그대로지만 재처리돼야 한다.
+    indexer.client = makeClient();
+    const result = await indexer.indexVault();
+
+    expect(result.processed).toBe(1);
+    const entry = indexer.getEntries()[0];
+    expect(entry.needsReindex).toBeUndefined();
+    expect(entry.chunks?.[0].embedding.length).toBeGreaterThan(0);
   });
 });

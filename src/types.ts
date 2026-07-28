@@ -318,6 +318,13 @@ export interface IndexChunk {
   embedFailed?: boolean;
 }
 
+/**
+ * 재인덱싱이 필요한 엔트리를 표시하는 lastModified 센티넬은 사용하지 않는다.
+ * 대신 VaultIndexEntry.needsReindex 플래그를 쓴다 — lastModified를 0으로 덮으면
+ * 그 값을 "수정 시각"으로 읽는 다른 기능(emerge의 최근 노트 선별 등)이 해당 노트를
+ * 영구 과거로 취급해 결과에서 탈락시킨다.
+ */
+
 // 볼트 인덱스 항목
 export interface VaultIndexEntry {
   // === 기존 필드 (하위 호환 유지) ===
@@ -340,6 +347,13 @@ export interface VaultIndexEntry {
   tags?: string[];
   /** 프론트매터 키-값 메타데이터 — tags와 분리된 별도 필드 (Req 2.2) */
   frontmatter?: Record<string, unknown>;
+  /**
+   * 재인덱싱이 필요한 엔트리 표시.
+   * 임베딩을 하나도 확보하지 못했거나(API 실패) 임베딩 구성이 바뀌어 벡터를 폐기한
+   * 경우 true가 되며, 인덱싱 최신성 판정에서 항상 "갱신 필요"로 취급된다.
+   * lastModified는 실제 수정 시각을 유지하므로 최근 노트 선별 등 다른 기능이 영향받지 않는다.
+   */
+  needsReindex?: boolean;
 }
 
 // 인덱스 직렬화 스키마 버전 (Req 8.1)
