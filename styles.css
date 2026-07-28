@@ -1297,6 +1297,27 @@ body.theme-light .ba-message-content pre {
   background: var(--background-modifier-hover);
 }
 
+/* 결론 수확 버튼 — 삭제 버튼과 같은 크기/정렬을 쓰되 강조색만 다르다. */
+.ba-session-harvest {
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ba-session-harvest:hover {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+
+/* 수확 진행 중: 중복 클릭이 안 된다는 것을 시각적으로 알린다. */
+.ba-session-harvest.is-busy {
+  cursor: progress;
+  opacity: 0.5;
+}
+
 /* 검색 하이라이트 */
 .ba-search-highlight {
   background: var(--text-highlight-bg);

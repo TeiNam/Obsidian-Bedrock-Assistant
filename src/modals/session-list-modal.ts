@@ -1,11 +1,12 @@
 // 지난 대화 세션 목록 모달 (chat-view.ts에서 분리)
 
-import { Modal, setIcon } from "obsidian";
+import { Modal, Notice, setIcon } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ChatSession } from "../types";
 import type { ViewLang } from "../chat-view-i18n";
 import { filterSessions, type HighlightSegment } from "../session-search";
+import { harvestSession } from "../conversation-harvest";
 
 /**
  * 지난 대화 세션 목록을 표시하고 선택/삭제할 수 있는 모달
@@ -104,6 +105,18 @@ export class SessionListModal extends Modal {
         this.close();
       });
 
+      // 결론 수확 버튼 — 대화에서 결론만 뽑아 검색 가능한 볼트 노트로 만든다.
+      // 세션은 50개 상한으로 조용히 소멸하므로, 남길 가치가 있는 결론은 노트로 옮겨야 한다.
+      const harvestBtn = row.createDiv({
+        cls: "ba-session-harvest",
+        attr: { "aria-label": this.t.harvestSession },
+      });
+      setIcon(harvestBtn, "sprout");
+      harvestBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await this.harvest(session, harvestBtn);
+      });
+
       // 삭제 버튼
       const delBtn = row.createDiv({ cls: "ba-session-delete", attr: { "aria-label": this.t.deleteSession } });
       setIcon(delBtn, "trash-2");
@@ -117,6 +130,35 @@ export class SessionListModal extends Modal {
           this.listEl?.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
         }
       });
+    }
+  }
+
+  /**
+   * 세션에서 결론을 수확해 볼트 노트로 저장한다.
+   * 진행 중에는 버튼을 비활성화해 같은 세션에 중복 LLM 호출이 나가지 않게 한다.
+   */
+  private async harvest(session: ChatSession, button: HTMLElement): Promise<void> {
+    if (button.hasClass("is-busy")) return;
+    button.addClass("is-busy");
+    const notice = new Notice(this.t.harvestRunning, 0);
+
+    try {
+      const result = await harvestSession(
+        {
+          app: this.app,
+          aiClient: this.plugin.aiClient,
+          wikiFolder: this.plugin.settings.secondBrain.wikiFolder,
+          language: this.plugin.settings.language,
+          enabled: this.plugin.settings.secondBrain.enabled,
+        },
+        session,
+      );
+      new Notice(result.message ?? "");
+    } catch (error) {
+      new Notice(String(error));
+    } finally {
+      notice.hide();
+      button.removeClass("is-busy");
     }
   }
 
