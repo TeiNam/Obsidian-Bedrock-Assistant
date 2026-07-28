@@ -45,6 +45,8 @@ describe("설정 라운드트립 (Req 12.2)", () => {
       schedulerEnabled: true,
       schedulerIntervalHours: 12,
       lastScheduledRun: 1_700_000_000_000,
+      accessLog: { "note.md": 1_700_000_000_000 },
+      reviewSurfaced: {},
     };
 
     // JSON 직렬화/역직렬화 후 normalize(로드 경로와 동일)

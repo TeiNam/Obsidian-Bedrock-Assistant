@@ -24,6 +24,16 @@ export interface SecondBrainSettings {
   schedulerIntervalHours: number;
   /** 마지막 Cleanup_Pipeline 실행 시각 (epoch ms, 미실행 시 0) (Req 11.2, 11.6) */
   lastScheduledRun: number;
+  /**
+   * 노트 경로 → 마지막 열람 시각(epoch ms). 복습 큐의 재노출 점수에 쓴다.
+   * 노트에 메타데이터를 심지 않기 위해 플러그인 설정에만 보관한다.
+   */
+  accessLog: Record<string, number>;
+  /**
+   * 노트 경로 → 마지막 복습 제시 시각(epoch ms). 같은 노트가 며칠 연속
+   * 제시되지 않게 하는 쿨다운 판정에 쓴다.
+   */
+  reviewSurfaced: Record<string, number>;
 }
 
 // Second Brain Layer 기본값 (옵트인이므로 enabled/schedulerEnabled는 false)
@@ -33,6 +43,8 @@ export const DEFAULT_SECOND_BRAIN_SETTINGS: SecondBrainSettings = {
   schedulerEnabled: false,
   schedulerIntervalHours: 24,
   lastScheduledRun: 0,
+  accessLog: {},
+  reviewSurfaced: {},
 };
 
 /**
@@ -83,12 +95,27 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
       ? source.lastScheduledRun
       : DEFAULT_SECOND_BRAIN_SETTINGS.lastScheduledRun;
 
+  // 접근 이력·재노출 이력은 review-queue의 normalizeAccessLog가 값 검증을 담당한다.
+  // 여기서는 객체 여부만 확인해 통과시킨다(순환 import 방지).
+  const accessLog =
+    source.accessLog && typeof source.accessLog === "object" && !Array.isArray(source.accessLog)
+      ? (source.accessLog as Record<string, number>)
+      : {};
+  const reviewSurfaced =
+    source.reviewSurfaced &&
+    typeof source.reviewSurfaced === "object" &&
+    !Array.isArray(source.reviewSurfaced)
+      ? (source.reviewSurfaced as Record<string, number>)
+      : {};
+
   return {
     enabled,
     wikiFolder,
     schedulerEnabled,
     schedulerIntervalHours,
     lastScheduledRun,
+    accessLog,
+    reviewSurfaced,
   };
 }
 

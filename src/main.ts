@@ -26,11 +26,21 @@ import {
   writeGapReport,
   GAP_REPORT_FILE,
 } from "./second-brain/knowledge-gaps";
+import {
+  selectReviewQueue,
+  normalizeAccessLog,
+  recordAccess,
+  forgetPath,
+} from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
+import { ReviewQueueModal } from "./modals/review-queue-modal";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
+
+/** 접근 이력 저장 디바운스 지연(ms). 노트를 열 때마다 디스크에 쓰지 않기 위함이다. */
+const ACCESS_LOG_SAVE_DEBOUNCE_MS = 5000;
 
 const INDEX_FILE = BRANDING.files.index;
 const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
@@ -81,6 +91,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // 디바운스를 통과한 인덱싱 작업을 직렬 실행하는 체인(동시성 1).
   private indexQueue: Promise<void> = Promise.resolve();
+  // 접근 이력 저장 디바운스 타이머. 노트를 열 때마다 디스크에 쓰지 않기 위함이다.
+  private accessLogSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -243,7 +255,17 @@ export default class GeminiAssistantPlugin extends Plugin {
           this.indexDebounceTimers.delete(oldPath);
         }
         this.indexer.removeFile(oldPath);
+        this.forgetNoteAccess(oldPath);
         if (file.extension === "md") this.scheduleIndex(file);
+      })
+    );
+
+    // 노트 열람 시각을 기록한다(복습 큐의 재노출 점수 입력).
+    // 노트에 메타데이터를 심지 않고 플러그인 설정에만 보관한다.
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (!(file instanceof TFile) || file.extension !== "md") return;
+        this.trackNoteAccess(file.path);
       })
     );
 
@@ -251,9 +273,55 @@ export default class GeminiAssistantPlugin extends Plugin {
       this.app.vault.on("delete", (file) => {
         if (file instanceof TFile) {
           this.indexer.removeFile(file.path);
+          this.forgetNoteAccess(file.path);
         }
       })
     );
+  }
+
+  /**
+   * 노트 열람 시각을 접근 이력에 기록한다(복습 큐 입력).
+   *
+   * 열 때마다 saveSettings를 호출하면 디스크 쓰기가 과도하므로, 메모리에만 반영하고
+   * 저장은 디바운스한다. 저장 전에 종료돼도 잃는 것은 마지막 몇 초의 열람 기록뿐이다.
+   */
+  private trackNoteAccess(path: string): void {
+    // 옵트인 격리: Second Brain이 꺼져 있으면 이력을 모으지 않는다.
+    if (!this.settings.secondBrain?.enabled) return;
+
+    this.settings.secondBrain.accessLog = recordAccess(
+      normalizeAccessLog(this.settings.secondBrain.accessLog),
+      path,
+      Date.now(),
+    );
+
+    if (this.accessLogSaveTimer) clearTimeout(this.accessLogSaveTimer);
+    this.accessLogSaveTimer = setTimeout(() => {
+      this.accessLogSaveTimer = null;
+      void this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
+    }, ACCESS_LOG_SAVE_DEBOUNCE_MS);
+  }
+
+  /**
+   * 삭제·이동된 노트를 접근 이력에서 제거한다.
+   * 정리하지 않으면 사라진 노트가 영구 잔존해 저장 용량과 이력 상한을 잠식한다.
+   */
+  private forgetNoteAccess(path: string): void {
+    const sb = this.settings.secondBrain;
+    if (!sb) return;
+
+    const nextLog = forgetPath(normalizeAccessLog(sb.accessLog), path);
+    const nextSurfaced = forgetPath(normalizeAccessLog(sb.reviewSurfaced), path);
+    // 변경이 없으면 저장을 예약하지 않는다.
+    if (nextLog === sb.accessLog && nextSurfaced === sb.reviewSurfaced) return;
+
+    sb.accessLog = nextLog;
+    sb.reviewSurfaced = nextSurfaced;
+    if (this.accessLogSaveTimer) clearTimeout(this.accessLogSaveTimer);
+    this.accessLogSaveTimer = setTimeout(() => {
+      this.accessLogSaveTimer = null;
+      void this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
+    }, ACCESS_LOG_SAVE_DEBOUNCE_MS);
   }
 
   /**
@@ -283,6 +351,13 @@ export default class GeminiAssistantPlugin extends Plugin {
       clearTimeout(timer);
     }
     this.indexDebounceTimers.clear();
+
+    // 접근 이력 저장이 예약돼 있으면 지금 확정한다(마지막 열람 기록 유실 방지).
+    if (this.accessLogSaveTimer) {
+      clearTimeout(this.accessLogSaveTimer);
+      this.accessLogSaveTimer = null;
+      await this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
+    }
 
     this.mcpManager?.disconnectAll();
 
@@ -585,6 +660,43 @@ export default class GeminiAssistantPlugin extends Plugin {
         } catch (error) {
           new Notice(`지식 공백 리포트 실패: ${error instanceof Error ? error.message : String(error)}`);
         }
+      },
+    });
+
+    // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
+    // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-review-queue",
+      name: "복습 큐 (다시 볼 노트)",
+      callback: async () => {
+        if (!this.settings.secondBrain.enabled) {
+          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          return;
+        }
+        const now = Date.now();
+        const sb = this.settings.secondBrain;
+        const queue = selectReviewQueue(
+          this.indexer.getEntries(),
+          normalizeAccessLog(sb.accessLog),
+          now,
+          normalizeAccessLog(sb.reviewSurfaced),
+          sb.wikiFolder,
+        );
+
+        if (queue.length === 0) {
+          new Notice("지금 다시 볼 노트가 없습니다.");
+          return;
+        }
+
+        // 제시한 노트를 쿨다운에 기록해 며칠 연속 같은 노트가 나오지 않게 한다.
+        let surfaced = normalizeAccessLog(sb.reviewSurfaced);
+        for (const item of queue) {
+          surfaced = recordAccess(surfaced, item.path, now);
+        }
+        sb.reviewSurfaced = surfaced;
+        await this.saveSettings();
+
+        new ReviewQueueModal(this.app, this, queue).open();
       },
     });
 

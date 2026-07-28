@@ -1803,3 +1803,45 @@ body.theme-light .ba-message-content pre {
 .ba-mcp-template-btn {
   margin-right: 8px;
 }
+
+/* ============================================
+   복습 큐 모달 — 다시 볼 노트 목록
+   ============================================ */
+
+.ba-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.ba-review-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.ba-review-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ba-review-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ba-review-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ba-review-reason {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
