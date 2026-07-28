@@ -30,7 +30,13 @@ function makeIndexer(): VaultIndexer {
 // === 생성기 ===
 
 // JSON 라운드트립이 무손실인 유한 실수 (NaN/Infinity 제외 → JSON.stringify가 null로 바꾸지 않음)
-const finiteNumberArb = fc.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true });
+//
+// -0도 제외한다. JSON에는 부호 있는 0이 없어 `JSON.stringify(-0) === "0"`이므로
+// -0은 +0으로 돌아온다. 즉 -0은 이 생성기가 약속하는 "무손실" 값이 아니다.
+// (`v === 0`은 -0에도 true이므로 이 한 줄로 두 0을 +0으로 정규화한다.)
+const finiteNumberArb = fc
+  .double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true })
+  .map((v) => (v === 0 ? 0 : v));
 
 // 임베딩 벡터 (숫자 배열, 빈 배열 허용)
 const embeddingArb = fc.array(finiteNumberArb, { maxLength: 4 });
@@ -308,5 +314,33 @@ describe("VaultIndexer 마이그레이션 엔트리 검색 무예외 (단위 테
 
     // 임베딩이 0개이므로 키워드 검색으로 폴백하며, 어떤 경우에도 예외가 발생하지 않아야 한다.
     await expect(indexer.search("레거시")).resolves.toBeDefined();
+  });
+});
+
+// ====================================================
+// JSON 라운드트립 경계: 부호 있는 0
+// ----------------------------------------------------
+// 속성 테스트 생성기에서 -0을 제외했으므로, 그 이유를 명시적으로 고정한다.
+// 제외를 문서 없이 두면 나중에 누군가 "왜 map이 붙어 있나" 하고 되돌린다.
+describe("직렬화 경계: -0", () => {
+  it("JSON에는 부호 있는 0이 없어 -0 임베딩은 +0으로 복원된다", () => {
+    const indexer = makeIndexer();
+    indexer.deserialize(
+      JSON.stringify([
+        {
+          path: "zero.md",
+          embedding: [-0, 0, -0.5],
+          lastModified: 1,
+          title: "Zero",
+          excerpt: "",
+        },
+      ])
+    );
+
+    const entry = JSON.parse(indexer.serialize()).entries[0];
+    // 값의 크기는 보존되지만 0의 부호는 소실된다(JSON 스펙상 불가피).
+    expect(entry.embedding).toEqual([0, 0, -0.5]);
+    expect(Object.is(entry.embedding[0], -0)).toBe(false);
+    // 코사인 유사도 계산에서 +0과 -0은 동일하게 동작하므로 검색 결과에는 영향이 없다.
   });
 });
