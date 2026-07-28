@@ -35,6 +35,15 @@ describe("parseCategory: 정상 응답", () => {
     expect(parseCategory('"resources"')).toBe("resources");
   });
 
+  it("마지막 줄에서 분류를 철회한 응답은 앞선 후보를 채택하지 않는다", () => {
+    // 뒤로 계속 거슬러 올라가면 "projects"를 채택해 노트를 잘못 옮긴다.
+    expect(parseCategory("projects\nCorrection: I cannot classify this note.")).toBeNull();
+  });
+
+  it("글자 없는 줄(구분선)은 건너뛰고 판정한다", () => {
+    expect(parseCategory("archives\n---")).toBe("archives");
+  });
+
   it("추론 서두 뒤 마지막 줄의 결론을 사용한다", () => {
     // 추론 모델은 사고 과정을 쓴 뒤 마지막에 답을 적는 경우가 있다.
     expect(parseCategory("이 노트는 진행 중인 작업으로 보입니다.\nprojects")).toBe("projects");
@@ -159,15 +168,36 @@ describe("organizeVaultPara: LLM 호출 예산", () => {
     expect(result.errors.some((e) => e.includes("note0.md") && e.includes("분류 실패"))).toBe(true);
   });
 
-  it("연속 실패가 누적되면 중단하고 남은 파일을 보고한다", async () => {
-    const { app } = makeParaEnv(30);
-    const { plugin, calls } = makePlugin(() => "error");
+  it("형식 불일치가 연속돼도 중단하지 않고 뒤쪽 파일을 계속 처리한다", async () => {
+    // 앞의 12개는 항상 분류 불가, 그 뒤는 정상인 볼트를 만든다.
+    const { app } = makeParaEnv(15);
+    let n = 0;
+    const { plugin } = makePlugin(() => (n++ < 12 ? "I cannot decide." : "resources"));
 
     const result = await organizeVaultPara(app as never, plugin as never);
 
-    // 상한(200)까지 태우지 않고 연속 실패 임계에서 멈춘다.
+    // 핵심: 앞의 실패가 뒤쪽 정상 파일을 굶겨서는 안 된다.
+    expect(result.moved.length).toBe(3);
+    expect(result.errors.filter((e) => e.includes("분류 실패")).length).toBe(12);
+  });
+
+  it("호출 예외가 연속되면 중단하고 남은 파일을 보고한다", async () => {
+    const { app } = makeParaEnv(30);
+    const calls = { count: 0 };
+    const plugin = {
+      aiClient: {
+        converseLight: async () => {
+          calls.count++;
+          throw new Error("AccessDeniedException");
+        },
+      },
+    };
+
+    const result = await organizeVaultPara(app as never, plugin as never);
+
+    // 상한(200)까지 태우지 않고 연속 예외 임계에서 멈춘다.
     expect(calls.count).toBeLessThan(30);
-    expect(result.errors.some((e) => e.includes("연속 실패"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("연속 실패해 중단"))).toBe(true);
     expect(result.errors.some((e) => e.includes("중단으로"))).toBe(true);
   });
 });
