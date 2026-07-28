@@ -193,15 +193,21 @@ const RETROSPECTIVE_HEADINGS: Record<string, string> = {
  * 회고 생성용 AI 프롬프트를 구성한다.
  * 언어 설정에 따라 적절한 라벨과 제목을 사용한다.
  *
+ * 과거 회고(pastRetrospectives)가 주어지면 "이전 회고" 섹션과 반복 문제 점검
+ * 지시를 함께 넣는다. 비어 있으면 두 항목을 모두 생략한다 — 없는 과거를 넣으면
+ * LLM이 존재하지 않는 이력을 추측한다.
+ *
  * @param todoContent - To-Do 문서 내용
  * @param todayFiles - 오늘 생성된 파일 목록 (경로 + 콘텐츠)
  * @param language - 언어 설정 ("en" | "ko" | "ja")
+ * @param pastRetrospectives - 과거 회고 목록(최신순). 생략 가능(하위 호환)
  * @returns 생성된 프롬프트 문자열
  */
 export function buildRetrospectivePrompt(
   todoContent: string,
   todayFiles: CollectedFile[],
   language: string,
+  pastRetrospectives: PastRetrospective[] = [],
 ): string {
   const langLabel = LANGUAGE_LABELS[language] || "English";
   const heading = RETROSPECTIVE_HEADINGS[language] || RETROSPECTIVE_HEADINGS.en;
@@ -209,6 +215,19 @@ export function buildRetrospectivePrompt(
   const filesContext = todayFiles.length > 0
     ? todayFiles.map((f) => `### ${f.path}\n${f.content}`).join("\n\n")
     : "(No additional files created today)";
+
+  // 과거 회고 섹션과 그에 대응하는 지시는 함께 붙거나 함께 빠진다.
+  const pastSection = pastRetrospectives.length > 0
+    ? `\n## Previous Retrospectives (most recent first)\n${pastRetrospectives
+        .map((p) => `### ${p.date}\n${p.text}`)
+        .join("\n\n")}\n`
+    : "";
+  const pastInstructions = pastRetrospectives.length > 0
+    ? `
+- Compare today with the previous retrospectives above: identify recurring problems that appeared before and still persist
+- State explicitly whether improvements promised earlier actually happened
+- Do not repeat the previous retrospectives verbatim; only reference them to show change or stagnation`
+    : "";
 
   return `You are a daily retrospective assistant. Analyze the following To-Do document and today's created files, then write a retrospective summary.
 
@@ -219,11 +238,11 @@ ${todoContent}
 
 ## Files Created Today (${todayFiles.length} files)
 ${filesContext}
-
+${pastSection}
 ## Instructions
 - Summarize what was accomplished today based on the To-Do items and created files
 - Note any incomplete tasks and possible reasons
-- Provide brief insights or suggestions for improvement
+- Provide brief insights or suggestions for improvement${pastInstructions}
 - Keep it concise (under 300 words)
 - Use markdown format
 - The heading MUST be exactly: ## ${heading}
@@ -277,6 +296,108 @@ export function removeExistingRetrospective(content: string, language: string): 
   const idx = findRetrospectiveSection(content, language);
   if (idx === -1) return content;
   return content.substring(0, idx).trimEnd();
+}
+
+// ============================================
+// 회고 체인: 과거 회고 수집 (누적 학습)
+// ============================================
+// 기존 회고는 당일 입력만 받아 매일 리셋됐다(어제의 개선 약속이 오늘 회고에서
+// 사라짐). 최근 N일의 회고 섹션만 뽑아 입력에 넣어 변화·반복 문제를 추적한다.
+//
+// 일일 노트 "전체"가 아니라 "회고 섹션만" 넣는다. 전체를 넣으면 입력 토큰이
+// 볼트 사용량에 비례해 폭주하고, To-Do 항목 원문이 과거만큼 중복된다.
+
+/** 회고 체인에 포함할 과거 일수. */
+export const PAST_RETROSPECTIVE_DAYS = 7;
+
+/** 과거 회고 1건당 최대 글자 수. 7건이면 최대 약 7,000자(≈2~3K 토큰). */
+export const PAST_RETROSPECTIVE_MAX_CHARS = 1000;
+
+/** 과거 회고 1건. */
+export interface PastRetrospective {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 회고 본문(헤딩 제외, 상한으로 절단됨) */
+  text: string;
+}
+
+/**
+ * To-Do 콘텐츠에서 회고 섹션 본문만 추출한다 — 순수 함수.
+ *
+ * 헤딩 자체는 제외하고, 다음 h2(`## `)가 나오면 그 앞까지만 취한다. 뒤 섹션을
+ * 함께 넣으면 회고가 아닌 내용이 프롬프트를 오염시킨다.
+ * AI 헤딩(📝)과 템플릿 헤딩(📊), 그리고 다른 언어의 헤딩도 인식한다 — 사용자가
+ * 언어 설정을 바꿔도 과거 회고를 잃지 않아야 한다.
+ *
+ * @returns 회고 본문. 섹션이 없거나 본문이 비면 null
+ */
+export function extractRetrospectiveSection(
+  content: string,
+  language: string,
+): string | null {
+  const idx = findRetrospectiveSection(content, language);
+  if (idx === -1) return null;
+
+  // 헤딩 줄 다음부터 본문이 시작된다.
+  const afterHeading = content.indexOf("\n", idx);
+  if (afterHeading === -1) return null;
+  const body = content.slice(afterHeading + 1);
+
+  // 다음 h2 경계에서 끊는다. 줄 시작의 "## "만 경계로 본다.
+  const nextH2 = body.search(/^## /m);
+  const section = (nextH2 === -1 ? body : body.slice(0, nextH2)).trim();
+
+  if (section === "") return null;
+  return section.length > PAST_RETROSPECTIVE_MAX_CHARS
+    ? section.slice(0, PAST_RETROSPECTIVE_MAX_CHARS)
+    : section;
+}
+
+/**
+ * 최근 PAST_RETROSPECTIVE_DAYS일의 과거 회고를 최신순으로 수집한다.
+ *
+ * 각 날짜에 대해 resolveTodayTodoFile과 동일한 우선순위(신규 구조 → Legacy)로
+ * 파일을 찾고, 회고 섹션이 있는 날만 포함한다. 오늘은 제외한다 — 직전 실행 결과를
+ * 자기 입력으로 되먹이면 같은 문장이 증폭된다.
+ *
+ * 개별 파일 읽기 실패는 건너뛴다. 한 날짜의 I/O 오류가 회고 생성 전체를 막아서는
+ * 안 된다(도입 초기에 과거가 0건인 것은 정상 동작이다).
+ *
+ * @param app - Obsidian App
+ * @param todoFolder - 평면 신규 To-Do 폴더
+ * @param legacyFolder - Legacy 평면 구조 폴더
+ * @param today - 기준 날짜(오늘)
+ * @param language - 현재 언어 설정
+ */
+export async function collectPastRetrospectives(
+  app: App,
+  todoFolder: string,
+  legacyFolder: string,
+  today: Date,
+  language: string,
+): Promise<PastRetrospective[]> {
+  const collected: PastRetrospective[] = [];
+
+  // 1일 전부터 N일 전까지 최신순으로 순회한다(오늘은 제외).
+  for (let back = 1; back <= PAST_RETROSPECTIVE_DAYS; back++) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - back);
+
+    const file = resolveTodayTodoFile(app, todoFolder, legacyFolder, date);
+    if (!file) continue;
+
+    try {
+      const content = await app.vault.read(file);
+      const section = extractRetrospectiveSection(content, language);
+      if (section === null) continue;
+      collected.push({ date: formatDateStr(date), text: section });
+    } catch (error) {
+      // 읽기 실패는 그 날짜만 건너뛴다.
+      console.error(`[회고 체인] 과거 회고 읽기 실패: ${file.path}`, error);
+    }
+  }
+
+  return collected;
 }
 
 /**
@@ -373,12 +494,26 @@ export async function generateRetrospective(
       }
     }
 
-    // 4. AI 프롬프트 구성 및 호출 (기존 회고 섹션은 프롬프트에서 제외)
+    // 4. 과거 회고 수집 (회고 체인 — 반복 문제 추적). 0건이면 기존과 동일하게 동작한다.
+    const pastRetrospectives = await collectPastRetrospectives(
+      app,
+      settings.todoFolder,
+      settings.todoFolder,
+      now,
+      settings.language,
+    );
+
+    // 5. AI 프롬프트 구성 및 호출 (오늘의 기존 회고 섹션은 프롬프트에서 제외)
     const contentForPrompt = removeExistingRetrospective(todoContent, settings.language);
-    const prompt = buildRetrospectivePrompt(contentForPrompt, todayFiles, settings.language);
+    const prompt = buildRetrospectivePrompt(
+      contentForPrompt,
+      todayFiles,
+      settings.language,
+      pastRetrospectives,
+    );
     const result = await aiClient.converseLight(prompt, SYSTEM_PROMPT, 2048);
 
-    // 5. 기존 회고 섹션이 있으면 교체, 없으면 끝에 추가
+    // 6. 기존 회고 섹션이 있으면 교체, 없으면 끝에 추가
     // (사용자가 명시적으로 요청한 회고 생성이므로 vault.modify 사용이 적절)
     const updatedContent = replaceOrAppendRetrospective(
       todoContent, result.text.trim(), settings.language,
