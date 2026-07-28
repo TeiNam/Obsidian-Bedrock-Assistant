@@ -18,6 +18,7 @@ import type { SecondBrainContext } from "./scheduler";
 import {
   toSearchHits,
   hasNoHits,
+  staleIndexWarning,
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
@@ -56,30 +57,51 @@ const RECONCILE_MAX_TOKENS = 1500;
  * @returns 파싱된 모순 항목 목록(실패 시 빈 배열)
  */
 export function parseContradictionReport(llmText: string): Contradiction[] {
-  if (typeof llmText !== "string") return [];
+  return parseContradictionResult(llmText).items;
+}
+
+/** 파싱 결과. "모순 0건"과 "응답 해석 실패"를 구분한다. */
+export interface ContradictionParseResult {
+  /** 파싱에 성공했는지. false면 items는 비어 있고 응답을 신뢰할 수 없다. */
+  ok: boolean;
+  /** 파싱된 모순 항목 (ok=false면 빈 배열) */
+  items: Contradiction[];
+}
+
+/**
+ * LLM 응답을 파싱하고 성공 여부를 함께 반환한다 (Req 8.3).
+ *
+ * 기존 parseContradictionReport는 파싱 실패와 "모순 없음"을 모두 빈 배열로 반환해,
+ * 응답이 토큰 제한으로 잘렸을 때도 사용자에게 "발견된 모순이 없습니다"라고
+ * 잘못 보고했다(거짓 음성). 호출부가 두 경우를 구분할 수 있도록 ok를 함께 준다.
+ */
+export function parseContradictionResult(llmText: string): ContradictionParseResult {
+  if (typeof llmText !== "string") return { ok: false, items: [] };
   const text = llmText.trim();
-  if (text === "") return [];
+  // 빈 응답은 "모순 없음"이 아니라 해석 실패로 본다(LLM은 최소 `[]`를 출력해야 한다).
+  if (text === "") return { ok: false, items: [] };
 
   // 코드펜스 제거 + JSON 배열 구간만 추출
   const jsonText = extractJsonArray(text);
-  if (jsonText === null) return [];
+  if (jsonText === null) return { ok: false, items: [] };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    // 파싱 실패 시 throw 금지, 빈 배열 반환 (Req 8.3)
-    return [];
+    // 파싱 실패 시 throw 금지, 실패 표시와 함께 빈 배열 반환 (Req 8.3)
+    return { ok: false, items: [] };
   }
 
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) return { ok: false, items: [] };
 
   const result: Contradiction[] = [];
   for (const raw of parsed) {
     const item = normalizeContradiction(raw);
     if (item !== null) result.push(item);
   }
-  return result;
+  // 빈 배열([])은 정상 응답이며 "모순 없음"을 의미한다 (Req 8.5).
+  return { ok: true, items: result };
 }
 
 /**
@@ -237,9 +259,12 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
   // 1) 기존 Graph RAG 검색 재사용 (읽기 전용, 비파괴)
   const result = await ctx.indexer.search(trimmedTopic);
 
+  // 인덱스가 낡은 경우(임베딩 모델 변경) 결과 메시지에 경고를 덧붙인다.
+  const staleNote = staleIndexWarning(result);
+
   // 2) 관련 노트 없음 → 점검할 모순 없음 안내 (노트 미변경)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.`;
+    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`;
   }
 
   // 3) 검색 히트 → 모순 점검 프롬프트
@@ -253,16 +278,28 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
     RECONCILE_MAX_TOKENS,
   );
 
-  // 5) 모순 항목 파싱 (실패 시 빈 배열, throw 금지 — Req 8.3)
-  const contradictions = parseContradictionReport(response.text);
+  // 5) 모순 항목 파싱 (실패 시 실패 표시, throw 금지 — Req 8.3)
+  const parsed = parseContradictionResult(response.text);
+
+  // 5-1) 응답 해석 실패 → "모순 없음"으로 오보고하지 않고 실패를 명시한다.
+  //      응답이 토큰 제한으로 잘렸거나 JSON 형식이 아닌 경우가 여기에 해당한다.
+  if (!parsed.ok) {
+    return [
+      "모순 점검 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림).",
+      "모순이 없다는 뜻이 아니므로, 다시 실행하거나 최대 토큰을 늘려 주세요.",
+      "어떤 노트도 변경하지 않았습니다.",
+    ].join("\n");
+  }
+
+  const contradictions = parsed.items;
 
   // 6) 모순 0건 → 안내, 노트 미변경 (Req 8.5)
   if (contradictions.length === 0) {
-    return "발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.";
+    return `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`;
   }
 
   // 7) 모순 리포트 반환 — 어떤 노트도 수정하지 않는다 (Req 8.2)
-  return formatReconcileReport(contradictions);
+  return `${formatReconcileReport(contradictions)}${staleNote}`;
 }
 
 /**

@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 
-import { combineAndRank, graphWeight } from "./score-combiner";
+import { combineAndRank, graphWeight, MIN_COMBINED_SCORE } from "./score-combiner";
 import type { NoteVectorScore } from "./vector-search";
 import type { NeighborResult } from "./graph-traversal";
 import type { VaultIndexEntry } from "../types";
@@ -301,20 +301,28 @@ describe("ScoreCombiner 속성 테스트", () => {
         // 경로별 모든 후보 combinedScore 를 독립적으로 재계산한다.
         // - 시드 occurrence:   vNorm(seed.score) * graphWeight(0)
         // - 이웃 occurrence:   vNorm(seedScoreOf(seedPath)) * graphWeight(hop)
+        //
+        // 단, 구현은 **관련성**(감쇠 전 점수)이 MIN_COMBINED_SCORE 미달인 후보를
+        // 제외하므로, 기대값 계산도 동일한 조건으로 걸러야 한다. 이 임계값은 무관한
+        // 노트(코사인 0 → 정규화 0.5)가 "50% 관련"으로 노출되는 것을 막는다.
         const candidateScores = new Map<string, number[]>();
-        const addCandidate = (path: string, score: number): void => {
+        const addCandidate = (path: string, relevance: number, score: number): void => {
+          // 관련성 미달 후보는 구현에서 제외되므로 기대 후보에도 넣지 않는다.
+          if (relevance < MIN_COMBINED_SCORE) return;
           const arr = candidateScores.get(path) ?? [];
           arr.push(score);
           candidateScores.set(path, arr);
         };
         for (const seed of seeds) {
-          addCandidate(seed.path, vNorm(seed.score) * graphWeight(0));
+          const rel = vNorm(seed.score);
+          addCandidate(seed.path, rel, rel * graphWeight(0));
         }
         for (const neighbor of neighbors) {
           const sv = seedNorm.get(neighbor.seedPath);
           // 참조 시드가 없으면 구현도 건너뛰므로 후보에서 제외한다.
           if (sv === undefined) continue;
-          addCandidate(neighbor.path, sv * graphWeight(neighbor.hop));
+          // neighborScores 를 주지 않았으므로 이웃 관련성은 시드 정규화 점수와 같다.
+          addCandidate(neighbor.path, sv, sv * graphWeight(neighbor.hop));
         }
 
         // 경로별 결과 등장 횟수 집계
