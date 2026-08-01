@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView } from "obsidian";
+import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView, normalizePath } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
@@ -712,12 +712,21 @@ export default class GeminiAssistantPlugin extends Plugin {
               | undefined)?.unresolvedLinks ?? {};
           const gaps = collectGaps(this.indexer.getEntries(), unresolved, wikiFolder);
           await ensureWikiFolders(this.app, wikiFolder);
+          const reportPath = normalizePath(`${wikiFolder}/${GAP_REPORT_FILE}`);
           await writeGapReport(this.app, wikiFolder, buildGapReport(gaps));
           new Notice(
             gaps.length === 0
               ? "구조적 공백이 발견되지 않았습니다."
-              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${wikiFolder}/${GAP_REPORT_FILE}`
+              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${reportPath}`
           );
+          // 리포트를 열어준다. Notice 는 몇 초 뒤 사라지고 본문은 이미 클릭 가능한
+          // 위키링크로 렌더돼 있는데, 그 화면까지 도달하는 마지막 한 걸음이 없었다.
+          // 공백이 0건이면 열지 않는다(볼 내용이 없다).
+          // 스케줄러 자동 실행 경로에는 넣지 않는다 — 백그라운드가 사용자 탭을 가로채면 안 된다.
+          const report = this.app.vault.getAbstractFileByPath(reportPath);
+          if (gaps.length > 0 && report instanceof TFile) {
+            await this.app.workspace.getLeaf(false).openFile(report);
+          }
         } catch (error) {
           new Notice(`지식 공백 리포트 실패: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -1160,6 +1169,16 @@ export default class GeminiAssistantPlugin extends Plugin {
       if (exists) {
         const data = await this.app.vault.adapter.read(INDEX_FILE);
         this.indexer.deserialize(data);
+        // 임베딩 구성이 바뀌면 벡터를 버리고 키워드 검색으로 폴백한다. 그런데 이 상태를
+        // 알리는 유일한 경로가 "채팅에서 검색 도구가 실제로 호출된 뒤 결과 문자열 끝에
+        // 붙는 경고"뿐이었다. 검색을 하지 않으면 Graph RAG 가 죽은 채 방치되고, 그 사이
+        // Second Brain 기능들이 품질 떨어진 근거로 노트를 만든다.
+        if (this.indexer.hasStaleEmbeddings) {
+          new Notice(
+            "⚠️ 임베딩 모델이 변경되어 검색 인덱스가 낡았습니다. 볼트를 다시 인덱싱해 주세요.",
+            10000
+          );
+        }
       }
     } catch {
       // 인덱스 파일 없으면 무시
