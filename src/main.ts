@@ -5,7 +5,7 @@ import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
-import { DEFAULT_SETTINGS, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
+import { DEFAULT_SETTINGS, migrateAwsAuthMethod, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING, updateBranding, getBranding } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import {
@@ -828,10 +828,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 마이그레이션: 액세스 키 인증 방식 제거(장기 자격증명 위험). 구 설정은 프로필
     // 방식으로 옮긴다. 프로필이 비어 있으면 fail-closed 오류가 떠서 사용자가 설정에서
     // 프로필을 고르게 된다 — 임의로 골라주면 의도하지 않은 AWS 계정을 쓰게 된다.
-    const method = (raw as { awsAuthMethod?: string }).awsAuthMethod;
-    if (method !== "apiKey" && method !== "profile") {
-      (raw as { awsAuthMethod: string }).awsAuthMethod = "profile";
-    }
+    //
+    // 로직을 여기에 인라인하지 않고 types.ts의 순수 함수를 호출한다. 인라인하면
+    // 단위 테스트가 검증하는 함수와 실제로 실행되는 코드가 갈라진다.
+    Object.assign(raw, migrateAwsAuthMethod(raw as { awsAuthMethod?: string }));
 
     if (hasMigratedKeys) {
       // 기존 data.json의 키를 복호화 후 로컬 파일로 저장
