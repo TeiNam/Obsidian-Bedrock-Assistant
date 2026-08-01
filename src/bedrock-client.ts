@@ -126,7 +126,12 @@ export function buildBedrockClientConfig(
 ): Record<string, unknown> {
   const config: Record<string, unknown> = { region: settings.awsRegion };
 
-  const apiKey = settings.bedrockApiKey?.trim();
+  // 손상된 data.json(수동 편집·동기화 충돌)에 문자열이 아닌 값이 들어올 수 있다.
+  // `?.`는 null/undefined만 막으므로 숫자·객체에서 .trim()이 TypeError를 던지고,
+  // 이 함수는 BedrockClient 생성자에서 호출되어 onload 전체가 실패한다. 플러그인이
+  // 아예 뜨지 않으면 사용자는 설정을 고칠 수도 없으므로, 빈 값으로 보고 fail-closed로 넘긴다.
+  const raw = settings.bedrockApiKey;
+  const apiKey = typeof raw === "string" ? raw.trim() : "";
   if (apiKey) {
     config.token = { token: apiKey };
     config.authSchemePreference = [BEARER_AUTH_SCHEME];
