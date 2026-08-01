@@ -91,7 +91,7 @@ The sidebar icon, model list, and branding update dynamically when you switch.
 
 **Bedrock:** Enter a **long-term Bedrock API key** (AWS Console → Bedrock → API keys) and set the AWS Region. The key is encrypted with the OS keychain and stored locally — it never lands in your vault.
 
-Key issuance, model access, and using multiple machines: [Bedrock setup guide](docs/bedrock-setup-kr.md) (Korean)
+Key issuance, model access, and using multiple machines: [Bedrock setup guide](docs/bedrock-setup-en.md)
 
 > AWS access key and `~/.aws` profile (including SSO) authentication were removed in 0.3.0. Access keys are long-lived credentials with the largest blast radius, and SSO requires `aws sso login` on every machine plus re-login every 8-12 hours — too much friction for a note-taking app used across several machines. Existing users need to enter a Bedrock API key in settings.
 
