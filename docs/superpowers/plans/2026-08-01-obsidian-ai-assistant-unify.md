@@ -124,15 +124,19 @@ Expected: 전체 통과. 여기서 실패하는 테스트가 있으면 **기록�
   - `interface MigrationTask { from: string; to: string; }`
   - `function planMigrations(legacyIds: readonly string[], newId: string, exists: (path: string) => boolean, configDir: string): MigrationTask[]`
 
-**배경 — 마이그레이션 대상 4종의 경로 규칙**
+**배경 — 마이그레이션 대상 경로 규칙**
 
-`dc33868`의 `src/branding.ts` 80~85행과 `src/main.ts:1136`, `src/safe-storage.ts:29`를 근거로 한다.
+`dc33868`의 `src/branding.ts` 80~85행과 `src/main.ts:1136`, `src/safe-storage.ts:29`, 그리고 옵시디언 `Plugin.loadData()`의 저장 위치(`obsidian.d.ts:4897` — "Data is stored in `data.json` in the plugin folder")를 근거로 한다.
 
 | 종류 | 경로 패턴 | 예시 (레거시 `bedrock-assistant`) |
 |---|---|---|
 | 볼트 데이터 4개 | 볼트 루트 `.{id}-{suffix}.json` | `.bedrock-assistant-index.json`, `-chat.json`, `-sessions.json`, `-sessions.json.bak` |
-| MCP 설정 | `{configDir}/plugins/{id}/mcp.json` | `.obsidian/plugins/bedrock-assistant/mcp.json` |
+| 플러그인 폴더 파일 2개 | `{configDir}/plugins/{id}/{name}` | `.obsidian/plugins/bedrock-assistant/data.json`, `.../mcp.json` |
 | 자격증명 | `{id}-credentials.json` (파일명만; 디렉터리는 Electron userData) | `bedrock-assistant-credentials.json` |
+
+**`data.json`이 가장 중요한 대상이다.** `Plugin.loadData()`/`saveData()`가 읽고 쓰는 설정 파일이며 플러그인 폴더 안에 있다. pluginId가 바뀌면 이 파일을 잃고, 그러면 사용자의 **모든 설정이 기본값으로 돌아간다** — 백엔드 선택, 모델, 리전, 인증 방식, Second Brain 설정, Graph RAG 튜닝값, 커스텀 스킬, 플래너 폴더 전부. 민감 필드는 `safe-storage`가 별도 파일로 빼내지만 나머지는 여기에만 있다.
+
+`mcp.json`과 같은 디렉터리에 있으므로 경로 조립 로직은 동일하다 — 파일명 목록만 2개로 늘린다.
 
 자격증명은 볼트 밖(Electron userData)에 있어 `vault.adapter`로 접근할 수 없다. **이 함수는 파일명만 계산하고, 디렉터리 결합은 호출부가 한다.** 그래서 자격증명은 별도 함수로 분리한다.
 
@@ -253,7 +257,25 @@ describe("planMigrations", () => {
     ]);
   });
 
-  it("configDir이 커스텀이어도 MCP 경로를 올바르게 만든다", () => {
+  // data.json은 Plugin.loadData()가 읽는 설정 파일이다. 이것을 빠뜨리면
+  // 사용자의 모든 설정(백엔드·모델·리전·Second Brain·커스텀 스킬)이 초기화된다.
+  it("data.json도 계획에 포함한다", () => {
+    const tasks = planMigrations(
+      ["bedrock-assistant"],
+      "obsidian-ai-assistant",
+      existsFrom([".obsidian/plugins/bedrock-assistant/data.json"]),
+      ".obsidian"
+    );
+
+    expect(tasks).toEqual([
+      {
+        from: ".obsidian/plugins/bedrock-assistant/data.json",
+        to: ".obsidian/plugins/obsidian-ai-assistant/data.json",
+      },
+    ]);
+  });
+
+  it("configDir이 커스텀이어도 플러그인 폴더 경로를 올바르게 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
       "obsidian-ai-assistant",
@@ -265,7 +287,7 @@ describe("planMigrations", () => {
     expect(tasks[0].to).toBe("my-config/plugins/obsidian-ai-assistant/mcp.json");
   });
 
-  it("볼트 데이터 4개와 MCP가 모두 있으면 5개 작업을 만든다", () => {
+  it("볼트 데이터 4개와 플러그인 폴더 2개가 모두 있으면 6개 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
       "obsidian-ai-assistant",
@@ -274,12 +296,13 @@ describe("planMigrations", () => {
         ".bedrock-assistant-chat.json",
         ".bedrock-assistant-sessions.json",
         ".bedrock-assistant-sessions.json.bak",
+        ".obsidian/plugins/bedrock-assistant/data.json",
         ".obsidian/plugins/bedrock-assistant/mcp.json",
       ]),
       ".obsidian"
     );
 
-    expect(tasks).toHaveLength(5);
+    expect(tasks).toHaveLength(6);
   });
 
   it("신 ID가 레거시 ID와 같으면 아무 작업도 만들지 않는다", () => {
@@ -331,10 +354,14 @@ describe("planCredentialMigration", () => {
   });
 
   it("두 레거시가 모두 있으면 앞선 ID를 택한다", () => {
+    // 레거시 2개만 존재하고 대상은 없는 상태. endsWith로 판정하면 대상까지
+    // 존재로 잡혀 함수가 null을 반환하므로, 레거시 파일명을 정확히 열거한다.
     const task = planCredentialMigration(
       ["bedrock-assistant", "assistant-kiro"],
       "obsidian-ai-assistant",
-      (name) => name.endsWith("-credentials.json"),
+      (name) =>
+        name === "bedrock-assistant-credentials.json" ||
+        name === "assistant-kiro-credentials.json"
     );
 
     expect(task?.from).toBe("bedrock-assistant-credentials.json");
@@ -387,6 +414,7 @@ describe("planMigrations 속성", () => {
         // 1차: 레거시만 존재
         const legacyPaths = new Set([
           ...legacyDataFileNames(legacy),
+          `.obsidian/plugins/${legacy}/data.json`,
           `.obsidian/plugins/${legacy}/mcp.json`,
         ]);
         const first = planMigrations(
@@ -450,8 +478,14 @@ const DATA_SUFFIXES = [
   "-sessions.json.bak",
 ] as const;
 
-/** MCP 설정 파일명. main.ts의 MCP_CONFIG_FILE과 같은 값이다. */
-const MCP_CONFIG_FILE = "mcp.json";
+/**
+ * 플러그인 폴더(`{configDir}/plugins/{id}/`) 안에서 옮겨야 하는 파일들.
+ *
+ * - `data.json`: Plugin.loadData()/saveData()가 쓰는 설정 파일. 이것을 잃으면
+ *   사용자의 모든 설정이 기본값으로 초기화된다. 가장 중요한 대상이다.
+ * - `mcp.json`: MCP 서버 설정. main.ts의 MCP_CONFIG_FILE과 같은 값이다.
+ */
+const PLUGIN_FOLDER_FILES = ["data.json", "mcp.json"] as const;
 
 /** 자격증명 파일명 접미사. safe-storage.ts의 CREDENTIALS_FILE 규칙과 대응한다. */
 const CREDENTIALS_SUFFIX = "-credentials.json";
@@ -464,9 +498,9 @@ export function legacyDataFileNames(pluginId: string): string[] {
   return DATA_SUFFIXES.map((suffix) => `.${pluginId}${suffix}`);
 }
 
-/** MCP 설정 파일의 볼트 상대 경로를 만든다. */
-function mcpConfigPath(configDir: string, pluginId: string): string {
-  return `${configDir}/plugins/${pluginId}/${MCP_CONFIG_FILE}`;
+/** 플러그인 폴더 안 파일의 볼트 상대 경로를 만든다. */
+function pluginFolderPath(configDir: string, pluginId: string, fileName: string): string {
+  return `${configDir}/plugins/${pluginId}/${fileName}`;
 }
 
 /**
@@ -504,11 +538,11 @@ export function planMigrations(
         from: `.${legacyId}${suffix}`,
         to: `.${newId}${suffix}`,
       })),
-      // MCP 설정
-      {
-        from: mcpConfigPath(configDir, legacyId),
-        to: mcpConfigPath(configDir, newId),
-      },
+      // 플러그인 폴더 파일 2종 (data.json, mcp.json)
+      ...PLUGIN_FOLDER_FILES.map((fileName) => ({
+        from: pluginFolderPath(configDir, legacyId, fileName),
+        to: pluginFolderPath(configDir, newId, fileName),
+      })),
     ];
 
     for (const pair of pairs) {
@@ -725,6 +759,8 @@ import { planMigrations, planCredentialMigration } from "./migration";
         candidates.add(`.${id}-chat.json`);
         candidates.add(`.${id}-sessions.json`);
         candidates.add(`.${id}-sessions.json.bak`);
+        // data.json은 설정 전체를 담고 있어 가장 중요하다. mcp.json과 같은 폴더에 있다.
+        candidates.add(`${configDir}/plugins/${id}/data.json`);
         candidates.add(`${configDir}/plugins/${id}/mcp.json`);
       }
 
