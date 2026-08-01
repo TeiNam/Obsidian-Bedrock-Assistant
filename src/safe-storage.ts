@@ -43,13 +43,27 @@ export const SENSITIVE_FIELDS = [
 ] as const;
 
 /**
- * 더 이상 지원하지 않지만 구 `data.json`에 평문으로 남아 있을 수 있는 자격증명 필드.
+ * 더 이상 지원하지 않지만 구 `data.json`에 평문으로 남아 있을 수 있는 **자격증명** 필드.
  *
  * 0.3.0에서 액세스 키 인증을 제거하면서 이 필드들을 SENSITIVE_FIELDS에서 뺐는데,
  * 그러면 strip 대상에서도 빠져 구 설정의 평문 키가 클라우드 동기화되는 data.json에
  * 그대로 재저장된다. 제거가 오히려 유출을 만드는 셈이므로, 읽지는 않되 지우기는 한다.
+ *
+ * **비밀값만 넣는다.** 이 목록은 `main.ts`의 `hasMigratedKeys` 판정에도 쓰인다.
+ * `awsAuthMethod` 같은 비-비밀 필드를 넣으면 모든 구 사용자가 마이그레이션 분기로
+ * 흘러가고, 그 분기는 `filterStaleCredentials`를 타지 않아 잔존 API 키가 적용된다.
+ * 폐기된 비-비밀 필드는 LEGACY_OBSOLETE_FIELDS로 분리한다.
  */
 export const LEGACY_SENSITIVE_FIELDS = ["awsAccessKeyId", "awsSecretAccessKey"] as const;
+
+/**
+ * 폐기된 비-비밀 설정 필드. 저장 시 제거하지만 마이그레이션 판정에는 쓰지 않는다.
+ *
+ * `awsAuthMethod`가 data.json에 남아 있으면 `filterStaleCredentials`가 매 실행마다
+ * 같은 판정을 반복한다. 그 함수도 자체적으로 raw에서 지우지만, loadSettings의
+ * 마이그레이션 분기는 그 함수를 타지 않으므로 저장 경로에서도 한 번 더 지운다.
+ */
+export const LEGACY_OBSOLETE_FIELDS = ["awsAuthMethod", "awsProfile"] as const;
 
 /**
  * Electron safeStorage 모듈 가져오기 (런타임에서만 사용 가능)
@@ -152,9 +166,9 @@ export function stripSensitiveFields<T extends object>(settings: T): T {
       result[field] = "";
     }
   }
-  // 폐기된 액세스 키 필드는 값을 비우는 대신 키 자체를 지운다. 지금은 읽지 않는
-  // 필드이므로 빈 문자열로 남겨둘 이유가 없고, 남기면 구 설정의 잔재가 계속 따라온다.
-  for (const field of LEGACY_SENSITIVE_FIELDS) {
+  // 폐기된 필드는 값을 비우는 대신 키 자체를 지운다. 지금은 읽지 않는 필드이므로
+  // 빈 문자열로 남겨둘 이유가 없고, 남기면 구 설정의 잔재가 계속 따라온다.
+  for (const field of [...LEGACY_SENSITIVE_FIELDS, ...LEGACY_OBSOLETE_FIELDS]) {
     if (field in result) {
       delete result[field];
     }

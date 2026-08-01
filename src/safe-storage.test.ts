@@ -69,6 +69,8 @@ import {
   decryptSettings,
   isEncrypted,
   stripSensitiveFields,
+  LEGACY_SENSITIVE_FIELDS,
+  LEGACY_OBSOLETE_FIELDS,
 } from "./safe-storage";
 
 // ============================================
@@ -371,5 +373,38 @@ describe("Property 4: 민감 필드 strip 일관성", () => {
       ),
       { numRuns: 100 },
     );
+  });
+});
+
+// ============================================
+// 폐기된 비-비밀 필드 제거 및 목록 분리
+// ============================================
+
+describe("LEGACY_OBSOLETE_FIELDS: 폐기된 비-비밀 필드", () => {
+  it("awsAuthMethod·awsProfile을 저장 시 제거한다", () => {
+    // 남으면 filterStaleCredentials가 매 실행마다 같은 판정을 반복하고,
+    // 마이그레이션 분기는 그 함수를 타지 않아 잔존 키가 적용될 수 있다.
+    const legacy = {
+      awsAuthMethod: "profile",
+      awsProfile: "my-profile",
+      awsRegion: "ap-northeast-2",
+    } as unknown as GeminiAssistantSettings;
+
+    const stripped = stripSensitiveFields(legacy) as unknown as Record<string, unknown>;
+
+    expect("awsAuthMethod" in stripped).toBe(false);
+    expect("awsProfile" in stripped).toBe(false);
+    // 비폐기 필드는 보존한다.
+    expect(stripped.awsRegion).toBe("ap-northeast-2");
+  });
+
+  it("비밀 목록과 비-비밀 목록이 겹치지 않는다", () => {
+    // 겹치면 main.ts의 hasMigratedKeys 판정이 모든 구 사용자를 마이그레이션
+    // 분기로 보내고, 그 분기는 filterStaleCredentials를 타지 않는다.
+    const secrets = new Set<string>(SENSITIVE_FIELDS);
+    for (const field of LEGACY_SENSITIVE_FIELDS) secrets.add(field);
+    for (const field of LEGACY_OBSOLETE_FIELDS) {
+      expect(secrets.has(field)).toBe(false);
+    }
   });
 });
