@@ -341,7 +341,7 @@ describe("Multi-Provider 설정 UI (Task 8.2)", () => {
       expect(names).toContain(I18N.en.openaiChatModel);
       expect(names).toContain(I18N.en.openaiEmbeddingModel);
       // 타 백엔드 전용 필드 비표시
-      expect(names).not.toContain(I18N.en.awsAccessKeyLabel); // Bedrock
+      expect(names).not.toContain(I18N.en.bedrockApiKeyLabel); // Bedrock
       expect(names).not.toContain(I18N.en.ollamaBaseUrl); // Ollama
       expect(names).not.toContain(I18N.en.apiKey); // Gemini API Key
 
@@ -364,7 +364,7 @@ describe("Multi-Provider 설정 UI (Task 8.2)", () => {
       expect(names).toContain(I18N.en.ollamaEmbeddingModel);
       // 타 백엔드 전용 필드 비표시
       expect(names).not.toContain(I18N.en.openaiApiKey);
-      expect(names).not.toContain(I18N.en.awsAccessKeyLabel);
+      expect(names).not.toContain(I18N.en.bedrockApiKeyLabel);
 
       // Ollama는 API 키가 없으므로 password로 마스킹된 입력이 존재하지 않아야 한다 (Req 12.2)
       const anyPasswordInput = h.settingRegistry.some(

@@ -69,6 +69,8 @@ import {
   decryptSettings,
   isEncrypted,
   stripSensitiveFields,
+  LEGACY_SENSITIVE_FIELDS,
+  LEGACY_OBSOLETE_FIELDS,
 } from "./safe-storage";
 
 // ============================================
@@ -80,13 +82,6 @@ describe("SENSITIVE_FIELDS", () => {
     expect(SENSITIVE_FIELDS).toContain("geminiApiKey");
   });
 
-  it("awsAccessKeyId를 포함한다 (Bedrock 자격증명)", () => {
-    expect(SENSITIVE_FIELDS).toContain("awsAccessKeyId");
-  });
-
-  it("awsSecretAccessKey를 포함한다 (Bedrock 자격증명)", () => {
-    expect(SENSITIVE_FIELDS).toContain("awsSecretAccessKey");
-  });
 });
 
 // ============================================
@@ -98,11 +93,7 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "test-gemini-key",
-      awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
-      awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-      // OpenAI API 키도 민감 필드이므로 암호화 대상 (Req 3.1)
       openaiApiKey: "sk-test-openai-key",
-      // Bedrock API 키도 장기 자격증명이므로 암호화 대상
       bedrockApiKey: "BEDROCK-API-KEY-EXAMPLE",
     };
 
@@ -119,16 +110,16 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "my-api-key-123",
-      awsAccessKeyId: "AKID-TEST",
-      awsSecretAccessKey: "SECRET-TEST",
+      openaiApiKey: "sk-test-openai",
+      bedrockApiKey: "bedrock-test-key",
     };
 
     const encrypted = encryptSettings(settings);
     const decrypted = decryptSettings(encrypted);
 
     expect(decrypted.geminiApiKey).toBe("my-api-key-123");
-    expect(decrypted.awsAccessKeyId).toBe("AKID-TEST");
-    expect(decrypted.awsSecretAccessKey).toBe("SECRET-TEST");
+    expect(decrypted.openaiApiKey).toBe("sk-test-openai");
+    expect(decrypted.bedrockApiKey).toBe("bedrock-test-key");
   });
 
   it("비민감 필드는 암호화되지 않는다", () => {
@@ -150,16 +141,16 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "",
-      awsAccessKeyId: "",
-      awsSecretAccessKey: "",
+      openaiApiKey: "",
+      bedrockApiKey: "",
     };
 
     const encrypted = encryptSettings(settings);
 
     // 빈 문자열은 그대로 유지
     expect(encrypted.geminiApiKey).toBe("");
-    expect(encrypted.awsAccessKeyId).toBe("");
-    expect(encrypted.awsSecretAccessKey).toBe("");
+    expect(encrypted.openaiApiKey).toBe("");
+    expect(encrypted.bedrockApiKey).toBe("");
   });
 });
 
@@ -190,11 +181,7 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
         const settings: GeminiAssistantSettings = {
           ...DEFAULT_SETTINGS,
           geminiApiKey: value,
-          awsAccessKeyId: value,
-          awsSecretAccessKey: value,
-          // openaiApiKey도 SENSITIVE_FIELDS에 포함되므로 동일 값 설정 (Req 3.1)
           openaiApiKey: value,
-          // bedrockApiKey도 SENSITIVE_FIELDS에 포함된다
           bedrockApiKey: value,
         };
 
@@ -217,20 +204,20 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
         nonEmptyStringArb,
         nonEmptyStringArb,
         nonEmptyStringArb,
-        (geminiKey, accessKey, secretKey) => {
+        (geminiKey, openaiKey, bedrockKey) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
             geminiApiKey: geminiKey,
-            awsAccessKeyId: accessKey,
-            awsSecretAccessKey: secretKey,
+            openaiApiKey: openaiKey,
+            bedrockApiKey: bedrockKey,
           };
 
           const encrypted = encryptSettings(settings);
           const decrypted = decryptSettings(encrypted);
 
           expect(decrypted.geminiApiKey).toBe(geminiKey);
-          expect(decrypted.awsAccessKeyId).toBe(accessKey);
-          expect(decrypted.awsSecretAccessKey).toBe(secretKey);
+          expect(decrypted.openaiApiKey).toBe(openaiKey);
+          expect(decrypted.bedrockApiKey).toBe(bedrockKey);
         },
       ),
       { numRuns: 100 },
@@ -257,9 +244,6 @@ describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
     expect(SENSITIVE_FIELDS).not.toContain("ollamaBaseUrl");
   });
 
-  it("awsProfile을 포함하지 않는다 (프로필 이름은 비밀값이 아님)", () => {
-    expect(SENSITIVE_FIELDS).not.toContain("awsProfile");
-  });
 });
 
 // ============================================
@@ -269,8 +253,6 @@ describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
 describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않는다", () => {
   const settings = {
     geminiApiKey: "GKEY",
-    awsAccessKeyId: "AKID",
-    awsSecretAccessKey: "SECRET",
     openaiApiKey: "sk-openai",
     bedrockApiKey: "APIKEY",
   };
@@ -289,7 +271,7 @@ describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않�
 
   it("빈 값은 담지 않는다", () => {
     const payload = buildCredentialsPayload(
-      { geminiApiKey: "", awsAccessKeyId: "", bedrockApiKey: "" },
+      { geminiApiKey: "", bedrockApiKey: "" },
       mockEncryptValue
     );
     expect(payload).toEqual({});
@@ -301,7 +283,42 @@ describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않�
       v === "APIKEY" ? v : mockEncryptValue(v)
     );
     expect(payload.bedrockApiKey).toBeUndefined();
-    expect(isEncrypted(payload.awsAccessKeyId)).toBe(true);
+    expect(isEncrypted(payload.geminiApiKey)).toBe(true);
+  });
+});
+
+// ============================================
+// 폐기된 액세스 키 필드 제거
+// ============================================
+
+describe("stripSensitiveFields: 폐기된 액세스 키 필드", () => {
+  it("구 data.json에 남은 평문 액세스 키를 제거한다", () => {
+    // 0.3.0에서 액세스 키 인증을 제거하면서 두 필드를 SENSITIVE_FIELDS에서 뺐다.
+    // strip 대상에서도 빠지면 구 설정의 평문 키가 클라우드 동기화되는 data.json에
+    // 그대로 재저장된다 — 제거가 오히려 유출을 만든다.
+    const legacy = {
+      awsRegion: "us-east-1",
+      awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
+      awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    } as unknown as GeminiAssistantSettings;
+
+    const stripped = stripSensitiveFields(legacy) as unknown as Record<string, unknown>;
+
+    // 빈 문자열로 남기지 않고 키 자체를 지운다.
+    expect("awsAccessKeyId" in stripped).toBe(false);
+    expect("awsSecretAccessKey" in stripped).toBe(false);
+    // 비민감 필드는 보존한다.
+    expect(stripped.awsRegion).toBe("us-east-1");
+  });
+
+  it("원본 객체를 변경하지 않는다", () => {
+    const legacy = {
+      awsAccessKeyId: "AKID",
+    } as unknown as GeminiAssistantSettings;
+
+    stripSensitiveFields(legacy);
+
+    expect((legacy as unknown as Record<string, unknown>).awsAccessKeyId).toBe("AKID");
   });
 });
 
@@ -330,12 +347,11 @@ describe("Property 4: 민감 필드 strip 일관성", () => {
         fc.string({ minLength: 1, maxLength: 80 }),
         // 비민감 필드 ollamaBaseUrl 값 (빈 문자열 포함 가능)
         fc.string({ maxLength: 120 }),
-        (geminiKey, accessKey, secretKey, openaiKey, ollamaUrl) => {
+        (geminiKey, bedrockKey, openaiKey, ollamaUrl) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
             geminiApiKey: geminiKey,
-            awsAccessKeyId: accessKey,
-            awsSecretAccessKey: secretKey,
+            bedrockApiKey: bedrockKey,
             openaiApiKey: openaiKey,
             ollamaBaseUrl: ollamaUrl,
           };
@@ -357,5 +373,38 @@ describe("Property 4: 민감 필드 strip 일관성", () => {
       ),
       { numRuns: 100 },
     );
+  });
+});
+
+// ============================================
+// 폐기된 비-비밀 필드 제거 및 목록 분리
+// ============================================
+
+describe("LEGACY_OBSOLETE_FIELDS: 폐기된 비-비밀 필드", () => {
+  it("awsAuthMethod·awsProfile을 저장 시 제거한다", () => {
+    // 남으면 filterStaleCredentials가 매 실행마다 같은 판정을 반복하고,
+    // 마이그레이션 분기는 그 함수를 타지 않아 잔존 키가 적용될 수 있다.
+    const legacy = {
+      awsAuthMethod: "profile",
+      awsProfile: "my-profile",
+      awsRegion: "ap-northeast-2",
+    } as unknown as GeminiAssistantSettings;
+
+    const stripped = stripSensitiveFields(legacy) as unknown as Record<string, unknown>;
+
+    expect("awsAuthMethod" in stripped).toBe(false);
+    expect("awsProfile" in stripped).toBe(false);
+    // 비폐기 필드는 보존한다.
+    expect(stripped.awsRegion).toBe("ap-northeast-2");
+  });
+
+  it("비밀 목록과 비-비밀 목록이 겹치지 않는다", () => {
+    // 겹치면 main.ts의 hasMigratedKeys 판정이 모든 구 사용자를 마이그레이션
+    // 분기로 보내고, 그 분기는 filterStaleCredentials를 타지 않는다.
+    const secrets = new Set<string>(SENSITIVE_FIELDS);
+    for (const field of LEGACY_SENSITIVE_FIELDS) secrets.add(field);
+    for (const field of LEGACY_OBSOLETE_FIELDS) {
+      expect(secrets.has(field)).toBe(false);
+    }
   });
 });

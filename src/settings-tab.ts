@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import type { AwsAuthMethod, CustomSkill, EffortLevel } from "./types";
+import type { CustomSkill, EffortLevel } from "./types";
 // Second Brain 설정 정규화 (Req 1.4, 1.5): onChange 시점 값 보정에 사용
 import { normalizeSecondBrainSettings } from "./types";
 import { SKILLS } from "./skills";
@@ -8,6 +8,7 @@ import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
 import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
+import { isPluginEnabled } from "./plugin-detect";
 import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 import { normalizePlannerSetting } from "./planner-settings";
@@ -21,8 +22,6 @@ import {
   effortLevels,
   embeddingSignature,
 } from "./provider-utils";
-// AWS 공유 설정(~/.aws)의 프로필 이름 목록 — Bedrock 프로필 인증 드롭다운에 사용
-import { listProfileNames } from "./aws-profile-runtime";
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
@@ -52,25 +51,9 @@ export const I18N = {
     apiKeyDesc: "Your Gemini API key from Google AI Studio",
     apiKeyPlaceholder: "Enter Gemini API key",
     // Bedrock 자격증명
-    authMethodLabel: "Authentication Method",
-    authMethodDesc: "How to authenticate with Bedrock",
-    authMethodAccessKey: "Access key",
-    authMethodApiKey: "Bedrock API key",
-    authMethodProfile: "AWS profile (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API Key",
-    bedrockApiKeyDesc: "Long-term Bedrock API key, used as a bearer token",
+    bedrockApiKeyDesc: "Long-term Bedrock API key for authentication. Get your API key from AWS Bedrock console.",
     bedrockApiKeyPlaceholder: "Enter Bedrock API key",
-    awsProfileLabel: "AWS Profile",
-    awsProfileDesc:
-      "Profile from ~/.aws/config or ~/.aws/credentials. For SSO profiles, run `aws sso login --profile <name>` in a terminal first.",
-    awsProfileEmpty: "No profiles found in ~/.aws",
-    awsProfileRefresh: "Reload profiles",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "AWS Access Key ID for Bedrock",
-    awsAccessKeyPlaceholder: "Enter AWS Access Key ID",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "AWS Secret Access Key for Bedrock",
-    awsSecretKeyPlaceholder: "Enter AWS Secret Access Key",
     awsRegionLabel: "AWS Region",
     awsRegionDesc: "AWS Region for Bedrock API",
     awsRegionPlaceholder: "us-east-1",
@@ -148,6 +131,7 @@ export const I18N = {
     chatFontSizeDesc: "Font size for the chat area (px)",
     codeStylerInstall: "Install Code Styler",
     codeStylerInfo: "Install the Code Styler plugin to enhance code block rendering with language-specific styling.",
+    pluginInstalled: "Installed",
     recommendedPlugins: "Recommended Plugins",
     todo: "To-Do",
     todoFolder: "To-Do Folder",
@@ -262,25 +246,9 @@ export const I18N = {
     apiKeyDesc: "Google AI Studio에서 발급받은 Gemini API 키",
     apiKeyPlaceholder: "Gemini API 키 입력",
     // Bedrock 자격증명
-    authMethodLabel: "인증 방식",
-    authMethodDesc: "Bedrock 인증에 사용할 방식",
-    authMethodAccessKey: "액세스 키",
-    authMethodApiKey: "Bedrock API 키",
-    authMethodProfile: "AWS 프로필 (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API 키",
-    bedrockApiKeyDesc: "Bedrock 장기 API 키. 베어러 토큰으로 전송됩니다",
+    bedrockApiKeyDesc: "인증에 사용할 Bedrock 장기 API 키. AWS Bedrock 콘솔에서 API 키를 발급받으세요.",
     bedrockApiKeyPlaceholder: "Bedrock API 키 입력",
-    awsProfileLabel: "AWS 프로필",
-    awsProfileDesc:
-      "~/.aws/config 또는 ~/.aws/credentials의 프로필. SSO 프로필은 터미널에서 `aws sso login --profile <이름>`을 먼저 실행하세요.",
-    awsProfileEmpty: "~/.aws에서 프로필을 찾을 수 없습니다",
-    awsProfileRefresh: "프로필 다시 읽기",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "Bedrock용 AWS Access Key ID",
-    awsAccessKeyPlaceholder: "AWS Access Key ID 입력",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "Bedrock용 AWS Secret Access Key",
-    awsSecretKeyPlaceholder: "AWS Secret Access Key 입력",
     awsRegionLabel: "AWS 리전",
     awsRegionDesc: "Bedrock API용 AWS 리전",
     awsRegionPlaceholder: "us-east-1",
@@ -358,6 +326,7 @@ export const I18N = {
     chatFontSizeDesc: "채팅 영역의 글자 크기 (px)",
     codeStylerInstall: "Code Styler 설치",
     codeStylerInfo: "Code Styler 플러그인을 설치하면 코드 블록이 언어별 스타일로 더 보기 좋게 렌더링됩니다.",
+    pluginInstalled: "설치됨",
     recommendedPlugins: "추천 플러그인",
     todo: "To-Do",
     todoFolder: "To-Do 폴더",
@@ -472,25 +441,9 @@ export const I18N = {
     apiKeyDesc: "Google AI Studioから取得したGemini APIキー",
     apiKeyPlaceholder: "Gemini APIキーを入力",
     // Bedrock 資格情報
-    authMethodLabel: "認証方式",
-    authMethodDesc: "Bedrock 認証に使用する方式",
-    authMethodAccessKey: "アクセスキー",
-    authMethodApiKey: "Bedrock APIキー",
-    authMethodProfile: "AWSプロファイル (~/.aws)",
     bedrockApiKeyLabel: "Bedrock APIキー",
-    bedrockApiKeyDesc: "Bedrockの長期APIキー。ベアラートークンとして送信されます",
+    bedrockApiKeyDesc: "認証に使用するBedrockの長期APIキー。AWS Bedrockコンソールから APIキーを取得してください。",
     bedrockApiKeyPlaceholder: "Bedrock APIキーを入力",
-    awsProfileLabel: "AWSプロファイル",
-    awsProfileDesc:
-      "~/.aws/config または ~/.aws/credentials のプロファイル。SSOプロファイルの場合は、先にターミナルで `aws sso login --profile <名前>` を実行してください。",
-    awsProfileEmpty: "~/.aws にプロファイルが見つかりません",
-    awsProfileRefresh: "プロファイルを再読み込み",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "Bedrock用 AWS Access Key ID",
-    awsAccessKeyPlaceholder: "AWS Access Key IDを入力",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "Bedrock用 AWS Secret Access Key",
-    awsSecretKeyPlaceholder: "AWS Secret Access Keyを入力",
     awsRegionLabel: "AWSリージョン",
     awsRegionDesc: "Bedrock API用 AWSリージョン",
     awsRegionPlaceholder: "us-east-1",
@@ -568,6 +521,7 @@ export const I18N = {
     chatFontSizeDesc: "チャットエリアのフォントサイズ (px)",
     codeStylerInstall: "Code Stylerをインストール",
     codeStylerInfo: "Code Stylerプラグインをインストールして、言語別スタイリングでコードブロックの表示を強化します。",
+    pluginInstalled: "インストール済み",
     recommendedPlugins: "おすすめプラグイン",
     todo: "To-Do",
     todoFolder: "To-Doフォルダ",
@@ -731,10 +685,10 @@ export class GeminiSettingTab extends PluginSettingTab {
         await leaf.openFile(
           this.app.vault.getAbstractFileByPath(readmeFilePath) as any
         ).catch(() => {
-          window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/main/${t.readmeFile}`);
+          window.open(`https://github.com/teinam/obsidian-ai-assistant/blob/main/${t.readmeFile}`);
         });
       } catch {
-        window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/main/${t.readmeFile}`);
+        window.open(`https://github.com/teinam/obsidian-ai-assistant/blob/main/${t.readmeFile}`);
       }
     });
 
@@ -834,131 +788,22 @@ export class GeminiSettingTab extends PluginSettingTab {
       // Bedrock (AWS) 자격증명 설정
       new Setting(containerEl).setName("AWS Bedrock").setHeading();
 
-      // 인증 방식 선택. 선택된 방식에 해당하는 입력 필드만 노출한다.
-      const authMethod = this.plugin.settings.awsAuthMethod;
-      new Setting(containerEl)
-        .setName(t.authMethodLabel)
-        .setDesc(t.authMethodDesc)
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("accessKey", t.authMethodAccessKey)
-            .addOption("apiKey", t.authMethodApiKey)
-            .addOption("profile", t.authMethodProfile)
-            .setValue(authMethod)
+      const bedrockApiKeySetting = new Setting(containerEl)
+        .setName(t.bedrockApiKeyLabel)
+        .setDesc(t.bedrockApiKeyDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(t.bedrockApiKeyPlaceholder)
+            .setValue(this.plugin.settings.bedrockApiKey)
             .onChange(async (value) => {
-              this.plugin.settings.awsAuthMethod = value as AwsAuthMethod;
-              // saveSettings가 aiClient.updateSettings를 호출하고, 그 안에서 새 인증
-              // 설정으로 Bedrock 클라이언트가 재생성된다.
-              await this.plugin.saveSettings();
-              // 노출할 입력 필드가 달라지므로 설정 탭을 다시 그린다.
-              this.display();
-            })
-        );
-
-      if (authMethod === "accessKey") {
-        const awsAccessKeySetting = new Setting(containerEl)
-          .setName(t.awsAccessKeyLabel)
-          .setDesc(t.awsAccessKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.awsAccessKeyPlaceholder)
-              .setValue(this.plugin.settings.awsAccessKeyId)
-              .onChange(async (value) => {
-                this.plugin.settings.awsAccessKeyId = value.trim();
-                await this.plugin.saveSettings();
-                // 자격증명 변경 시 모델 목록 재로드 예약
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
-
-        const awsSecretKeySetting = new Setting(containerEl)
-          .setName(t.awsSecretKeyLabel)
-          .setDesc(t.awsSecretKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.awsSecretKeyPlaceholder)
-              .setValue(this.plugin.settings.awsSecretAccessKey)
-              .onChange(async (value) => {
-                this.plugin.settings.awsSecretAccessKey = value.trim();
-                await this.plugin.saveSettings();
-                // 자격증명 변경 시 모델 목록 재로드 예약
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
-      }
-
-      if (authMethod === "apiKey") {
-        const bedrockApiKeySetting = new Setting(containerEl)
-          .setName(t.bedrockApiKeyLabel)
-          .setDesc(t.bedrockApiKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.bedrockApiKeyPlaceholder)
-              .setValue(this.plugin.settings.bedrockApiKey)
-              .onChange(async (value) => {
-                this.plugin.settings.bedrockApiKey = value.trim();
-                await this.plugin.saveSettings();
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(bedrockApiKeySetting.controlEl);
-      }
-
-      if (authMethod === "profile") {
-        const profiles = listProfileNames();
-        const profileSetting = new Setting(containerEl)
-          .setName(t.awsProfileLabel)
-          .setDesc(profiles.length === 0 ? t.awsProfileEmpty : t.awsProfileDesc);
-
-        if (profiles.length === 0) {
-          // 프로필을 못 찾으면 이름을 직접 입력할 수 있게 둔다(비표준 경로 등).
-          profileSetting.addText((text) =>
-            text
-              .setPlaceholder("default")
-              .setValue(this.plugin.settings.awsProfile)
-              .onChange(async (value) => {
-                this.plugin.settings.awsProfile = value.trim();
-                await this.plugin.saveSettings();
-                this.scheduleModelReload();
-              })
-          );
-        } else {
-          // 저장된 프로필이 없으면 첫 프로필을 실제 설정값으로 확정한다.
-          // 표시값만 바꾸면 화면에는 선택된 듯 보이지만 설정은 빈 문자열이라
-          // SDK 기본 자격증명 체인으로 새는 불일치가 생긴다.
-          if (!this.plugin.settings.awsProfile) {
-            this.plugin.settings.awsProfile = profiles[0];
-            void this.plugin.saveSettings();
-          }
-          profileSetting.addDropdown((dropdown) => {
-            for (const name of profiles) dropdown.addOption(name, name);
-            const current = this.plugin.settings.awsProfile;
-            // 저장된 프로필이 목록에 없으면(파일 변경 등) 선택을 잃지 않도록 추가한다.
-            if (!profiles.includes(current)) dropdown.addOption(current, current);
-            dropdown.setValue(current);
-            dropdown.onChange(async (value) => {
-              this.plugin.settings.awsProfile = value;
+              this.plugin.settings.bedrockApiKey = value.trim();
               await this.plugin.saveSettings();
               this.scheduleModelReload();
             });
-          });
-        }
-
-        profileSetting.addExtraButton((btn) =>
-          btn
-            .setIcon("refresh-cw")
-            .setTooltip(t.awsProfileRefresh)
-            .onClick(() => this.display())
-        );
-      }
+          text.inputEl.type = "password";
+          text.inputEl.addClass("ba-secret-input");
+        });
+      this.addToggleVisibilityButton(bedrockApiKeySetting.controlEl);
 
       new Setting(containerEl)
         .setName(t.awsRegionLabel)
@@ -1839,21 +1684,49 @@ export class GeminiSettingTab extends PluginSettingTab {
     // 추천 플러그인 설치 안내 (설정 화면 맨 아래로 이동)
     new Setting(containerEl).setName(t.recommendedPlugins).setHeading();
 
-    const codeStylerSetting = new Setting(containerEl)
-      .setName(t.codeStylerInstall)
-      .setDesc(t.codeStylerInfo);
-    codeStylerSetting.addButton((btn) =>
-      btn.setButtonText(t.codeStylerInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=code-styler");
-      })
+    // 이미 설치한 사용자에게 설치 버튼을 계속 보여주지 않도록 활성 여부를 확인한다.
+    this.addRecommendedPlugin(
+      containerEl,
+      "code-styler",
+      t.codeStylerInstall,
+      t.codeStylerInfo,
+      t.pluginInstalled
     );
+    this.addRecommendedPlugin(
+      containerEl,
+      "obsidian-tasks-plugin",
+      t.todoTasksInstall,
+      t.todoTasksInfo,
+      t.pluginInstalled
+    );
+  }
 
-    const tasksSetting = new Setting(containerEl)
-      .setName(t.todoTasksInstall)
-      .setDesc(t.todoTasksInfo);
-    tasksSetting.addButton((btn) =>
-      btn.setButtonText(t.todoTasksInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=obsidian-tasks-plugin");
+  /**
+   * 추천 플러그인 항목을 추가한다.
+   * 이미 활성화된 플러그인은 설치 버튼 대신 "설치됨" 배지를 보여준다.
+   */
+  private addRecommendedPlugin(
+    containerEl: HTMLElement,
+    pluginId: string,
+    installLabel: string,
+    description: string,
+    installedLabel: string
+  ): void {
+    const setting = new Setting(containerEl).setName(installLabel).setDesc(description);
+
+    if (isPluginEnabled(this.app, pluginId)) {
+      // 설치·활성 상태 — 버튼 대신 정적 배지를 표시한다.
+      const badge = setting.controlEl.createSpan({ cls: "ba-plugin-installed" });
+      // 체크 아이콘은 장식이므로 스크린리더에서 제외하고, 상태는 텍스트로 전달한다.
+      const iconEl = badge.createSpan({ attr: { "aria-hidden": "true" } });
+      setIcon(iconEl, "check");
+      badge.createSpan({ text: installedLabel });
+      return;
+    }
+
+    setting.addButton((btn) =>
+      btn.setButtonText(installLabel).onClick(() => {
+        window.open(`obsidian://show-plugin?id=${pluginId}`);
       })
     );
   }

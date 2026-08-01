@@ -126,13 +126,6 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
  */
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-/**
- * Bedrock 인증 방식.
- *  - accessKey: Access Key ID + Secret Access Key 직접 입력 (기존 방식, 기본값)
- *  - apiKey: Bedrock API 키(장기 베어러 토큰)로 인증
- *  - profile: `~/.aws` 공유 설정의 프로필 사용(정적 자격증명 또는 `aws sso login` 결과)
- */
-export type AwsAuthMethod = "accessKey" | "apiKey" | "profile";
 
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
@@ -187,16 +180,8 @@ export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   // === AI 백엔드 통합 필드 ===
   /** AI 백엔드 선택 ("bedrock" | "gemini" | "openai" | "ollama" 4값 union) */
   aiBackend: "bedrock" | "gemini" | "openai" | "ollama";
-  /** Bedrock 인증 방식 (액세스 키 / API 키 / 공유 프로필) */
-  awsAuthMethod: AwsAuthMethod;
-  /** AWS Access Key ID (Bedrock 자격증명) */
-  awsAccessKeyId: string;
-  /** AWS Secret Access Key (Bedrock 자격증명) */
-  awsSecretAccessKey: string;
-  /** Bedrock API 키 (장기 베어러 토큰). awsAuthMethod="apiKey"에서 사용 */
+  /** Bedrock API 키 (장기 베어러 토큰) */
   bedrockApiKey: string;
-  /** `~/.aws` 공유 설정의 프로필 이름. awsAuthMethod="profile"에서 사용 */
-  awsProfile: string;
   /** AWS 리전 (Bedrock) */
   awsRegion: string;
   /** Bedrock 채팅 모델 ID */
@@ -259,6 +244,47 @@ export interface IAiClient {
   ): Promise<{ text: string }>;
 }
 
+/**
+ * 로컬 자격증명 파일에서 읽은 값 중 구 사용자에게 적용하면 안 되는 것을 걸러낸다.
+ *
+ * 0.3.0 이전에는 인증 방식을 고를 수 있었다(`accessKey`가 기본값, `apiKey`, `profile`).
+ * API 키 A를 저장한 뒤 다른 방식으로 바꾼 사용자는 A가 로컬 자격증명 파일에 그대로
+ * 남는다(제거 UI가 없었다). 업그레이드 후 `{ ...raw, ...credentials }`로 병합하면
+ * 남아 있던 A가 적용되고, 사용자가 마지막에 선택한 것은 A가 아니었는데도 모든 요청이
+ * A 계정으로 나가 과금된다. 사용자는 알아차릴 단서가 없다.
+ *
+ * **허용 목록 방식으로 판정한다.** 구 설정이 `apiKey`였거나 인증 방식 키가 아예 없는
+ * 경우(신규 설치)에만 로컬 키를 적용한다. `profile`·`accessKey`·알 수 없는 값은 모두
+ * 차단한다 — 차단 목록으로 짜면 `accessKey`(구 기본값!) 같은 값을 빠뜨리기 쉽다.
+ *
+ * **`awsAuthMethod`를 raw에서 지운다(일회성 보장).** 이 키는 더 이상 읽히지 않지만
+ * `data.json`에 남아 매 실행마다 다시 판정에 걸린다. 지우지 않으면 사용자가 새 키를
+ * 입력해도 다음 실행에서 또 차단되어 영구 루프에 빠진다. 설정 화면은 매번 빈 칸으로
+ * 보이고 오류는 "키를 입력하세요"라고만 하므로 원인을 찾을 수 없다.
+ *
+ * @param raw 저장 설정. 판정 후 폐기된 인증 방식 키를 제거한다(제자리 변경).
+ * @param credentials 로컬 자격증명 파일에서 복호화한 값
+ */
+export function filterStaleCredentials(
+  raw: { awsAuthMethod?: string; awsProfile?: string },
+  credentials: Record<string, string>
+): Record<string, string> {
+  const method = raw.awsAuthMethod;
+  // 판정에 쓴 뒤 즉시 제거한다 — 남기면 매 실행마다 같은 판정이 반복된다.
+  delete raw.awsAuthMethod;
+  delete raw.awsProfile;
+
+  // 인증 방식 키가 없으면 신규 설치이거나 이미 정리된 설정이다.
+  if (method === undefined) return credentials;
+  // 구 설정이 apiKey였다면 그 키가 사용자가 마지막에 고른 것이다.
+  if (method === "apiKey") return credentials;
+
+  // profile·accessKey·알 수 없는 값 — 로컬에 남은 API 키는 사용자의 마지막 선택이 아니다.
+  const filtered = { ...credentials };
+  delete filtered.bedrockApiKey;
+  return filtered;
+}
+
 export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   language: "en",
   geminiApiKey: "",
@@ -291,11 +317,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   archiveCleanFolder: "ToDo/Archive",
   // AI 백엔드 통합 기본값
   aiBackend: "bedrock",
-  awsAuthMethod: "accessKey",
-  awsAccessKeyId: "",
-  awsSecretAccessKey: "",
   bedrockApiKey: "",
-  awsProfile: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
   bedrockEmbeddingModel: "",
@@ -315,6 +337,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   // Second Brain Layer 기본값 (옵트인)
   secondBrain: DEFAULT_SECOND_BRAIN_SETTINGS,
 };
+
 
 // 채팅 메시지 타입
 export interface ChatMessage {

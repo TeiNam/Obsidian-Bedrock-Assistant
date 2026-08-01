@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - kiro-edition
   workflow_dispatch:
     inputs:
       branch:
@@ -13,7 +12,6 @@ on:
         type: choice
         options:
           - main
-          - kiro-edition
         default: main
 
 permissions:
@@ -59,11 +57,7 @@ jobs:
         id: edition
         run: |
           BRANCH="${{ steps.branch.outputs.ref }}"
-          if [ "$BRANCH" = "kiro-edition" ]; then
-            PREFIX="kiro"
-          else
-            PREFIX="bedrock-assistant"
-          fi
+          PREFIX="ai-assistant"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "에디션: $PREFIX (브랜치: $BRANCH)"
@@ -74,10 +68,19 @@ jobs:
           CURRENT=$(node -p "require('./manifest.json').version")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
-          # patch 버전 증가
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          # 이미 릴리스된 버전인지 확인한다. manifest에 적힌 버전의 태그가 없으면
+          # 그 버전을 그대로 배포한다 — bump하면 의도한 버전(예: 0.3.0)을 건너뛰고
+          # 0.3.1로 나가버린다. 태그가 이미 있으면 patch를 올려 중복을 피한다.
+          PREFIX="${{ steps.edition.outputs.prefix }}"
+          if git rev-parse -q --verify "refs/tags/$PREFIX-$CURRENT" >/dev/null; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            PATCH=$((PATCH + 1))
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+            echo "태그 $PREFIX-$CURRENT 이미 존재 → $NEW_VERSION 으로 증가"
+          else
+            NEW_VERSION="$CURRENT"
+            echo "태그 $PREFIX-$CURRENT 없음 → manifest 버전 그대로 배포"
+          fi
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
           # manifest.json 업데이트

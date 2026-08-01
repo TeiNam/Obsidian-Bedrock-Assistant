@@ -13,12 +13,11 @@ import { DEFAULT_SETTINGS, GeminiAssistantSettings } from "./types";
 
 /**
  * 임의의 자격증명 값을 가진 설정 객체를 생성하는 arbitrary.
- * geminiApiKey, awsAccessKeyId, awsSecretAccessKey 모두 임의의 값을 가진다.
+ * geminiApiKey, bedrockApiKey 모두 임의의 값을 가진다.
  */
 const settingsWithCredentialsArb = fc.record({
   geminiApiKey: fc.string({ minLength: 1, maxLength: 50 }),
-  awsAccessKeyId: fc.string({ minLength: 1, maxLength: 50 }),
-  awsSecretAccessKey: fc.string({ minLength: 1, maxLength: 50 }),
+  bedrockApiKey: fc.string({ minLength: 1, maxLength: 50 }),
   awsRegion: fc.string({ minLength: 1, maxLength: 20 }),
 });
 
@@ -27,7 +26,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
    * Validates: Requirements 5.3, 5.4
    */
 
-  it("bedrock → gemini 전환 시 awsAccessKeyId, awsSecretAccessKey가 보존되어야 한다", () => {
+  it("bedrock → gemini 전환 시 bedrockApiKey가 보존되어야 한다", () => {
     fc.assert(
       fc.property(settingsWithCredentialsArb, (creds) => {
         // bedrock 백엔드로 시작하는 설정 객체 생성
@@ -35,8 +34,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
           ...DEFAULT_SETTINGS,
           aiBackend: "bedrock",
           geminiApiKey: creds.geminiApiKey,
-          awsAccessKeyId: creds.awsAccessKeyId,
-          awsSecretAccessKey: creds.awsSecretAccessKey,
+          bedrockApiKey: creds.bedrockApiKey,
           awsRegion: creds.awsRegion,
         };
 
@@ -47,8 +45,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
         };
 
         // 비활성 백엔드(bedrock)의 자격증명이 보존되어야 함
-        expect(switched.awsAccessKeyId).toBe(creds.awsAccessKeyId);
-        expect(switched.awsSecretAccessKey).toBe(creds.awsSecretAccessKey);
+        expect(switched.bedrockApiKey).toBe(creds.bedrockApiKey);
         expect(switched.awsRegion).toBe(creds.awsRegion);
       }),
       { numRuns: 100 }
@@ -63,8 +60,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
           ...DEFAULT_SETTINGS,
           aiBackend: "gemini",
           geminiApiKey: creds.geminiApiKey,
-          awsAccessKeyId: creds.awsAccessKeyId,
-          awsSecretAccessKey: creds.awsSecretAccessKey,
+          bedrockApiKey: creds.bedrockApiKey,
           awsRegion: creds.awsRegion,
         };
 
@@ -89,8 +85,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
           ...DEFAULT_SETTINGS,
           aiBackend: "bedrock",
           geminiApiKey: creds.geminiApiKey,
-          awsAccessKeyId: creds.awsAccessKeyId,
-          awsSecretAccessKey: creds.awsSecretAccessKey,
+          bedrockApiKey: creds.bedrockApiKey,
           awsRegion: creds.awsRegion,
         };
 
@@ -108,8 +103,7 @@ describe("Property 3: 백엔드 전환 시 자격증명 보존", () => {
 
         // 양방향 전환 후 모든 자격증명이 원래 값과 동일해야 함
         expect(afterSecondSwitch.geminiApiKey).toBe(creds.geminiApiKey);
-        expect(afterSecondSwitch.awsAccessKeyId).toBe(creds.awsAccessKeyId);
-        expect(afterSecondSwitch.awsSecretAccessKey).toBe(creds.awsSecretAccessKey);
+        expect(afterSecondSwitch.bedrockApiKey).toBe(creds.bedrockApiKey);
         expect(afterSecondSwitch.awsRegion).toBe(creds.awsRegion);
       }),
       { numRuns: 100 }
@@ -235,9 +229,8 @@ describe("Property 5: 기존 설정 하위 호환성", () => {
         ) as GeminiAssistantSettings;
 
         // 기존 설정에 Bedrock 필드가 없으므로 DEFAULT_SETTINGS 기본값이 유지되어야 함
-        expect(merged.awsAccessKeyId).toBe(DEFAULT_SETTINGS.awsAccessKeyId);
-        expect(merged.awsSecretAccessKey).toBe(DEFAULT_SETTINGS.awsSecretAccessKey);
         expect(merged.awsRegion).toBe(DEFAULT_SETTINGS.awsRegion);
+        expect(merged.bedrockApiKey).toBe(DEFAULT_SETTINGS.bedrockApiKey);
         expect(merged.bedrockChatModel).toBe(DEFAULT_SETTINGS.bedrockChatModel);
         expect(merged.bedrockEmbeddingModel).toBe(DEFAULT_SETTINGS.bedrockEmbeddingModel);
       }),

@@ -1,11 +1,9 @@
 // ============================================
-// 브랜딩 설정 (브랜치별로 이 파일만 다르게 유지)
+// 브랜딩 설정
 // ============================================
-// .gitattributes에서 merge=ours로 설정되어 있어
-// 머지 시 각 브랜치의 브랜딩이 자동으로 보존됩니다.
-//
 // AI 백엔드 통합: getBranding() / updateBranding()으로
-// 백엔드에 따라 displayName, icon, settingsTitle을 동적 전환합니다.
+// 백엔드(Bedrock, Gemini, OpenAI, Ollama)에 따라 displayName, icon,
+// settingsTitle을 런타임에 동적으로 전환합니다.
 // pluginId, viewType, files는 백엔드와 무관하게 고정됩니다.
 
 // aiBackend union(4값)을 단일 출처에서 참조하기 위해 타입 전용 import 사용
@@ -129,20 +127,20 @@ export function getBranding(aiBackend: GeminiAssistantSettings["aiBackend"]): Sw
 
 export let BRANDING: BrandingConfig = {
   /** 플러그인 ID (폴더명, MCP clientInfo 등) — 고정값 */
-  pluginId: "bedrock-assistant",
+  pluginId: "ai-assistant",
 
-  /** UI에 표시되는 플러그인 이름 */
+  /** UI에 표시되는 플러그인 이름 (백엔드에 따라 updateBranding으로 전환됨) */
   displayName: "Bedrock Assistant",
 
   /** 옵시디언 뷰 타입 식별자 — 고정값 */
-  viewType: "bedrock-assistant-view",
+  viewType: "ai-assistant-view",
 
   /** 볼트 내 데이터 파일 경로 — 고정값 */
   files: {
-    index: ".bedrock-assistant-index.json",
-    chatHistory: ".bedrock-assistant-chat.json",
-    sessions: ".bedrock-assistant-sessions.json",
-    sessionsBackup: ".bedrock-assistant-sessions.json.bak",
+    index: ".ai-assistant-index.json",
+    chatHistory: ".ai-assistant-chat.json",
+    sessions: ".ai-assistant-sessions.json",
+    sessionsBackup: ".ai-assistant-sessions.json.bak",
   },
 
   /** 아이콘 설정 */

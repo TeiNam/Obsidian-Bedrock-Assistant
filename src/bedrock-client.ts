@@ -26,11 +26,23 @@ import {
   inferProviderName,
 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
-import { loadProfileCredentials, type AwsCredentials } from "./aws-profile";
-import { runtimeProfileDeps } from "./aws-profile-runtime";
 
 /** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
 const EMBEDDING_MAX_CHARS = 20000;
+
+/**
+ * SigV4 서명 스킴 식별자. 프로필 인증과 fail-closed 경로에서 이 값으로 고정한다.
+ *
+ * 고정하지 않으면 AWS SDK가 환경변수 `AWS_BEARER_TOKEN_BEDROCK`을 감지해
+ * authSchemePreference를 `["httpBearerAuth"]`로 자동 승격시키고(@aws-sdk/core의
+ * NODE_AUTH_SCHEME_PREFERENCE_OPTIONS), 그러면 우리가 넣은 credentials 공급자를
+ * 아예 호출하지 않는다. 즉 사용자가 프로필을 명시하거나 인증값을 비워 fail-closed로
+ * 막아뒀는데도 환경에 남은 다른 계정의 토큰으로 요청이 나간다.
+ */
+const SIGV4_AUTH_SCHEME = "aws.auth#sigv4";
+
+/** 베어러 토큰 스킴 식별자. Bedrock API 키 인증에서만 사용한다. */
+const BEARER_AUTH_SCHEME = "httpBearerAuth";
 
 /** Titan 임베딩 요청 시 지정할 출력 차원. Titan v2만 이 파라미터를 받는다. */
 const TITAN_EMBED_DIMENSIONS = 512;
@@ -93,62 +105,43 @@ export function extractEmbedding(modelId: string, body: unknown): number[] | nul
 }
 
 /**
- * 인증 방식별 Bedrock 클라이언트 설정을 구성한다.
- *  - apiKey: Bedrock API 키를 베어러 토큰으로 전달하고 SigV4보다 우선하도록
- *    authSchemePreference를 httpBearerAuth로 지정한다.
- *  - profile: `~/.aws` 프로필을 읽는 비동기 공급자를 credentials에 전달한다.
- *    SDK가 요청 시점에 호출하고 만료(expiration) 이후 자동 재호출한다.
- *  - accessKey: 입력된 키를 그대로 사용한다. 비어 있으면 SDK 기본 체인
- *    (환경변수, IAM 역할 등)에 위임한다 — 기존 동작 유지.
+ * Bedrock 클라이언트 설정을 구성한다. API 키(베어러 토큰) 단독 인증만 지원한다.
  *
- * apiKey/profile을 명시했는데 값이 비어 있으면 fail-closed로 처리한다. SDK 기본
- * 자격증명 체인으로 폴백하면 사용자가 선택하지 않은 AWS 계정으로 프롬프트가
- * 전송되고 과금될 수 있기 때문이다.
+ * 키가 비어 있으면 fail-closed로 처리한다. SDK 기본 자격증명 체인으로 폴백하면
+ * 사용자가 선택하지 않은 AWS 계정으로 프롬프트가 전송되고 과금될 수 있기 때문이다.
+ * 특히 볼트 인덱싱은 자동으로 대량 호출하므로 사용자가 알아차리기 전에 번진다 —
+ * `~/.aws/credentials`의 `[default]` 프로필이나 환경변수·IAM 역할이 조용히
+ * 집히는 경로를 남기지 않는다.
+ *
+ * authSchemePreference를 항상 고정하는 이유: AWS SDK는 환경변수
+ * `AWS_BEARER_TOKEN_BEDROCK`을 감지하면 authSchemePreference를 `["httpBearerAuth"]`로
+ * 자동 승격시키고(@aws-sdk/core의 NODE_AUTH_SCHEME_PREFERENCE_OPTIONS), 그러면
+ * credentials 공급자를 아예 호출하지 않는다. 즉 fail-closed 공급자를 넣어도
+ * 환경에 남은 다른 계정의 토큰으로 요청이 나간다. 스킴을 명시적으로 고정해 막는다.
  *
  * 순수 함수로 분리해 단위 테스트가 가능하게 한다(SDK 인스턴스화 없이 검증).
  */
 export function buildBedrockClientConfig(
-  settings: GeminiAssistantSettings,
-  profileDeps = runtimeProfileDeps
+  settings: GeminiAssistantSettings
 ): Record<string, unknown> {
   const config: Record<string, unknown> = { region: settings.awsRegion };
 
-  switch (settings.awsAuthMethod) {
-    case "apiKey": {
-      const apiKey = settings.bedrockApiKey?.trim();
-      if (apiKey) {
-        config.token = { token: apiKey };
-        config.authSchemePreference = ["httpBearerAuth"];
-      } else {
-        config.credentials = () =>
-          Promise.reject(
-            new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
-          );
-      }
-      break;
-    }
-    case "profile": {
-      const profile = settings.awsProfile?.trim();
-      if (profile) {
-        config.credentials = (): Promise<AwsCredentials> =>
-          loadProfileCredentials(profile, profileDeps);
-      } else {
-        config.credentials = () =>
-          Promise.reject(
-            new Error("AWS 프로필이 선택되지 않았습니다. 설정에서 프로필을 선택하세요")
-          );
-      }
-      break;
-    }
-    default: {
-      if (settings.awsAccessKeyId) {
-        config.credentials = {
-          accessKeyId: settings.awsAccessKeyId,
-          secretAccessKey: settings.awsSecretAccessKey,
-        };
-      }
-      break;
-    }
+  // 손상된 data.json(수동 편집·동기화 충돌)에 문자열이 아닌 값이 들어올 수 있다.
+  // `?.`는 null/undefined만 막으므로 숫자·객체에서 .trim()이 TypeError를 던지고,
+  // 이 함수는 BedrockClient 생성자에서 호출되어 onload 전체가 실패한다. 플러그인이
+  // 아예 뜨지 않으면 사용자는 설정을 고칠 수도 없으므로, 빈 값으로 보고 fail-closed로 넘긴다.
+  const raw = settings.bedrockApiKey;
+  const apiKey = typeof raw === "string" ? raw.trim() : "";
+  if (apiKey) {
+    config.token = { token: apiKey };
+    config.authSchemePreference = [BEARER_AUTH_SCHEME];
+  } else {
+    config.credentials = () =>
+      Promise.reject(
+        new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
+      );
+    // 값이 비어도 스킴을 고정한다 — authSchemePreference 주석 참조.
+    config.authSchemePreference = [SIGV4_AUTH_SCHEME];
   }
 
   return config;

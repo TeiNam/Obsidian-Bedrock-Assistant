@@ -1,11 +1,11 @@
-# Bedrock Assistant
+# AI Assistant
 
 [English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-7C3AED.svg)
-![AWS](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
-![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
+![AWS Bedrock](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)
+![Google Gemini](https://img.shields.io/badge/Google-Gemini-4285F4.svg)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT-412991.svg)
 ![Ollama](https://img.shields.io/badge/Ollama-Local-000000.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
@@ -51,20 +51,32 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 ### BRAT (Recommended)
 
 1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin
-2. Add this repository URL in BRAT settings: `https://github.com/teinam/obsidian-bedrock-assistant`
+2. Add this repository URL in BRAT settings: `https://github.com/teinam/obsidian-ai-assistant`
 3. Enable the plugin
 
 ### Manual
 
 1. Download `main.js`, `styles.css`, `manifest.json` from the latest [Release](../../releases)
-2. Copy to `.obsidian/plugins/bedrock-assistant/`
+2. Copy to `.obsidian/plugins/ai-assistant/`
 3. Enable in Settings → Community Plugins
+
+### Upgrading from 0.2.x
+
+Version 0.3.0 changes the plugin ID from `bedrock-assistant` to `ai-assistant`.
+
+- **Disable the old plugin before enabling the new one.** If both are enabled simultaneously, the old plugin's index save can interleave with the new plugin's migration read, resulting in a torn copy (this self-heals through re-indexing but takes time).
+- **The plugin folder changes, so reinstallation is required.** If you use BRAT, remove the old entry and add it again.
+- **Settings (`data.json`)**, vault index, chat history, sessions, MCP config, and credentials **are automatically copied on first launch**. Your backend choice, models, region, Second Brain settings, and custom skills are all preserved. The old files remain in place, so rolling back to a previous version works seamlessly.
+- **You must reopen the sidebar once.** Obsidian records view identifiers in the workspace layout, and the plugin cannot rewrite that for you.
+- A notice appears once the migration completes. The old data files (`.bedrock-assistant-*.json`) are no longer used — you may delete them manually if vault size is a concern. The index file can be tens of MB due to embeddings.
+
+If you were using the `kiro-edition` (Assistant Kiro), the same migration applies. That edition was merged into main in 0.3.0, and `.assistant-kiro-*.json` data is also migrated automatically.
 
 ## Quick Start
 
 ### 1. Choose AI Backend
 
-Settings → Bedrock Assistant → **AI Backend**:
+Settings → AI Assistant → **AI Backend**:
 
 - **Bedrock** — AWS Bedrock (Claude and other Bedrock-hosted models)
 - **Gemini** — Google Gemini. Requires an API key from [Google AI Studio](https://aistudio.google.com/).
@@ -73,20 +85,21 @@ Settings → Bedrock Assistant → **AI Backend**:
 
 The sidebar icon, model list, and branding update dynamically when you switch.
 
+> **Backend support policy:** This plugin relies on embedding APIs for Graph RAG vault search, so only providers with embedding endpoints are supported. The Anthropic direct API is excluded because it offers no embedding endpoint — use the Bedrock backend to access Claude models.
+
 ### 2. Configure Credentials
 
-**Bedrock:** Choose one of three authentication methods, then set the AWS Region.
+**Bedrock:** Enter a **long-term Bedrock API key** (AWS Console → Bedrock → API keys) and set the AWS Region. The key is encrypted with the OS keychain and stored locally — it never lands in your vault.
 
-| Method | What you provide |
-|--------|------------------|
-| Access Key | AWS Access Key ID and Secret Access Key |
-| Bedrock API Key | A long-term Bedrock API key, sent as a bearer token |
-| AWS Profile | A profile name from `~/.aws/config` or `~/.aws/credentials`. For SSO profiles, run `aws sso login --profile <name>` in a terminal first. |
+Key issuance, model access, and using multiple machines: [Bedrock setup guide](docs/bedrock-setup-en.md)
+
+> AWS access key and `~/.aws` profile (including SSO) authentication were removed in 0.3.0. Access keys are long-lived credentials with the largest blast radius, and SSO requires `aws sso login` on every machine plus re-login every 8-12 hours — too much friction for a note-taking app used across several machines. Existing users need to enter a Bedrock API key in settings.
 
 Required IAM permissions:
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
 - `bedrock:ListFoundationModels`
+- `bedrock:ListInferenceProfiles`
 
 **Gemini:** Enter your API key from [Google AI Studio](https://aistudio.google.com/).
 
@@ -118,7 +131,7 @@ The web search toggle (globe icon) in the input toolbar only turns on if a searc
 
 ### Reasoning Effort
 
-Settings → Bedrock Assistant → **Generation Settings** → **Reasoning Effort** sets how much reasoning the model does.
+Settings → AI Assistant → **Generation Settings** → **Reasoning Effort** sets how much reasoning the model does.
 
 Allowed values depend on the selected provider and model (for example, Anthropic models on Bedrock accept `xhigh` and `max`; Gemini Pro models accept only `low` and `high`). The setting is only shown for models that support reasoning effort, and requests to models that do not support it fall back to the provider's default sampling behavior. If you switch to a model that does not allow your saved value, it is clamped to the nearest allowed level.
 
@@ -156,7 +169,7 @@ The generated frontmatter has four fields: `source` (the URL), `created` (the da
 
 ### P.A.R.A Organizer
 
-1. Open Settings → Bedrock Assistant and scroll to the **Vault** section
+1. Open Settings → AI Assistant and scroll to the **Vault** section
 2. Click the **Set Up P.A.R.A** button, directly below the Template Folder setting
 3. The plugin creates four root folders: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
 4. If existing notes are found, the currently configured AI model classifies each note into the appropriate folder

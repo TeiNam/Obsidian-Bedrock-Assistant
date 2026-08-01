@@ -183,8 +183,7 @@ const aiBackendArb = fc.constantFrom("bedrock" as const, "gemini" as const);
 const settingsArb = fc.record({
   aiBackend: aiBackendArb,
   geminiApiKey: fc.string({ minLength: 0, maxLength: 50 }),
-  awsAccessKeyId: fc.string({ minLength: 0, maxLength: 50 }),
-  awsSecretAccessKey: fc.string({ minLength: 0, maxLength: 50 }),
+  bedrockApiKey: fc.string({ minLength: 0, maxLength: 50 }),
   awsRegion: fc.string({ minLength: 1, maxLength: 20 }),
   chatModel: fc.string({ minLength: 1, maxLength: 30 }),
   embeddingModel: fc.string({ minLength: 1, maxLength: 30 }),
