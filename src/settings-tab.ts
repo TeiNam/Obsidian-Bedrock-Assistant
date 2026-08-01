@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import type { AwsAuthMethod, CustomSkill, EffortLevel } from "./types";
+import type { CustomSkill, EffortLevel } from "./types";
 // Second Brain 설정 정규화 (Req 1.4, 1.5): onChange 시점 값 보정에 사용
 import { normalizeSecondBrainSettings } from "./types";
 import { SKILLS } from "./skills";
@@ -22,8 +22,6 @@ import {
   effortLevels,
   embeddingSignature,
 } from "./provider-utils";
-// AWS 공유 설정(~/.aws)의 프로필 이름 목록 — Bedrock 프로필 인증 드롭다운에 사용
-import { listProfileNames } from "./aws-profile-runtime";
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
@@ -53,18 +51,9 @@ export const I18N = {
     apiKeyDesc: "Your Gemini API key from Google AI Studio",
     apiKeyPlaceholder: "Enter Gemini API key",
     // Bedrock 자격증명
-    authMethodLabel: "Authentication Method",
-    authMethodDesc: "How to authenticate with Bedrock",
-    authMethodApiKey: "Bedrock API key",
-    authMethodProfile: "AWS profile (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API Key",
-    bedrockApiKeyDesc: "Long-term Bedrock API key, used as a bearer token",
+    bedrockApiKeyDesc: "Long-term Bedrock API key for authentication. Get your API key from AWS Bedrock console.",
     bedrockApiKeyPlaceholder: "Enter Bedrock API key",
-    awsProfileLabel: "AWS Profile",
-    awsProfileDesc:
-      "Profile from ~/.aws/config or ~/.aws/credentials. For SSO profiles, run `aws sso login --profile <name>` in a terminal first.",
-    awsProfileEmpty: "No profiles found in ~/.aws",
-    awsProfileRefresh: "Reload profiles",
     awsRegionLabel: "AWS Region",
     awsRegionDesc: "AWS Region for Bedrock API",
     awsRegionPlaceholder: "us-east-1",
@@ -257,18 +246,9 @@ export const I18N = {
     apiKeyDesc: "Google AI Studio에서 발급받은 Gemini API 키",
     apiKeyPlaceholder: "Gemini API 키 입력",
     // Bedrock 자격증명
-    authMethodLabel: "인증 방식",
-    authMethodDesc: "Bedrock 인증에 사용할 방식",
-    authMethodApiKey: "Bedrock API 키",
-    authMethodProfile: "AWS 프로필 (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API 키",
-    bedrockApiKeyDesc: "Bedrock 장기 API 키. 베어러 토큰으로 전송됩니다",
+    bedrockApiKeyDesc: "인증에 사용할 Bedrock 장기 API 키. AWS Bedrock 콘솔에서 API 키를 발급받으세요.",
     bedrockApiKeyPlaceholder: "Bedrock API 키 입력",
-    awsProfileLabel: "AWS 프로필",
-    awsProfileDesc:
-      "~/.aws/config 또는 ~/.aws/credentials의 프로필. SSO 프로필은 터미널에서 `aws sso login --profile <이름>`을 먼저 실행하세요.",
-    awsProfileEmpty: "~/.aws에서 프로필을 찾을 수 없습니다",
-    awsProfileRefresh: "프로필 다시 읽기",
     awsRegionLabel: "AWS 리전",
     awsRegionDesc: "Bedrock API용 AWS 리전",
     awsRegionPlaceholder: "us-east-1",
@@ -461,18 +441,9 @@ export const I18N = {
     apiKeyDesc: "Google AI Studioから取得したGemini APIキー",
     apiKeyPlaceholder: "Gemini APIキーを入力",
     // Bedrock 資格情報
-    authMethodLabel: "認証方式",
-    authMethodDesc: "Bedrock 認証に使用する方式",
-    authMethodApiKey: "Bedrock APIキー",
-    authMethodProfile: "AWSプロファイル (~/.aws)",
     bedrockApiKeyLabel: "Bedrock APIキー",
-    bedrockApiKeyDesc: "Bedrockの長期APIキー。ベアラートークンとして送信されます",
+    bedrockApiKeyDesc: "認証に使用するBedrockの長期APIキー。AWS Bedrockコンソールから APIキーを取得してください。",
     bedrockApiKeyPlaceholder: "Bedrock APIキーを入力",
-    awsProfileLabel: "AWSプロファイル",
-    awsProfileDesc:
-      "~/.aws/config または ~/.aws/credentials のプロファイル。SSOプロファイルの場合は、先にターミナルで `aws sso login --profile <名前>` を実行してください。",
-    awsProfileEmpty: "~/.aws にプロファイルが見つかりません",
-    awsProfileRefresh: "プロファイルを再読み込み",
     awsRegionLabel: "AWSリージョン",
     awsRegionDesc: "Bedrock API用 AWSリージョン",
     awsRegionPlaceholder: "us-east-1",
@@ -817,92 +788,22 @@ export class GeminiSettingTab extends PluginSettingTab {
       // Bedrock (AWS) 자격증명 설정
       new Setting(containerEl).setName("AWS Bedrock").setHeading();
 
-      // 인증 방식 선택. 선택된 방식에 해당하는 입력 필드만 노출한다.
-      const authMethod = this.plugin.settings.awsAuthMethod;
-      new Setting(containerEl)
-        .setName(t.authMethodLabel)
-        .setDesc(t.authMethodDesc)
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("apiKey", t.authMethodApiKey)
-            .addOption("profile", t.authMethodProfile)
-            .setValue(authMethod)
+      const bedrockApiKeySetting = new Setting(containerEl)
+        .setName(t.bedrockApiKeyLabel)
+        .setDesc(t.bedrockApiKeyDesc)
+        .addText((text) => {
+          text
+            .setPlaceholder(t.bedrockApiKeyPlaceholder)
+            .setValue(this.plugin.settings.bedrockApiKey)
             .onChange(async (value) => {
-              this.plugin.settings.awsAuthMethod = value as AwsAuthMethod;
-              // saveSettings가 aiClient.updateSettings를 호출하고, 그 안에서 새 인증
-              // 설정으로 Bedrock 클라이언트가 재생성된다.
-              await this.plugin.saveSettings();
-              // 노출할 입력 필드가 달라지므로 설정 탭을 다시 그린다.
-              this.display();
-            })
-        );
-
-      if (authMethod === "apiKey") {
-        const bedrockApiKeySetting = new Setting(containerEl)
-          .setName(t.bedrockApiKeyLabel)
-          .setDesc(t.bedrockApiKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.bedrockApiKeyPlaceholder)
-              .setValue(this.plugin.settings.bedrockApiKey)
-              .onChange(async (value) => {
-                this.plugin.settings.bedrockApiKey = value.trim();
-                await this.plugin.saveSettings();
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(bedrockApiKeySetting.controlEl);
-      }
-
-      if (authMethod === "profile") {
-        const profiles = listProfileNames();
-        const profileSetting = new Setting(containerEl)
-          .setName(t.awsProfileLabel)
-          .setDesc(profiles.length === 0 ? t.awsProfileEmpty : t.awsProfileDesc);
-
-        if (profiles.length === 0) {
-          // 프로필을 못 찾으면 이름을 직접 입력할 수 있게 둔다(비표준 경로 등).
-          profileSetting.addText((text) =>
-            text
-              .setPlaceholder("default")
-              .setValue(this.plugin.settings.awsProfile)
-              .onChange(async (value) => {
-                this.plugin.settings.awsProfile = value.trim();
-                await this.plugin.saveSettings();
-                this.scheduleModelReload();
-              })
-          );
-        } else {
-          // 저장된 프로필이 없으면 첫 프로필을 실제 설정값으로 확정한다.
-          // 표시값만 바꾸면 화면에는 선택된 듯 보이지만 설정은 빈 문자열이라
-          // SDK 기본 자격증명 체인으로 새는 불일치가 생긴다.
-          if (!this.plugin.settings.awsProfile) {
-            this.plugin.settings.awsProfile = profiles[0];
-            void this.plugin.saveSettings();
-          }
-          profileSetting.addDropdown((dropdown) => {
-            for (const name of profiles) dropdown.addOption(name, name);
-            const current = this.plugin.settings.awsProfile;
-            // 저장된 프로필이 목록에 없으면(파일 변경 등) 선택을 잃지 않도록 추가한다.
-            if (!profiles.includes(current)) dropdown.addOption(current, current);
-            dropdown.setValue(current);
-            dropdown.onChange(async (value) => {
-              this.plugin.settings.awsProfile = value;
+              this.plugin.settings.bedrockApiKey = value.trim();
               await this.plugin.saveSettings();
               this.scheduleModelReload();
             });
-          });
-        }
-
-        profileSetting.addExtraButton((btn) =>
-          btn
-            .setIcon("refresh-cw")
-            .setTooltip(t.awsProfileRefresh)
-            .onClick(() => this.display())
-        );
-      }
+          text.inputEl.type = "password";
+          text.inputEl.addClass("ba-secret-input");
+        });
+      this.addToggleVisibilityButton(bedrockApiKeySetting.controlEl);
 
       new Setting(containerEl)
         .setName(t.awsRegionLabel)

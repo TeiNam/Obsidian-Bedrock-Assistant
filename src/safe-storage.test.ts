@@ -242,9 +242,6 @@ describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
     expect(SENSITIVE_FIELDS).not.toContain("ollamaBaseUrl");
   });
 
-  it("awsProfile을 포함하지 않는다 (프로필 이름은 비밀값이 아님)", () => {
-    expect(SENSITIVE_FIELDS).not.toContain("awsProfile");
-  });
 });
 
 // ============================================
@@ -298,8 +295,7 @@ describe("stripSensitiveFields: 폐기된 액세스 키 필드", () => {
     // strip 대상에서도 빠지면 구 설정의 평문 키가 클라우드 동기화되는 data.json에
     // 그대로 재저장된다 — 제거가 오히려 유출을 만든다.
     const legacy = {
-      awsAuthMethod: "profile",
-      awsProfile: "my-profile",
+      awsRegion: "us-east-1",
       awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
       awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     } as unknown as GeminiAssistantSettings;
@@ -310,7 +306,7 @@ describe("stripSensitiveFields: 폐기된 액세스 키 필드", () => {
     expect("awsAccessKeyId" in stripped).toBe(false);
     expect("awsSecretAccessKey" in stripped).toBe(false);
     // 비민감 필드는 보존한다.
-    expect(stripped.awsProfile).toBe("my-profile");
+    expect(stripped.awsRegion).toBe("us-east-1");
   });
 
   it("원본 객체를 변경하지 않는다", () => {

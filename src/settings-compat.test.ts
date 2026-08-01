@@ -229,8 +229,8 @@ describe("Property 5: 기존 설정 하위 호환성", () => {
         ) as GeminiAssistantSettings;
 
         // 기존 설정에 Bedrock 필드가 없으므로 DEFAULT_SETTINGS 기본값이 유지되어야 함
-        expect(merged.awsAuthMethod).toBe(DEFAULT_SETTINGS.awsAuthMethod);
         expect(merged.awsRegion).toBe(DEFAULT_SETTINGS.awsRegion);
+        expect(merged.bedrockApiKey).toBe(DEFAULT_SETTINGS.bedrockApiKey);
         expect(merged.bedrockChatModel).toBe(DEFAULT_SETTINGS.bedrockChatModel);
         expect(merged.bedrockEmbeddingModel).toBe(DEFAULT_SETTINGS.bedrockEmbeddingModel);
       }),

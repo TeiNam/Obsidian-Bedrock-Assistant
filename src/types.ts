@@ -126,12 +126,6 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
  */
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-/**
- * Bedrock 인증 방식.
- *  - apiKey: Bedrock API 키(장기 베어러 토큰)로 인증
- *  - profile: `~/.aws` 공유 설정의 프로필 사용(정적 자격증명 또는 `aws sso login` 결과)
- */
-export type AwsAuthMethod = "apiKey" | "profile";
 
 // 플러그인 설정 타입
 export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
@@ -186,12 +180,8 @@ export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   // === AI 백엔드 통합 필드 ===
   /** AI 백엔드 선택 ("bedrock" | "gemini" | "openai" | "ollama" 4값 union) */
   aiBackend: "bedrock" | "gemini" | "openai" | "ollama";
-  /** Bedrock 인증 방식 (API 키 / 공유 프로필) */
-  awsAuthMethod: AwsAuthMethod;
-  /** Bedrock API 키 (장기 베어러 토큰). awsAuthMethod="apiKey"에서 사용 */
+  /** Bedrock API 키 (장기 베어러 토큰) */
   bedrockApiKey: string;
-  /** `~/.aws` 공유 설정의 프로필 이름. awsAuthMethod="profile"에서 사용 */
-  awsProfile: string;
   /** AWS 리전 (Bedrock) */
   awsRegion: string;
   /** Bedrock 채팅 모델 ID */
@@ -286,9 +276,7 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   archiveCleanFolder: "ToDo/Archive",
   // AI 백엔드 통합 기본값
   aiBackend: "bedrock",
-  awsAuthMethod: "profile",
   bedrockApiKey: "",
-  awsProfile: "",
   awsRegion: "us-east-1",
   bedrockChatModel: "",
   bedrockEmbeddingModel: "",
@@ -309,19 +297,6 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   secondBrain: DEFAULT_SECOND_BRAIN_SETTINGS,
 };
 
-/**
- * 구 설정의 awsAuthMethod를 마이그레이션한다.
- * "accessKey" 또는 알 수 없는 값은 "profile"로 변환한다.
- * 이미 "apiKey" 또는 "profile"이면 그대로 둔다.
- */
-export function migrateAwsAuthMethod<T extends { awsAuthMethod?: string }>(raw: T): T {
-  const method = raw.awsAuthMethod as string | undefined;
-  if (method !== "apiKey" && method !== "profile") {
-    // "accessKey" 또는 알 수 없는 값은 "profile"로 마이그레이션
-    return { ...raw, awsAuthMethod: "profile" };
-  }
-  return raw;
-}
 
 // 채팅 메시지 타입
 export interface ChatMessage {

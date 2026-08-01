@@ -26,8 +26,6 @@ import {
   inferProviderName,
 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
-import { loadProfileCredentials, type AwsCredentials } from "./aws-profile";
-import { runtimeProfileDeps } from "./aws-profile-runtime";
 
 /** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
 const EMBEDDING_MAX_CHARS = 20000;
@@ -107,70 +105,38 @@ export function extractEmbedding(modelId: string, body: unknown): number[] | nul
 }
 
 /**
- * 인증 방식별 Bedrock 클라이언트 설정을 구성한다.
- *  - apiKey: Bedrock API 키를 베어러 토큰으로 전달하고 SigV4보다 우선하도록
- *    authSchemePreference를 httpBearerAuth로 지정한다.
- *  - profile: `~/.aws` 프로필을 읽는 비동기 공급자를 credentials에 전달한다.
- *    SDK가 요청 시점에 호출하고 만료(expiration) 이후 자동 재호출한다.
- *  - 알 수 없는 인증 방식(구 설정의 "accessKey" 등)은 SDK 기본 체인으로 폴백하지
- *    않고 명시적으로 거부한다.
+ * Bedrock 클라이언트 설정을 구성한다. API 키(베어러 토큰) 단독 인증만 지원한다.
  *
- * 두 방식 모두 값이 비어 있으면 fail-closed로 처리한다. SDK 기본 자격증명 체인으로
- * 폴백하면 사용자가 선택하지 않은 AWS 계정으로 프롬프트가 전송되고 과금될 수 있기
- * 때문이다. 특히 볼트 인덱싱은 자동으로 대량 호출하므로 사용자가 알아차리기 전에
- * 번진다 — `~/.aws/credentials`의 `[default]` 프로필이나 환경변수·IAM 역할이
- * 조용히 집히는 경로를 남기지 않는다.
+ * 키가 비어 있으면 fail-closed로 처리한다. SDK 기본 자격증명 체인으로 폴백하면
+ * 사용자가 선택하지 않은 AWS 계정으로 프롬프트가 전송되고 과금될 수 있기 때문이다.
+ * 특히 볼트 인덱싱은 자동으로 대량 호출하므로 사용자가 알아차리기 전에 번진다 —
+ * `~/.aws/credentials`의 `[default]` 프로필이나 환경변수·IAM 역할이 조용히
+ * 집히는 경로를 남기지 않는다.
+ *
+ * authSchemePreference를 항상 고정하는 이유: AWS SDK는 환경변수
+ * `AWS_BEARER_TOKEN_BEDROCK`을 감지하면 authSchemePreference를 `["httpBearerAuth"]`로
+ * 자동 승격시키고(@aws-sdk/core의 NODE_AUTH_SCHEME_PREFERENCE_OPTIONS), 그러면
+ * credentials 공급자를 아예 호출하지 않는다. 즉 fail-closed 공급자를 넣어도
+ * 환경에 남은 다른 계정의 토큰으로 요청이 나간다. 스킴을 명시적으로 고정해 막는다.
  *
  * 순수 함수로 분리해 단위 테스트가 가능하게 한다(SDK 인스턴스화 없이 검증).
  */
 export function buildBedrockClientConfig(
-  settings: GeminiAssistantSettings,
-  profileDeps = runtimeProfileDeps
+  settings: GeminiAssistantSettings
 ): Record<string, unknown> {
   const config: Record<string, unknown> = { region: settings.awsRegion };
 
-  switch (settings.awsAuthMethod) {
-    case "apiKey": {
-      const apiKey = settings.bedrockApiKey?.trim();
-      if (apiKey) {
-        config.token = { token: apiKey };
-        config.authSchemePreference = [BEARER_AUTH_SCHEME];
-      } else {
-        config.credentials = () =>
-          Promise.reject(
-            new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
-          );
-        // 값이 비어도 스킴을 고정한다 — 아래 SIGV4_AUTH_SCHEME 주석 참조.
-        config.authSchemePreference = [SIGV4_AUTH_SCHEME];
-      }
-      break;
-    }
-    case "profile": {
-      const profile = settings.awsProfile?.trim();
-      if (profile) {
-        config.credentials = (): Promise<AwsCredentials> =>
-          loadProfileCredentials(profile, profileDeps);
-      } else {
-        config.credentials = () =>
-          Promise.reject(
-            new Error("AWS 프로필이 선택되지 않았습니다. 설정에서 프로필을 선택하세요")
-          );
-      }
-      config.authSchemePreference = [SIGV4_AUTH_SCHEME];
-      break;
-    }
-    default: {
-      // 알 수 없는 인증 방식(구 설정의 "accessKey" 등). SDK 기본 자격증명 체인으로
-      // 폴백하면 사용자가 선택하지 않은 AWS 계정으로 노트가 전송되고 과금된다.
-      config.credentials = () =>
-        Promise.reject(
-          new Error(
-            "지원하지 않는 인증 방식입니다. 설정에서 Bedrock API 키 또는 AWS 프로필을 선택하세요"
-          )
-        );
-      config.authSchemePreference = [SIGV4_AUTH_SCHEME];
-      break;
-    }
+  const apiKey = settings.bedrockApiKey?.trim();
+  if (apiKey) {
+    config.token = { token: apiKey };
+    config.authSchemePreference = [BEARER_AUTH_SCHEME];
+  } else {
+    config.credentials = () =>
+      Promise.reject(
+        new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
+      );
+    // 값이 비어도 스킴을 고정한다 — authSchemePreference 주석 참조.
+    config.authSchemePreference = [SIGV4_AUTH_SCHEME];
   }
 
   return config;
