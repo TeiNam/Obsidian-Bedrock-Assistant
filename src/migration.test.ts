@@ -22,7 +22,7 @@ describe("planMigrations", () => {
   it("레거시 파일이 있고 신 파일이 없으면 복사 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".bedrock-assistant-index.json"]),
       ".obsidian"
     );
@@ -30,7 +30,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".bedrock-assistant-index.json",
-        to: ".obsidian-ai-assistant-index.json",
+        to: ".ai-assistant-index.json",
       },
     ]);
   });
@@ -38,10 +38,10 @@ describe("planMigrations", () => {
   it("신 파일이 이미 있으면 건너뛴다 (재실행 안전)", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
-        ".obsidian-ai-assistant-index.json",
+        ".ai-assistant-index.json",
       ]),
       ".obsidian"
     );
@@ -52,7 +52,7 @@ describe("planMigrations", () => {
   it("레거시 파일이 없으면 빈 배열을 반환한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([]),
       ".obsidian"
     );
@@ -63,7 +63,7 @@ describe("planMigrations", () => {
   it("두 레거시 ID에 같은 대상이 존재하면 앞선 ID를 우선한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".assistant-kiro-index.json",
@@ -79,7 +79,7 @@ describe("planMigrations", () => {
   it("두 레거시 ID가 서로 다른 파일을 가지면 둘 다 복사한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".assistant-kiro-chat.json",
@@ -89,15 +89,15 @@ describe("planMigrations", () => {
 
     expect(tasks).toHaveLength(2);
     expect(tasks.map((t) => t.to).sort()).toEqual([
-      ".obsidian-ai-assistant-chat.json",
-      ".obsidian-ai-assistant-index.json",
+      ".ai-assistant-chat.json",
+      ".ai-assistant-index.json",
     ]);
   });
 
   it("레거시 A와 B가 서로 다른 종류의 파일을 가지면 둘 다 복사한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".obsidian/plugins/bedrock-assistant/data.json",
         ".obsidian/plugins/assistant-kiro/mcp.json",
@@ -115,7 +115,7 @@ describe("planMigrations", () => {
   it("같은 data.json이 양쪽에 있으면 앞선 레거시 ID의 것을 복사한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".obsidian/plugins/bedrock-assistant/data.json",
         ".obsidian/plugins/bedrock-assistant/mcp.json",
@@ -133,7 +133,7 @@ describe("planMigrations", () => {
   it("MCP 설정 경로도 계획에 포함한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".obsidian/plugins/bedrock-assistant/mcp.json"]),
       ".obsidian"
     );
@@ -141,7 +141,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".obsidian/plugins/bedrock-assistant/mcp.json",
-        to: ".obsidian/plugins/obsidian-ai-assistant/mcp.json",
+        to: ".obsidian/plugins/ai-assistant/mcp.json",
       },
     ]);
   });
@@ -151,7 +151,7 @@ describe("planMigrations", () => {
   it("data.json도 계획에 포함한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".obsidian/plugins/bedrock-assistant/data.json"]),
       ".obsidian"
     );
@@ -159,7 +159,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".obsidian/plugins/bedrock-assistant/data.json",
-        to: ".obsidian/plugins/obsidian-ai-assistant/data.json",
+        to: ".obsidian/plugins/ai-assistant/data.json",
       },
     ]);
   });
@@ -167,19 +167,19 @@ describe("planMigrations", () => {
   it("configDir이 커스텀이어도 플러그인 폴더 경로를 올바르게 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom(["my-config/plugins/bedrock-assistant/mcp.json"]),
       "my-config"
     );
 
     expect(tasks[0].from).toBe("my-config/plugins/bedrock-assistant/mcp.json");
-    expect(tasks[0].to).toBe("my-config/plugins/obsidian-ai-assistant/mcp.json");
+    expect(tasks[0].to).toBe("my-config/plugins/ai-assistant/mcp.json");
   });
 
   it("볼트 데이터 4개와 플러그인 폴더 2개가 모두 있으면 6개 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".bedrock-assistant-chat.json",
@@ -196,9 +196,9 @@ describe("planMigrations", () => {
 
   it("신 ID가 레거시 ID와 같으면 아무 작업도 만들지 않는다", () => {
     const tasks = planMigrations(
-      ["obsidian-ai-assistant"],
-      "obsidian-ai-assistant",
-      existsFrom([".obsidian-ai-assistant-index.json"]),
+      ["ai-assistant"],
+      "ai-assistant",
+      existsFrom([".ai-assistant-index.json"]),
       ".obsidian"
     );
 
@@ -210,23 +210,23 @@ describe("planCredentialMigration", () => {
   it("레거시 자격증명 파일이 있으면 파일명 쌍을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) => name === "bedrock-assistant-credentials.json"
     );
 
     expect(task).toEqual({
       from: "bedrock-assistant-credentials.json",
-      to: "obsidian-ai-assistant-credentials.json",
+      to: "ai-assistant-credentials.json",
     });
   });
 
   it("신 파일이 이미 있으면 null을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) =>
         name === "bedrock-assistant-credentials.json" ||
-        name === "obsidian-ai-assistant-credentials.json"
+        name === "ai-assistant-credentials.json"
     );
 
     expect(task).toBeNull();
@@ -235,7 +235,7 @@ describe("planCredentialMigration", () => {
   it("레거시 파일이 없으면 null을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       () => false
     );
 
@@ -247,7 +247,7 @@ describe("planCredentialMigration", () => {
     // 존재로 잡혀 함수가 null을 반환하므로, 레거시 파일명을 정확히 열거한다.
     const task = planCredentialMigration(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) =>
         name === "bedrock-assistant-credentials.json" ||
         name === "assistant-kiro-credentials.json"
