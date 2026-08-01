@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 플러그인 식별자를 `bedrock-assistant` → `obsidian-ai-assistant`로 바꾸고, 기존 사용자 데이터를 자동 복사 마이그레이션하며, `kiro-edition` 브랜치를 폐기해 단일 브랜치로 통합한다.
+**Goal:** 플러그인 식별자를 `bedrock-assistant` → `ai-assistant`로 바꾸고, 기존 사용자 데이터를 자동 복사 마이그레이션하며, `kiro-edition` 브랜치를 폐기해 단일 브랜치로 통합한다.
 
 **Architecture:** main 브랜치가 이미 프로바이더 4종(Bedrock/Gemini/OpenAI/Ollama)과 AI별 아이콘 전환을 갖추고 있다. 따라서 새 기능을 만들지 않고, 식별자 리네이밍 + 마이그레이션 + 정리에 집중한다. 마이그레이션은 "무엇을 복사할지 계산하는 순수 함수"와 "복사를 실행하는 얇은 호출부"로 분리해 테스트 가능성을 확보한다.
 
@@ -13,7 +13,7 @@
 - **기준 커밋:** `dc33868` (origin/main, 0.2.24). 작업 브랜치는 여기서 분기한다.
 - **작업 브랜치명:** `feat/unify-ai-assistant`
 - **목표 버전:** 0.3.0 (`manifest.json`, `package.json`, `versions.json` 3곳 일치)
-- **신 플러그인 ID:** `obsidian-ai-assistant` (하이픈, 소문자)
+- **신 플러그인 ID:** `ai-assistant` (하이픈, 소문자)
 - **레거시 ID 2개:** `bedrock-assistant`, `assistant-kiro` — 마이그레이션 소스로 둘 다 본다. 같은 대상에 둘 다 존재하면 `bedrock-assistant` 우선(main 계보가 정본).
 - **마이그레이션은 복사(copy)다.** 이동·삭제하지 않는다. 사용자가 구 버전으로 되돌려도 동작해야 한다.
 - **마이그레이션 실패는 삼킨다.** 예외를 던지면 플러그인 전체가 로드에 실패한다. 개별 작업을 각각 `try/catch`로 감싼다.
@@ -169,7 +169,7 @@ describe("planMigrations", () => {
   it("레거시 파일이 있고 신 파일이 없으면 복사 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".bedrock-assistant-index.json"]),
       ".obsidian"
     );
@@ -177,7 +177,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".bedrock-assistant-index.json",
-        to: ".obsidian-ai-assistant-index.json",
+        to: ".ai-assistant-index.json",
       },
     ]);
   });
@@ -185,10 +185,10 @@ describe("planMigrations", () => {
   it("신 파일이 이미 있으면 건너뛴다 (재실행 안전)", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
-        ".obsidian-ai-assistant-index.json",
+        ".ai-assistant-index.json",
       ]),
       ".obsidian"
     );
@@ -199,7 +199,7 @@ describe("planMigrations", () => {
   it("레거시 파일이 없으면 빈 배열을 반환한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([]),
       ".obsidian"
     );
@@ -210,7 +210,7 @@ describe("planMigrations", () => {
   it("두 레거시 ID에 같은 대상이 존재하면 앞선 ID를 우선한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".assistant-kiro-index.json",
@@ -226,7 +226,7 @@ describe("planMigrations", () => {
   it("두 레거시 ID가 서로 다른 파일을 가지면 둘 다 복사한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".assistant-kiro-chat.json",
@@ -236,15 +236,15 @@ describe("planMigrations", () => {
 
     expect(tasks).toHaveLength(2);
     expect(tasks.map((t) => t.to).sort()).toEqual([
-      ".obsidian-ai-assistant-chat.json",
-      ".obsidian-ai-assistant-index.json",
+      ".ai-assistant-chat.json",
+      ".ai-assistant-index.json",
     ]);
   });
 
   it("MCP 설정 경로도 계획에 포함한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".obsidian/plugins/bedrock-assistant/mcp.json"]),
       ".obsidian"
     );
@@ -252,7 +252,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".obsidian/plugins/bedrock-assistant/mcp.json",
-        to: ".obsidian/plugins/obsidian-ai-assistant/mcp.json",
+        to: ".obsidian/plugins/ai-assistant/mcp.json",
       },
     ]);
   });
@@ -262,7 +262,7 @@ describe("planMigrations", () => {
   it("data.json도 계획에 포함한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([".obsidian/plugins/bedrock-assistant/data.json"]),
       ".obsidian"
     );
@@ -270,7 +270,7 @@ describe("planMigrations", () => {
     expect(tasks).toEqual([
       {
         from: ".obsidian/plugins/bedrock-assistant/data.json",
-        to: ".obsidian/plugins/obsidian-ai-assistant/data.json",
+        to: ".obsidian/plugins/ai-assistant/data.json",
       },
     ]);
   });
@@ -278,19 +278,19 @@ describe("planMigrations", () => {
   it("configDir이 커스텀이어도 플러그인 폴더 경로를 올바르게 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom(["my-config/plugins/bedrock-assistant/mcp.json"]),
       "my-config"
     );
 
     expect(tasks[0].from).toBe("my-config/plugins/bedrock-assistant/mcp.json");
-    expect(tasks[0].to).toBe("my-config/plugins/obsidian-ai-assistant/mcp.json");
+    expect(tasks[0].to).toBe("my-config/plugins/ai-assistant/mcp.json");
   });
 
   it("볼트 데이터 4개와 플러그인 폴더 2개가 모두 있으면 6개 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       existsFrom([
         ".bedrock-assistant-index.json",
         ".bedrock-assistant-chat.json",
@@ -307,9 +307,9 @@ describe("planMigrations", () => {
 
   it("신 ID가 레거시 ID와 같으면 아무 작업도 만들지 않는다", () => {
     const tasks = planMigrations(
-      ["obsidian-ai-assistant"],
-      "obsidian-ai-assistant",
-      existsFrom([".obsidian-ai-assistant-index.json"]),
+      ["ai-assistant"],
+      "ai-assistant",
+      existsFrom([".ai-assistant-index.json"]),
       ".obsidian"
     );
 
@@ -321,23 +321,23 @@ describe("planCredentialMigration", () => {
   it("레거시 자격증명 파일이 있으면 파일명 쌍을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) => name === "bedrock-assistant-credentials.json"
     );
 
     expect(task).toEqual({
       from: "bedrock-assistant-credentials.json",
-      to: "obsidian-ai-assistant-credentials.json",
+      to: "ai-assistant-credentials.json",
     });
   });
 
   it("신 파일이 이미 있으면 null을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) =>
         name === "bedrock-assistant-credentials.json" ||
-        name === "obsidian-ai-assistant-credentials.json"
+        name === "ai-assistant-credentials.json"
     );
 
     expect(task).toBeNull();
@@ -346,7 +346,7 @@ describe("planCredentialMigration", () => {
   it("레거시 파일이 없으면 null을 반환한다", () => {
     const task = planCredentialMigration(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       () => false
     );
 
@@ -358,7 +358,7 @@ describe("planCredentialMigration", () => {
     // 존재로 잡혀 함수가 null을 반환하므로, 레거시 파일명을 정확히 열거한다.
     const task = planCredentialMigration(
       ["bedrock-assistant", "assistant-kiro"],
-      "obsidian-ai-assistant",
+      "ai-assistant",
       (name) =>
         name === "bedrock-assistant-credentials.json" ||
         name === "assistant-kiro-credentials.json"
@@ -643,9 +643,9 @@ git commit -m "feat: 플러그인 ID 변경용 마이그레이션 계획 함수 
 **Interfaces:**
 - Consumes: Task 1의 `planMigrations`, `planCredentialMigration`, `MigrationTask`
 - Produces:
-  - `BRANDING.pluginId === "obsidian-ai-assistant"`
-  - `BRANDING.viewType === "obsidian-ai-assistant-view"`
-  - `BRANDING.files` 4개 값이 `.obsidian-ai-assistant-*` 형태
+  - `BRANDING.pluginId === "ai-assistant"`
+  - `BRANDING.viewType === "ai-assistant-view"`
+  - `BRANDING.files` 4개 값이 `.ai-assistant-*` 형태
   - `GeminiAssistantPlugin.migrateLegacyData(): Promise<void>` (private)
 
 - [ ] **Step 1: 브랜딩 식별자 변경**
@@ -677,20 +677,20 @@ git commit -m "feat: 플러그인 ID 변경용 마이그레이션 계획 함수 
 
 ```typescript
   /** 플러그인 ID (폴더명, MCP clientInfo 등) — 고정값 */
-  pluginId: "obsidian-ai-assistant",
+  pluginId: "ai-assistant",
 
   /** UI에 표시되는 플러그인 이름 (백엔드에 따라 updateBranding으로 전환됨) */
   displayName: "Bedrock Assistant",
 
   /** 옵시디언 뷰 타입 식별자 — 고정값 */
-  viewType: "obsidian-ai-assistant-view",
+  viewType: "ai-assistant-view",
 
   /** 볼트 내 데이터 파일 경로 — 고정값 */
   files: {
-    index: ".obsidian-ai-assistant-index.json",
-    chatHistory: ".obsidian-ai-assistant-chat.json",
-    sessions: ".obsidian-ai-assistant-sessions.json",
-    sessionsBackup: ".obsidian-ai-assistant-sessions.json.bak",
+    index: ".ai-assistant-index.json",
+    chatHistory: ".ai-assistant-chat.json",
+    sessions: ".ai-assistant-sessions.json",
+    sessionsBackup: ".ai-assistant-sessions.json.bak",
   },
 ```
 
@@ -707,7 +707,7 @@ const CREDENTIALS_FILE = "bedrock-assistant-credentials.json";
 
 변경 후:
 ```typescript
-const CREDENTIALS_FILE = "obsidian-ai-assistant-credentials.json";
+const CREDENTIALS_FILE = "ai-assistant-credentials.json";
 ```
 
 - [ ] **Step 3: 레거시 ID 상수와 마이그레이션 메서드 추가**
@@ -929,7 +929,7 @@ Expected: 에러 없음.
 
 ```json
 {
-  "id": "obsidian-ai-assistant",
+  "id": "ai-assistant",
   "name": "AI Assistant",
   "version": "0.3.0",
   "minAppVersion": "1.4.0",
@@ -1364,9 +1364,9 @@ inclusion: always
 
 | 항목 | 값 |
 |---|---|
-| pluginId | `obsidian-ai-assistant` |
+| pluginId | `ai-assistant` |
 | manifest name | `AI Assistant` |
-| viewType | `obsidian-ai-assistant-view` |
+| viewType | `ai-assistant-view` |
 
 **과거 식별자(마이그레이션 소스):** `bedrock-assistant`(main 계보),
 `assistant-kiro`(kiro-edition 계보). `src/migration.ts`가 두 ID의 데이터를
@@ -1421,7 +1421,7 @@ inclusion: always
 
 민감 필드(`SENSITIVE_FIELDS`)는 볼트의 `data.json`에 저장하지 않는다.
 Electron `safeStorage`로 암호화해 userData 경로의
-`obsidian-ai-assistant-credentials.json`(권한 0600)에 둔다. 볼트가 클라우드
+`ai-assistant-credentials.json`(권한 0600)에 둔다. 볼트가 클라우드
 동기화되어도 키가 전파되지 않는다.
 
 OS 키체인을 쓸 수 없는 환경에서는 해당 필드를 파일에 아예 쓰지 않는다
@@ -1500,7 +1500,7 @@ grep -rn "bedrock-assistant\|Bedrock Assistant\|Assistant Kiro\|assistant-kiro" 
 | 위치 | 변경 |
 |---|---|
 | 최상단 제목 | `# Bedrock Assistant` → `# AI Assistant` |
-| 수동 설치 경로 | `.obsidian/plugins/bedrock-assistant/` → `.obsidian/plugins/obsidian-ai-assistant/` |
+| 수동 설치 경로 | `.obsidian/plugins/bedrock-assistant/` → `.obsidian/plugins/ai-assistant/` |
 | 설정 진입 경로 | `설정 → Bedrock Assistant` → `설정 → AI Assistant` (영어: `Settings → AI Assistant`, 일본어: `設定 → AI Assistant`) |
 | 배지 | AWS Bedrock 단독 배지가 있으면 4종 프로바이더를 반영하도록 조정. Buy Me A Coffee 배지는 그대로 유지 |
 
@@ -1509,7 +1509,7 @@ grep -rn "bedrock-assistant\|Bedrock Assistant\|Assistant Kiro\|assistant-kiro" 
 ```markdown
 ### 0.2.x에서 업그레이드
 
-0.3.0에서 플러그인 ID가 `bedrock-assistant`에서 `obsidian-ai-assistant`로
+0.3.0에서 플러그인 ID가 `bedrock-assistant`에서 `ai-assistant`로
 바뀌었습니다.
 
 - **플러그인 폴더가 달라지므로 재설치가 필요합니다.** BRAT을 쓰신다면 기존
@@ -1563,7 +1563,7 @@ grep -n "Assistant Kiro\|Bedrock Assistant\|bedrock-assistant" docs/second-brain
 
 ### Breaking
 
-- 플러그인 ID를 `bedrock-assistant` → `obsidian-ai-assistant`로 변경. 플러그인
+- 플러그인 ID를 `bedrock-assistant` → `ai-assistant`로 변경. 플러그인
   폴더가 바뀌므로 재설치가 필요하고, 사이드바를 한 번 다시 열어야 한다.
 - `kiro-edition` 브랜치 폐기. Bedrock 전용 에디션은 main으로 통합되었고,
   `assistant-kiro` 데이터도 자동 마이그레이션 대상이다.
@@ -1667,8 +1667,8 @@ diff에 포함됐으면 해당 파일만 커밋에서 되돌린다.
 ```bash
 # 테스트용 볼트 경로를 VAULT로 지정
 VAULT=~/path/to/test-vault
-mkdir -p "$VAULT/.obsidian/plugins/obsidian-ai-assistant"
-cp main.js styles.css manifest.json "$VAULT/.obsidian/plugins/obsidian-ai-assistant/"
+mkdir -p "$VAULT/.obsidian/plugins/ai-assistant"
+cp main.js styles.css manifest.json "$VAULT/.obsidian/plugins/ai-assistant/"
 ```
 
 옵시디언에서 플러그인을 켜고 확인할 것:
@@ -1695,14 +1695,14 @@ echo '{"aiBackend":"ollama","awsRegion":"ap-northeast-2","chatFontSize":19}' \
 옵시디언에서 플러그인을 껐다 켜고 확인:
 
 ```bash
-ls -la "$VAULT"/.obsidian-ai-assistant-*.json
-ls -la "$VAULT/.obsidian/plugins/obsidian-ai-assistant/"
-cat "$VAULT/.obsidian-ai-assistant-chat.json"
+ls -la "$VAULT"/.ai-assistant-*.json
+ls -la "$VAULT/.obsidian/plugins/ai-assistant/"
+cat "$VAULT/.ai-assistant-chat.json"
 ls -la "$VAULT/.bedrock-assistant-chat.json"
 ```
 
 Expected:
-- `.obsidian-ai-assistant-chat.json`이 생겼고 내용이 `{"test":"bedrock-legacy"}`
+- `.ai-assistant-chat.json`이 생겼고 내용이 `{"test":"bedrock-legacy"}`
 - `data.json`과 `mcp.json`이 새 플러그인 폴더에 복사됐다
 - **구 파일이 그대로 남아 있다** (복사이므로)
 - 복사 건수를 알리는 Notice가 떴다
@@ -1720,7 +1720,7 @@ Expected:
 
 재실행 안전성 확인 — 플러그인을 다시 껐다 켰을 때:
 - Notice가 다시 뜨지 않는다 (대상이 이미 있어 작업이 0건)
-- `.obsidian-ai-assistant-chat.json` 내용이 덮어써지지 않는다
+- `.ai-assistant-chat.json` 내용이 덮어써지지 않는다
 - **설정 변경이 유지된다.** 설정에서 값을 바꾸고 재시작했을 때 구 `data.json`이
   덮어쓰지 않아야 한다(대상이 이미 있으면 건너뛰므로).
 
@@ -1731,7 +1731,7 @@ git push -u origin feat/unify-ai-assistant
 gh pr create --title "feat!: obsidian-ai-assistant로 리네이밍 및 단일 브랜치 통합" --body "$(cat <<'EOF'
 ## Summary
 
-- 플러그인 ID를 `bedrock-assistant` → `obsidian-ai-assistant`로 변경하고, 구 ID(`bedrock-assistant`, `assistant-kiro`) 데이터를 첫 실행 시 자동 복사
+- 플러그인 ID를 `bedrock-assistant` → `ai-assistant`로 변경하고, 구 ID(`bedrock-assistant`, `assistant-kiro`) 데이터를 첫 실행 시 자동 복사
 - `kiro-edition` 브랜치 폐기 준비 — 델타 감사 결과 kiro 고유 코드 개선은 0건, 문서는 #11·#12에서 이미 반영됨
 - 추천 플러그인(Code Styler, Tasks) 설치 여부 감지
 - 임베딩 API를 제공하지 않는 벤더는 백엔드로 지원하지 않는다는 정책을 steering에 기록 (Anthropic 직접 API 제외 근거)
