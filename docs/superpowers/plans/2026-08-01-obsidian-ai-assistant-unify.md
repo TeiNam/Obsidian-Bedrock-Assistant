@@ -1514,9 +1514,10 @@ grep -rn "bedrock-assistant\|Bedrock Assistant\|Assistant Kiro\|assistant-kiro" 
 
 - **플러그인 폴더가 달라지므로 재설치가 필요합니다.** BRAT을 쓰신다면 기존
   항목을 제거하고 다시 추가하세요.
-- 볼트 인덱스, 채팅 기록, 세션, MCP 설정, 자격증명은 **첫 실행 시 자동으로
-  복사됩니다.** 구 파일은 지우지 않고 남겨두므로 이전 버전으로 되돌려도
-  그대로 동작합니다.
+- **설정(`data.json`)**, 볼트 인덱스, 채팅 기록, 세션, MCP 설정, 자격증명은
+  **첫 실행 시 자동으로 복사됩니다.** 백엔드 선택, 모델, 리전, Second Brain
+  설정, 커스텀 스킬이 모두 그대로 유지됩니다. 구 파일은 지우지 않고 남겨두므로
+  이전 버전으로 되돌려도 그대로 동작합니다.
 - **사이드바를 한 번 다시 열어야 합니다.** 옵시디언이 워크스페이스 레이아웃에
   뷰 식별자를 기록하는데, 이 값은 플러그인이 대신 옮길 수 없습니다.
 - 복사가 끝나면 알림이 뜹니다. 구 데이터 파일(`.bedrock-assistant-*.json`)은
@@ -1569,9 +1570,9 @@ grep -n "Assistant Kiro\|Bedrock Assistant\|bedrock-assistant" docs/second-brain
 
 ### 추가
 
-- 구 플러그인 ID(`bedrock-assistant`, `assistant-kiro`)의 볼트 데이터, MCP 설정,
-  자격증명을 첫 실행 시 새 경로로 자동 복사. 원본은 보존하므로 이전 버전으로
-  되돌려도 동작한다.
+- 구 플러그인 ID(`bedrock-assistant`, `assistant-kiro`)의 설정(`data.json`),
+  볼트 데이터, MCP 설정, 자격증명을 첫 실행 시 새 경로로 자동 복사. 원본은
+  보존하므로 이전 버전으로 되돌려도 동작한다.
 - 추천 플러그인(Code Styler, Tasks) 설치 여부를 감지해, 이미 설치한 경우
   설치 버튼 대신 "설치됨" 배지를 표시.
 
@@ -1686,28 +1687,42 @@ VAULT=~/path/to/test-vault
 echo '{"test":"bedrock-legacy"}' > "$VAULT/.bedrock-assistant-chat.json"
 mkdir -p "$VAULT/.obsidian/plugins/bedrock-assistant"
 echo '{"mcpServers":{}}' > "$VAULT/.obsidian/plugins/bedrock-assistant/mcp.json"
+# data.json — 가장 중요한 대상. 설정이 승계되는지 확인하려면 식별 가능한 값을 넣는다.
+echo '{"aiBackend":"ollama","awsRegion":"ap-northeast-2","chatFontSize":19}' \
+  > "$VAULT/.obsidian/plugins/bedrock-assistant/data.json"
 ```
 
 옵시디언에서 플러그인을 껐다 켜고 확인:
 
 ```bash
 ls -la "$VAULT"/.obsidian-ai-assistant-*.json
-ls -la "$VAULT/.obsidian/plugins/obsidian-ai-assistant/mcp.json"
+ls -la "$VAULT/.obsidian/plugins/obsidian-ai-assistant/"
 cat "$VAULT/.obsidian-ai-assistant-chat.json"
 ls -la "$VAULT/.bedrock-assistant-chat.json"
 ```
 
 Expected:
 - `.obsidian-ai-assistant-chat.json`이 생겼고 내용이 `{"test":"bedrock-legacy"}`
-- `mcp.json`이 새 플러그인 폴더에 복사됐다
+- `data.json`과 `mcp.json`이 새 플러그인 폴더에 복사됐다
 - **구 파일이 그대로 남아 있다** (복사이므로)
 - 복사 건수를 알리는 Notice가 떴다
+
+**설정 승계 확인이 이 단계의 핵심이다.** 옵시디언 설정 화면을 열어:
+- AI 백엔드가 **Ollama**로 선택돼 있다 (기본값 Bedrock이 아니다)
+- AWS 리전이 `ap-northeast-2`다
+- 채팅 글꼴 크기가 19다
+
+세 값 중 하나라도 기본값으로 돌아가 있으면 `data.json` 마이그레이션이 동작하지
+않은 것이다 — 사용자 설정 전체가 날아가는 회귀이므로 반드시 원인을 찾는다.
+`data.json`을 읽는 `loadSettings()`가 복사보다 먼저 실행되지 않았는지 확인한다.
 
 `assistant-kiro` 접두사로도 같은 절차를 반복한다.
 
 재실행 안전성 확인 — 플러그인을 다시 껐다 켰을 때:
 - Notice가 다시 뜨지 않는다 (대상이 이미 있어 작업이 0건)
 - `.obsidian-ai-assistant-chat.json` 내용이 덮어써지지 않는다
+- **설정 변경이 유지된다.** 설정에서 값을 바꾸고 재시작했을 때 구 `data.json`이
+  덮어쓰지 않아야 한다(대상이 이미 있으면 건너뛰므로).
 
 - [ ] **Step 7: 푸시와 PR**
 
