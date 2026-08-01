@@ -89,13 +89,16 @@ The sidebar icon, model list, and branding update dynamically when you switch.
 
 ### 2. Configure Credentials
 
-**Bedrock:** Choose one of three authentication methods, then set the AWS Region.
+**Bedrock:** Choose one of two authentication methods, then set the AWS Region.
 
 | Method | What you provide |
 |--------|------------------|
-| Access Key | AWS Access Key ID and Secret Access Key |
 | Bedrock API Key | A long-term Bedrock API key, sent as a bearer token |
 | AWS Profile | A profile name from `~/.aws/config` or `~/.aws/credentials`. For SSO profiles, run `aws sso login --profile <name>` in a terminal first. |
+
+For SSO profile setup, token expiry, and using multiple machines: [AWS SSO setup guide](docs/aws-sso-setup-kr.md) (Korean)
+
+> Long-term AWS access key authentication was removed in 0.3.0. Existing access-key settings migrate to the profile method, and you will need to pick a profile in settings.
 
 Required IAM permissions:
 - `bedrock:InvokeModelWithResponseStream`

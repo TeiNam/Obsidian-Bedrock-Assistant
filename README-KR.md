@@ -89,13 +89,16 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 
 ### 2. 자격증명 구성
 
-**Bedrock:** 세 가지 인증 방식 중 하나를 선택한 후 AWS Region을 설정합니다.
+**Bedrock:** 두 가지 인증 방식 중 하나를 선택한 후 AWS Region을 설정합니다.
 
 | 방식 | 입력 항목 |
 |------|-----------|
-| Access Key | AWS Access Key ID와 Secret Access Key |
 | Bedrock API Key | 장기 Bedrock API 키(bearer 토큰으로 전송) |
 | AWS Profile | `~/.aws/config` 또는 `~/.aws/credentials`의 프로필 이름. SSO 프로필은 터미널에서 먼저 `aws sso login --profile <name>` 실행 필요 |
+
+SSO 프로필 설정, 토큰 만료 대응, 여러 기기에서 사용하기: [AWS SSO 설정 가이드](docs/aws-sso-setup-kr.md)
+
+> 장기 AWS 액세스 키 인증은 0.3.0에서 제거했습니다. 액세스 키를 쓰던 설정은 프로필 방식으로 자동 전환되며, 설정에서 프로필을 선택해야 합니다.
 
 필수 IAM 권한:
 - `bedrock:InvokeModelWithResponseStream`
