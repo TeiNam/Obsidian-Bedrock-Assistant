@@ -129,20 +129,20 @@ export function getBranding(aiBackend: GeminiAssistantSettings["aiBackend"]): Sw
 
 export let BRANDING: BrandingConfig = {
   /** 플러그인 ID (폴더명, MCP clientInfo 등) — 고정값 */
-  pluginId: "bedrock-assistant",
+  pluginId: "obsidian-ai-assistant",
 
-  /** UI에 표시되는 플러그인 이름 */
+  /** UI에 표시되는 플러그인 이름 (백엔드에 따라 updateBranding으로 전환됨) */
   displayName: "Bedrock Assistant",
 
   /** 옵시디언 뷰 타입 식별자 — 고정값 */
-  viewType: "bedrock-assistant-view",
+  viewType: "obsidian-ai-assistant-view",
 
   /** 볼트 내 데이터 파일 경로 — 고정값 */
   files: {
-    index: ".bedrock-assistant-index.json",
-    chatHistory: ".bedrock-assistant-chat.json",
-    sessions: ".bedrock-assistant-sessions.json",
-    sessionsBackup: ".bedrock-assistant-sessions.json.bak",
+    index: ".obsidian-ai-assistant-index.json",
+    chatHistory: ".obsidian-ai-assistant-chat.json",
+    sessions: ".obsidian-ai-assistant-sessions.json",
+    sessionsBackup: ".obsidian-ai-assistant-sessions.json.bak",
   },
 
   /** 아이콘 설정 */

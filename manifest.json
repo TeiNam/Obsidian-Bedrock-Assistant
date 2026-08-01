@@ -1,9 +1,9 @@
 {
-  "id": "bedrock-assistant",
-  "name": "Bedrock Assistant",
-  "version": "0.2.24",
+  "id": "obsidian-ai-assistant",
+  "name": "AI Assistant",
+  "version": "0.3.0",
   "minAppVersion": "1.4.0",
-  "description": "AI assistant sidebar with dual backend support for AWS Bedrock and Google Gemini. Includes chat, vault indexing, to-do management, web clipper, and MCP server integration.",
+  "description": "AI assistant sidebar with four backends (AWS Bedrock, Google Gemini, OpenAI, Ollama). Includes chat, Graph RAG vault search, Second Brain layer, to-do management, web clipper, and MCP server integration.",
   "author": "teinam",
   "authorUrl": "https://github.com/teinam",
   "isDesktopOnly": true,

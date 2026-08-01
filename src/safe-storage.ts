@@ -20,11 +20,13 @@ declare class Buffer {
   toString(encoding: string): string;
 }
 
+import { planCredentialMigration } from "./migration";
+
 // 암호화된 값 식별 접두사
 const ENCRYPTED_PREFIX = "enc:";
 
 // 로컬 전용 자격증명 파일명
-const CREDENTIALS_FILE = "bedrock-assistant-credentials.json";
+const CREDENTIALS_FILE = "obsidian-ai-assistant-credentials.json";
 
 // Node.js 모듈 (Obsidian/Electron 런타임에서 사용 가능)
 const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();
@@ -252,4 +254,50 @@ export function decryptSettings<T extends object>(settings: T): T {
     }
   }
   return result as T;
+}
+
+/**
+ * 구 플러그인 ID의 자격증명 파일을 새 ID 파일명으로 복사한다.
+ *
+ * 복사이지 이동이 아니다. 대상이 이미 있으면 아무것도 하지 않는다.
+ * 암복호화는 하지 않는다 — 암호화된 Base64 문자열을 그대로 옮기며,
+ * OS 키체인 키가 동일 기기에서 유지되므로 복호화는 계속 가능하다.
+ *
+ * @returns 복사를 수행했으면 true
+ */
+export function migrateCredentialsFile(
+  legacyIds: readonly string[],
+  newId: string
+): boolean {
+  const dir = getLocalStoragePath();
+  if (!dir || !nodeFs || !nodePath) return false;
+
+  const exists = (fileName: string): boolean => {
+    try {
+      return nodeFs.existsSync(nodePath.join(dir, fileName));
+    } catch {
+      return false;
+    }
+  };
+
+  const task = planCredentialMigration(legacyIds, newId, exists);
+  if (!task) return false;
+
+  try {
+    const data = nodeFs.readFileSync(nodePath.join(dir, task.from), "utf-8");
+    // 자격증명 파일은 소유자만 읽고 쓸 수 있어야 한다(0600).
+    nodeFs.writeFileSync(nodePath.join(dir, task.to), data, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    try {
+      nodeFs.chmodSync(nodePath.join(dir, task.to), 0o600);
+    } catch {
+      // Windows 등 chmod 미지원 환경은 무시한다.
+    }
+    return true;
+  } catch (e) {
+    console.error("자격증명 파일 복사 실패:", e);
+    return false;
+  }
 }

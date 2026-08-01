@@ -14,9 +14,11 @@ import {
   saveCredentialsToLocal,
   loadCredentialsFromLocal,
   SENSITIVE_FIELDS,
+  migrateCredentialsFile,
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
+import { planMigrations, planCredentialMigration } from "./migration";
 import {
   activeChatModelId,
   clampEffort,
@@ -53,6 +55,13 @@ const CHAT_HISTORY_FILE = BRANDING.files.chatHistory;
 const CHAT_SESSIONS_FILE = BRANDING.files.sessions;
 const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
+
+/**
+ * 구 플러그인 ID 목록. pluginId가 obsidian-ai-assistant로 바뀌기 전의 값들이다.
+ * 배열 순서가 우선순위다 — 같은 대상 파일에 둘 다 후보로 걸리면 앞선 것을 택한다.
+ * bedrock-assistant가 main 계보의 정본이므로 앞에 둔다.
+ */
+const LEGACY_PLUGIN_IDS = ["bedrock-assistant", "assistant-kiro"] as const;
 
 // 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa + time).
 // 설정 파일이 없을 때 편집창에 미리 채워주는 용도이며, 저장 전까지는 자동 연결되지 않는다.
@@ -119,6 +128,10 @@ export default class GeminiAssistantPlugin extends Plugin {
   private lastAccountScope = "";
 
   async onload(): Promise<void> {
+    // 구 플러그인 ID의 데이터를 새 경로로 복사한다. loadSettings보다 먼저
+    // 실행해야 자격증명 파일이 제자리에 있는 상태로 설정을 읽을 수 있다.
+    await this.migrateLegacyData();
+
     await this.loadSettings();
 
     // 초기 브랜딩 설정 (로드된 설정의 aiBackend에 맞게 갱신)
@@ -935,6 +948,92 @@ export default class GeminiAssistantPlugin extends Plugin {
     for (const backend of backends) {
       const { icon } = getBranding(backend);
       if (icon.svg) addIcon(icon.id, icon.svg);
+    }
+  }
+
+  /**
+   * 구 플러그인 ID로 저장된 데이터를 새 ID 경로로 복사한다.
+   *
+   * 복사이지 이동이 아니다 — 사용자가 구 버전으로 되돌려도 계속 동작해야 한다.
+   * 대상 파일이 이미 있으면 건너뛰므로 여러 번 실행해도 안전하다.
+   *
+   * 실패는 전부 삼킨다. 마이그레이션이 실패해도 최악의 결과는 "새 파일로 시작"
+   * (인덱스 재생성, 자격증명 재입력)인데, 여기서 예외를 던지면 플러그인 전체가
+   * 로드에 실패해 사용자가 아무것도 쓸 수 없게 된다.
+   */
+  private async migrateLegacyData(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    let copiedCount = 0;
+
+    // --- 볼트 내 파일 (데이터 4종 + MCP 설정) ---
+    //
+    // planMigrations는 동기 exists를 요구하므로, 후보 경로의 존재 여부를 미리
+    // 조회해 집합으로 만든 뒤 넘긴다. 후보 수가 적어(레거시 2개 × 5경로 + 신
+    // 5경로) 일괄 조회 비용이 무시할 만하다.
+    try {
+      const configDir = this.app.vault.configDir;
+      const candidates = new Set<string>();
+      for (const id of [...LEGACY_PLUGIN_IDS, BRANDING.pluginId]) {
+        candidates.add(`.${id}-index.json`);
+        candidates.add(`.${id}-chat.json`);
+        candidates.add(`.${id}-sessions.json`);
+        candidates.add(`.${id}-sessions.json.bak`);
+        // data.json은 설정 전체를 담고 있어 가장 중요하다. mcp.json과 같은 폴더에 있다.
+        candidates.add(`${configDir}/plugins/${id}/data.json`);
+        candidates.add(`${configDir}/plugins/${id}/mcp.json`);
+      }
+
+      const existing = new Set<string>();
+      for (const path of candidates) {
+        try {
+          if (await adapter.exists(path)) existing.add(path);
+        } catch {
+          // 개별 경로 조회 실패는 "없음"으로 취급한다.
+        }
+      }
+
+      const tasks = planMigrations(
+        LEGACY_PLUGIN_IDS,
+        BRANDING.pluginId,
+        (p) => existing.has(p),
+        configDir
+      );
+
+      for (const task of tasks) {
+        try {
+          const data = await adapter.read(task.from);
+          // 대상 디렉터리가 없을 수 있다(MCP 설정의 플러그인 폴더).
+          const dir = task.to.substring(0, task.to.lastIndexOf("/"));
+          if (dir && !(await adapter.exists(dir))) {
+            await adapter.mkdir(dir);
+          }
+          await adapter.write(task.to, data);
+          copiedCount++;
+        } catch (e) {
+          console.error(`마이그레이션 실패 (${task.from} → ${task.to}):`, e);
+        }
+      }
+    } catch (e) {
+      console.error("볼트 데이터 마이그레이션 실패:", e);
+    }
+
+    // --- 로컬 자격증명 파일 (Electron userData, 볼트 밖) ---
+    try {
+      if (migrateCredentialsFile(LEGACY_PLUGIN_IDS, BRANDING.pluginId)) {
+        copiedCount++;
+      }
+    } catch (e) {
+      console.error("자격증명 마이그레이션 실패:", e);
+    }
+
+    // 복사가 한 건이라도 있었으면 구 파일이 남아 있음을 알린다.
+    // 인덱스 파일은 임베딩 때문에 수십 MB일 수 있어 사용자가 정리하고 싶을 수 있다.
+    if (copiedCount > 0) {
+      new Notice(
+        `기존 데이터 ${copiedCount}건을 새 플러그인 ID로 복사했습니다. ` +
+          `구 파일(.bedrock-assistant-*, .assistant-kiro-*)은 남아 있으니 수동으로 지워도 됩니다.`,
+        10000
+      );
     }
   }
 
