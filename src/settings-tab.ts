@@ -8,6 +8,7 @@ import { BRANDING, updateBranding } from "./branding";
 import { CleanArchiveModal } from "./modals/clean-archive-modal";
 import { ParaModal } from "./modals/para-modal";
 import { VIEW_I18N } from "./chat-view-i18n";
+import { isPluginEnabled } from "./plugin-detect";
 import { validateJson, matchBrackets, formatJson, getDefaultTemplate } from "./json-editor-utils";
 import type { JsonValidationResult, BracketMatchResult } from "./json-editor-utils";
 import { normalizePlannerSetting } from "./planner-settings";
@@ -148,6 +149,7 @@ export const I18N = {
     chatFontSizeDesc: "Font size for the chat area (px)",
     codeStylerInstall: "Install Code Styler",
     codeStylerInfo: "Install the Code Styler plugin to enhance code block rendering with language-specific styling.",
+    pluginInstalled: "Installed",
     recommendedPlugins: "Recommended Plugins",
     todo: "To-Do",
     todoFolder: "To-Do Folder",
@@ -358,6 +360,7 @@ export const I18N = {
     chatFontSizeDesc: "채팅 영역의 글자 크기 (px)",
     codeStylerInstall: "Code Styler 설치",
     codeStylerInfo: "Code Styler 플러그인을 설치하면 코드 블록이 언어별 스타일로 더 보기 좋게 렌더링됩니다.",
+    pluginInstalled: "설치됨",
     recommendedPlugins: "추천 플러그인",
     todo: "To-Do",
     todoFolder: "To-Do 폴더",
@@ -568,6 +571,7 @@ export const I18N = {
     chatFontSizeDesc: "チャットエリアのフォントサイズ (px)",
     codeStylerInstall: "Code Stylerをインストール",
     codeStylerInfo: "Code Stylerプラグインをインストールして、言語別スタイリングでコードブロックの表示を強化します。",
+    pluginInstalled: "インストール済み",
     recommendedPlugins: "おすすめプラグイン",
     todo: "To-Do",
     todoFolder: "To-Doフォルダ",
@@ -1839,21 +1843,47 @@ export class GeminiSettingTab extends PluginSettingTab {
     // 추천 플러그인 설치 안내 (설정 화면 맨 아래로 이동)
     new Setting(containerEl).setName(t.recommendedPlugins).setHeading();
 
-    const codeStylerSetting = new Setting(containerEl)
-      .setName(t.codeStylerInstall)
-      .setDesc(t.codeStylerInfo);
-    codeStylerSetting.addButton((btn) =>
-      btn.setButtonText(t.codeStylerInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=code-styler");
-      })
+    // 이미 설치한 사용자에게 설치 버튼을 계속 보여주지 않도록 활성 여부를 확인한다.
+    this.addRecommendedPlugin(
+      containerEl,
+      "code-styler",
+      t.codeStylerInstall,
+      t.codeStylerInfo,
+      t.pluginInstalled
     );
+    this.addRecommendedPlugin(
+      containerEl,
+      "obsidian-tasks-plugin",
+      t.todoTasksInstall,
+      t.todoTasksInfo,
+      t.pluginInstalled
+    );
+  }
 
-    const tasksSetting = new Setting(containerEl)
-      .setName(t.todoTasksInstall)
-      .setDesc(t.todoTasksInfo);
-    tasksSetting.addButton((btn) =>
-      btn.setButtonText(t.todoTasksInstall).onClick(() => {
-        window.open("obsidian://show-plugin?id=obsidian-tasks-plugin");
+  /**
+   * 추천 플러그인 항목을 추가한다.
+   * 이미 활성화된 플러그인은 설치 버튼 대신 "설치됨" 배지를 보여준다.
+   */
+  private addRecommendedPlugin(
+    containerEl: HTMLElement,
+    pluginId: string,
+    installLabel: string,
+    description: string,
+    installedLabel: string
+  ): void {
+    const setting = new Setting(containerEl).setName(installLabel).setDesc(description);
+
+    if (isPluginEnabled(this.app, pluginId)) {
+      // 설치·활성 상태 — 버튼 대신 정적 배지를 표시한다.
+      const badge = setting.controlEl.createSpan({ cls: "ba-plugin-installed" });
+      setIcon(badge, "check");
+      badge.createSpan({ text: installedLabel });
+      return;
+    }
+
+    setting.addButton((btn) =>
+      btn.setButtonText(installLabel).onClick(() => {
+        window.open(`obsidian://show-plugin?id=${pluginId}`);
       })
     );
   }

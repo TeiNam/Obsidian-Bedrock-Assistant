@@ -1845,3 +1845,17 @@ body.theme-light .ba-message-content pre {
   color: var(--text-muted);
   margin-top: 2px;
 }
+
+/* 추천 플러그인 "설치됨" 배지 */
+.ba-plugin-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  color: var(--text-success);
+  font-size: var(--font-ui-small);
+}
+
+.ba-plugin-installed svg {
+  width: 1em;
+  height: 1em;
+}
