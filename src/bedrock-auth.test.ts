@@ -53,11 +53,42 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     expect(config.authSchemePreference).toBeUndefined();
   });
 
-  it("accessKey: 키가 비어 있으면 SDK 기본 체인에 위임한다(기존 동작 유지)", () => {
+  it("accessKey: 키가 비어 있으면 fail-closed로 거부한다(기본 체인 폴백 금지)", async () => {
+    // 과거에는 config.credentials를 비워 SDK 기본 자격증명 체인에 위임했다.
+    // 그러면 ~/.aws/credentials의 [default] 프로필이나 환경변수·IAM 역할이
+    // 집혀, 사용자가 선택하지 않은 AWS 계정으로 노트 내용이 전송되고 과금된다.
+    // 특히 볼트 인덱싱은 자동으로 대량 호출하므로 눈치채기 전에 번진다.
     const config = buildBedrockClientConfig(
       makeSettings({ awsAuthMethod: "accessKey", awsAccessKeyId: "" })
     );
-    expect(config.credentials).toBeUndefined();
+    expect(typeof config.credentials).toBe("function");
+    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
+      /자격증명/
+    );
+  });
+
+  it("accessKey: Access Key ID만 있고 Secret이 비어 있으면 fail-closed로 거부한다", async () => {
+    // 한쪽만 채운 상태로 서명하면 InvalidSignatureException이 나는데, 그 오류만
+    // 보고는 원인을 알기 어렵다. 설정 단계에서 명확히 막는다.
+    const config = buildBedrockClientConfig(
+      makeSettings({ awsAuthMethod: "accessKey", awsAccessKeyId: "AKID", awsSecretAccessKey: "" })
+    );
+    expect(typeof config.credentials).toBe("function");
+    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
+      /자격증명/
+    );
+  });
+
+  it("awsAuthMethod가 없는 구버전 설정도 키가 비면 fail-closed다", async () => {
+    // DEFAULT_SETTINGS의 awsAuthMethod는 "accessKey"이므로 구버전 data.json을
+    // 병합한 사용자가 이 분기에 놓인다. 여기서 폴백하면 조용히 남의 계정을 쓴다.
+    const settings = makeSettings({ awsAccessKeyId: "" });
+    delete (settings as Record<string, unknown>).awsAuthMethod;
+    const config = buildBedrockClientConfig(settings);
+    expect(typeof config.credentials).toBe("function");
+    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
+      /자격증명/
+    );
   });
 
   it("apiKey: 베어러 토큰과 httpBearerAuth 우선순위를 설정한다", () => {
