@@ -18,7 +18,7 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
-import { planMigrations, planCredentialMigration } from "./migration";
+import { planMigrations } from "./migration";
 import {
   activeChatModelId,
   clampEffort,
@@ -126,11 +126,13 @@ export default class GeminiAssistantPlugin extends Plugin {
   private accessLogSaveTimer: ReturnType<typeof setTimeout> | null = null;
   // 마지막으로 관측한 계정 스코프(백엔드·인증·리전). 변경 시 모델 캐시를 비운다.
   private lastAccountScope = "";
+  // 마이그레이션 복사 건수 누적 (두 단계 분리에 따라 집계용)
+  private migratedFileCount = 0;
 
   async onload(): Promise<void> {
-    // 구 플러그인 ID의 데이터를 새 경로로 복사한다. loadSettings보다 먼저
-    // 실행해야 자격증명 파일이 제자리에 있는 상태로 설정을 읽을 수 있다.
-    await this.migrateLegacyData();
+    // 구 플러그인 ID의 설정·자격증명 파일을 새 경로로 복사한다. loadSettings보다
+    // 먼저 실행해야 자격증명 파일이 제자리에 있는 상태로 설정을 읽을 수 있다.
+    await this.migrateSettingsFiles();
 
     await this.loadSettings();
 
@@ -188,8 +190,9 @@ export default class GeminiAssistantPlugin extends Plugin {
       this.app.workspace.onLayoutReady(() => refreshMcpIndicator());
     }).catch((e) => console.error("MCP 설정 로드 실패:", e));
 
-    // 인덱스 로드 후 Second Brain 스케줄러를 트리거한다 (Req 11.1).
+    // 볼트 데이터 마이그레이션(2단계) → 인덱스 로드 → Second Brain 스케줄러 (Req 11.1).
     //
+    // 인덱스 파일 복사가 loadIndex보다 먼저 완료돼야 복사본을 읽을 수 있다.
     // 두 작업을 각각 별도 onLayoutReady 콜백으로 등록하면, 인덱스 로드가 첫 await에서
     // 중단된 사이 스케줄러가 시작되어 "빈 인덱스"로 카탈로그를 덮어쓴다. 반드시
     // 로드 완료를 기다린 뒤 실행해야 한다.
@@ -198,6 +201,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 여기서는 무조건 호출해도 옵트인 격리가 보장된다(비활성 시 아무 동작 없음).
     this.app.workspace.onLayoutReady(() => {
       void (async () => {
+        try {
+          await this.migrateVaultDataFiles();
+        } catch (e) {
+          console.error("볼트 데이터 마이그레이션 실패:", e);
+        }
         try {
           await this.loadIndex();
         } catch (e) {
@@ -952,7 +960,10 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   /**
-   * 구 플러그인 ID로 저장된 데이터를 새 ID 경로로 복사한다.
+   * 구 플러그인 ID의 설정 파일을 새 ID 경로로 복사한다(1단계: 블로킹 허용).
+   *
+   * loadSettings가 읽어야 하는 data.json·mcp.json과 자격증명 파일만 다룬다.
+   * 볼트 루트 데이터(인덱스 등)는 migrateVaultDataFiles로 분리했다.
    *
    * 복사이지 이동이 아니다 — 사용자가 구 버전으로 되돌려도 계속 동작해야 한다.
    * 대상 파일이 이미 있으면 건너뛰므로 여러 번 실행해도 안전하다.
@@ -961,15 +972,15 @@ export default class GeminiAssistantPlugin extends Plugin {
    * (인덱스 재생성, 자격증명 재입력)인데, 여기서 예외를 던지면 플러그인 전체가
    * 로드에 실패해 사용자가 아무것도 쓸 수 없게 된다.
    */
-  private async migrateLegacyData(): Promise<void> {
+  private async migrateSettingsFiles(): Promise<void> {
     const adapter = this.app.vault.adapter;
-    let copiedCount = 0;
 
-    // --- 볼트 내 파일 (데이터 4종 + MCP 설정) ---
-    //
     // planMigrations는 동기 exists를 요구하므로, 후보 경로의 존재 여부를 미리
-    // 조회해 집합으로 만든 뒤 넘긴다. 후보 수가 적어(레거시 2개 × 5경로 + 신
-    // 5경로) 일괄 조회 비용이 무시할 만하다.
+    // 조회해 집합으로 만든 뒤 넘긴다. 후보 수가 적어(레거시 2개 × 6경로 + 신
+    // 6경로) 일괄 조회 비용이 무시할 만하다.
+    //
+    // 반환된 태스크 중 플러그인 폴더(data.json, mcp.json)만 이 단계에서 실행하고,
+    // 볼트 루트 데이터 파일(4종)은 onLayoutReady의 migrateVaultDataFiles로 미룬다.
     try {
       const configDir = this.app.vault.configDir;
       const candidates = new Set<string>();
@@ -992,45 +1003,105 @@ export default class GeminiAssistantPlugin extends Plugin {
         }
       }
 
-      const tasks = planMigrations(
+      const allTasks = planMigrations(
         LEGACY_PLUGIN_IDS,
         BRANDING.pluginId,
         (p) => existing.has(p),
         configDir
       );
 
-      for (const task of tasks) {
+      // 플러그인 폴더 태스크만 필터링한다(to 경로에 configDir이 포함됨).
+      const settingsTasks = allTasks.filter((t) => t.to.startsWith(`${configDir}/`));
+
+      for (const task of settingsTasks) {
         try {
           const data = await adapter.read(task.from);
-          // 대상 디렉터리가 없을 수 있다(MCP 설정의 플러그인 폴더).
+          // 대상 디렉터리가 없을 수 있다(플러그인 폴더).
           const dir = task.to.substring(0, task.to.lastIndexOf("/"));
           if (dir && !(await adapter.exists(dir))) {
             await adapter.mkdir(dir);
           }
           await adapter.write(task.to, data);
-          copiedCount++;
+          this.migratedFileCount++;
         } catch (e) {
-          console.error(`마이그레이션 실패 (${task.from} → ${task.to}):`, e);
+          console.error(`설정 마이그레이션 실패 (${task.from} → ${task.to}):`, e);
+        }
+      }
+    } catch (e) {
+      console.error("설정 파일 마이그레이션 실패:", e);
+    }
+
+    // --- 로컬 자격증명 파일 (Electron userData, 볼트 밖) ---
+    try {
+      if (migrateCredentialsFile(LEGACY_PLUGIN_IDS, BRANDING.pluginId)) {
+        this.migratedFileCount++;
+      }
+    } catch (e) {
+      console.error("자격증명 마이그레이션 실패:", e);
+    }
+  }
+
+  /**
+   * 구 플러그인 ID의 볼트 루트 데이터 파일을 새 ID 경로로 복사한다(2단계: 지연 실행).
+   *
+   * 인덱스·채팅·세션 파일은 loadIndex와 채팅 뷰가 읽으므로, 각 소비자가 도는
+   * onLayoutReady까지 미뤄도 안전하다. 인덱스 파일은 임베딩 때문에 수십 MB일 수
+   * 있어 onload 첫 줄에서 블로킹하지 않아야 한다.
+   *
+   * 실패는 전부 삼킨다. 개별 catch로 한 파일이 실패해도 다른 파일은 진행한다.
+   */
+  private async migrateVaultDataFiles(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+
+    try {
+      const configDir = this.app.vault.configDir;
+      const candidates = new Set<string>();
+      for (const id of [...LEGACY_PLUGIN_IDS, BRANDING.pluginId]) {
+        candidates.add(`.${id}-index.json`);
+        candidates.add(`.${id}-chat.json`);
+        candidates.add(`.${id}-sessions.json`);
+        candidates.add(`.${id}-sessions.json.bak`);
+        candidates.add(`${configDir}/plugins/${id}/data.json`);
+        candidates.add(`${configDir}/plugins/${id}/mcp.json`);
+      }
+
+      const existing = new Set<string>();
+      for (const path of candidates) {
+        try {
+          if (await adapter.exists(path)) existing.add(path);
+        } catch {
+          // 개별 경로 조회 실패는 "없음"으로 취급한다.
+        }
+      }
+
+      const allTasks = planMigrations(
+        LEGACY_PLUGIN_IDS,
+        BRANDING.pluginId,
+        (p) => existing.has(p),
+        configDir
+      );
+
+      // 볼트 루트 태스크만 필터링한다(to 경로가 .으로 시작함).
+      const vaultTasks = allTasks.filter((t) => t.to.startsWith("."));
+
+      for (const task of vaultTasks) {
+        try {
+          const data = await adapter.read(task.from);
+          await adapter.write(task.to, data);
+          this.migratedFileCount++;
+        } catch (e) {
+          console.error(`볼트 데이터 마이그레이션 실패 (${task.from} → ${task.to}):`, e);
         }
       }
     } catch (e) {
       console.error("볼트 데이터 마이그레이션 실패:", e);
     }
 
-    // --- 로컬 자격증명 파일 (Electron userData, 볼트 밖) ---
-    try {
-      if (migrateCredentialsFile(LEGACY_PLUGIN_IDS, BRANDING.pluginId)) {
-        copiedCount++;
-      }
-    } catch (e) {
-      console.error("자격증명 마이그레이션 실패:", e);
-    }
-
-    // 복사가 한 건이라도 있었으면 구 파일이 남아 있음을 알린다.
+    // 두 단계 누적 합산이 1건 이상이면 구 파일이 남아 있음을 알린다.
     // 인덱스 파일은 임베딩 때문에 수십 MB일 수 있어 사용자가 정리하고 싶을 수 있다.
-    if (copiedCount > 0) {
+    if (this.migratedFileCount > 0) {
       new Notice(
-        `기존 데이터 ${copiedCount}건을 새 플러그인 ID로 복사했습니다. ` +
+        `기존 데이터 ${this.migratedFileCount}건을 새 플러그인 ID로 복사했습니다. ` +
           `구 파일(.bedrock-assistant-*, .assistant-kiro-*)은 남아 있으니 수동으로 지워도 됩니다.`,
         10000
       );
