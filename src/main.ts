@@ -945,8 +945,9 @@ export default class GeminiAssistantPlugin extends Plugin {
 
   /** 4개 백엔드의 커스텀 아이콘을 모두 등록한다 (전환 시 즉시 사용 가능) */
   private registerBrandingIcons(): void {
-    // bedrock/gemini/openai/ollama 4개 백엔드 아이콘을 모두 addIcon으로 등록한다.
+    // 모든 백엔드 아이콘을 미리 addIcon으로 등록한다.
     // (하나라도 누락되면 해당 백엔드로 전환 시 아이콘이 표시되지 않는다)
+    // 새 프로바이더 추가 시 아래 배열에 반드시 넣어야 한다.
     const backends: GeminiAssistantSettings["aiBackend"][] = [
       "bedrock",
       "gemini",

@@ -2,62 +2,81 @@
 inclusion: always
 ---
 
-# 브랜치별 에디션 브랜딩 관리 규칙
+# 브랜딩·프로바이더 정책
 
 ## 개요
-이 프로젝트는 하나의 코드베이스에서 2개의 에디션을 브랜치로 관리합니다.
-`main` 브랜치는 Bedrock + Gemini 통합 백엔드를 지원하며, 설정에서 백엔드를 전환할 수 있습니다.
-기능 변경 시 브랜딩 파일이 덮어씌워지지 않도록 주의해야 합니다.
 
-> **참고**: `gemini-edition` 브랜치는 v0.2.7에서 main에 통합되어 폐기되었습니다.
-> Gemini 백엔드는 이제 main의 설정 탭에서 `aiBackend: "gemini"`로 전환하여 사용합니다.
+이 프로젝트는 **단일 브랜치(`main`)**로 관리한다. 0.3.0에서 `kiro-edition`
+브랜치를 폐기하고 `main`으로 통합했다.
 
-## 브랜치 ↔ 에디션 매핑
+## 플러그인 식별자
 
-| 브랜치 | pluginId | displayName | 릴리즈 태그 접두사 |
-|---|---|---|---|
-| `main` | `bedrock-assistant` | Bedrock Assistant | `bedrock-assistant-` |
-| `kiro-edition` | `assistant-kiro` | Assistant Kiro | `kiro-` |
+| 항목 | 값 |
+|---|---|
+| pluginId | `ai-assistant` |
+| manifest name | `AI Assistant` |
+| viewType | `ai-assistant-view` |
 
-## AI 백엔드 통합 (main 브랜치)
+**GitHub repo name / package.json name:** `obsidian-ai-assistant` — Obsidian의
+커뮤니티 플러그인 가이드는 `id`에 "obsidian" 접두어를 쓰지 말라고 권장하므로
+`pluginId`는 `ai-assistant`로 짧게 유지한다. repo/package 이름과 다르지만
+의도된 차이다 — 둘을 맞추려 하지 말 것.
 
-- `main` 브랜치는 Bedrock와 Gemini 두 백엔드를 모두 지원
-- `src/ai-client-factory.ts`에서 `aiBackend` 설정에 따라 적절한 클라이언트 생성
-- `src/branding.ts`의 `updateBranding()`으로 백엔드에 따라 displayName, icon, settingsTitle 동적 전환
-- pluginId, viewType, files는 백엔드와 무관하게 고정
+**과거 식별자(마이그레이션 소스):** `bedrock-assistant`(main 계보),
+`assistant-kiro`(kiro-edition 계보). `src/migration.ts`가 두 ID의 데이터를
+새 경로로 복사한다. 이 목록은 `src/main.ts`의 `LEGACY_PLUGIN_IDS`에 있다.
 
-## 브랜딩 관련 파일 (브랜치별로 다름)
+## 표시명과 아이콘
 
-- `src/branding.ts` — pluginId, displayName, viewType, 파일 경로, 아이콘, 설정 타이틀
-- `manifest.json` — id, name, description
-- `package.json` — name
-- `README.md`, `README-KR.md` — 에디션별 설명
+`displayName`, `icon`, `settingsTitle`은 `aiBackend` 설정에 따라 런타임에
+전환된다. `pluginId`, `viewType`, `files`는 백엔드와 무관한 고정값이다.
 
-## 핵심 규칙
+| aiBackend | displayName |
+|---|---|
+| `bedrock` | Bedrock Assistant |
+| `gemini` | Gemini Assistant |
+| `openai` | OpenAI Assistant |
+| `ollama` | Ollama Assistant |
 
-1. **cherry-pick / merge 시 브랜딩 파일을 절대 덮어쓰지 않는다**
-   - `branding.ts`, `manifest.json`, `package.json`의 name/id 필드, README 파일은 브랜치 고유
-   - cherry-pick 충돌 시 현재 브랜치(HEAD)의 브랜딩 값을 유지
+전환 경로: `settings-tab.ts`의 백엔드 드롭다운 → `updateBranding(aiBackend)`
+→ `plugin.refreshBranding()`이 리본 아이콘·뷰 헤더 갱신.
 
-2. **공통 기능은 main에서 먼저 구현 후 cherry-pick으로 전파**
-   - main → kiro-edition 순서
-   - **예외 — main 전용 기능**: `multi-provider-ai-backends`(OpenAI/Anthropic/Ollama 백엔드)는 의도적으로 main 브랜치에만 두고 kiro-edition으로 cherry-pick 전파하지 않는다. 근거: kiro-edition은 Bedrock/Gemini 2종 백엔드 브랜딩에 집중한다. 이 정책은 spec 디렉터리(`.kiro/specs/`)가 `.gitignore`로 추적 제외되므로 본 steering 파일에 기록하여 브랜치 간 참조 가능성을 확보한다.
-   - 코드/CI 차원의 자동 차단 메커니즘은 두지 않으며, 전파 제외는 본 규칙을 따르는 수동 운영으로 보증한다.
+아이콘 SVG는 `src/branding.ts`에 문자열로 인라인한다. 별도 `.svg` 파일을
+두지 않는다 — 빌드가 번들하지 않아 참조 없는 자산이 된다.
 
-3. **새 기능 추가 시 브랜딩 참조는 `BRANDING` 상수 사용**
-   - 하드코딩된 플러그인 이름/ID 금지
-   - `import { BRANDING } from "./branding"` 사용
+## 새 프로바이더 추가 규칙
 
-4. **CI/CD 릴리즈는 브랜치별 자동 분류**
-   - `.github/workflows/release.yml`이 브랜치명으로 에디션 접두사 결정
-   - 버전은 patch 단위로 증가 (0.1.0 → 0.1.1)
+새 백엔드를 추가할 때 손대야 하는 곳:
 
-## 브랜치별 차이점
+1. `types.ts` — `aiBackend` union, 프로바이더별 설정 필드
+2. `provider-utils.ts` — `AiProvider` union, `embeddingSignature`, effort 매핑
+3. `ai-client-factory.ts` — `case` 추가
+4. `branding.ts` — 브랜딩 상수 + `getBranding`의 `case`
+5. `main.ts` `registerBrandingIcons` — 백엔드 배열에 추가
+6. `settings-tab.ts` — 인증·모델 UI
+7. `safe-storage.ts` — API 키가 있으면 `SENSITIVE_FIELDS`에 추가
 
-- `main`: AWS Bedrock + Google Gemini 통합 백엔드, `@aws-sdk` 의존성 포함
-- `kiro-edition`: main과 동일 기능, 브랜딩만 다름, 커스텀 SVG 아이콘 포함
+### 임베딩 API가 없는 벤더는 지원하지 않는다
+
+이 플러그인은 볼트 인덱싱(Graph RAG)에 `IAiClient.getEmbedding`이 필수다.
+임베딩 엔드포인트를 제공하지 않는 벤더를 백엔드로 추가하면 임베딩을 다른
+프로바이더에 위임하는 구조가 강제되고, 사용자는 API 키 2개와 청구서 2곳을
+관리해야 한다.
+
+**Anthropic 직접 API가 이 사유로 제외됐다**(0.3.0 검토). Anthropic Claude
+모델은 Bedrock 백엔드로 이미 사용할 수 있다. 직접 API의 추가 실익(AWS 계정
+불필요, 신모델 선출시 접근, 프롬프트 캐싱)은 위 비용을 정당화하지 못한다고
+판단했다.
+
+이 정책을 뒤집으려면 임베딩 프로바이더 분리 설정(`embeddingProvider` 필드)을
+먼저 설계해야 한다.
 
 ## 자격증명 저장
 
-- 모든 에디션이 동일한 `bedrock-assistant-credentials.json` 파일명 사용 (iCloud 비동기화 경로)
-- `safe-storage.ts`에서 관리
+민감 필드(`SENSITIVE_FIELDS`)는 볼트의 `data.json`에 저장하지 않는다.
+Electron `safeStorage`로 암호화해 userData 경로의
+`ai-assistant-credentials.json`(권한 0600)에 둔다. 볼트가 클라우드
+동기화되어도 키가 전파되지 않는다.
+
+OS 키체인을 쓸 수 없는 환경에서는 해당 필드를 파일에 아예 쓰지 않는다
+(`buildCredentialsPayload` 참조) — 평문으로 디스크에 남기지 않기 위함이다.
