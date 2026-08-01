@@ -7,10 +7,11 @@ node_modules/
 # 옵시디언 플러그인 데이터
 data.json
 
-# 인덱스/히스토리 파일
-.bedrock-assistant-index.json
-.bedrock-assistant-chat.json
-.bedrock-assistant-sessions.json
+# 인덱스/히스토리 파일 (모든 플러그인 ID: ai-assistant, 레거시 bedrock-assistant/assistant-kiro)
+.*-index.json
+.*-chat.json
+.*-sessions.json
+.*-sessions.json.bak
 
 # 시스템 파일
 .DS_Store
