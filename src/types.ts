@@ -244,6 +244,33 @@ export interface IAiClient {
   ): Promise<{ text: string }>;
 }
 
+/**
+ * 로컬 자격증명 파일에서 읽은 값 중 구 프로필 사용자에게 적용하면 안 되는 것을 걸러낸다.
+ *
+ * 0.3.0 이전에는 인증 방식을 고를 수 있었다. API 키 A를 저장한 뒤 프로필 B로 바꾼
+ * 사용자는 A가 로컬 자격증명 파일에 그대로 남는다(제거 UI가 없었다). 업그레이드 후
+ * `{ ...raw, ...credentials }`로 병합하면 남아 있던 A가 적용되고, 사용자가 마지막에
+ * 선택한 것은 B였는데도 모든 요청이 A 계정으로 나가 과금된다. 사용자는 자신이
+ * 프로필을 쓰고 있다고 믿으므로 알아차릴 단서가 없다.
+ *
+ * 구 설정이 프로필 방식이었으면 로컬 API 키를 적용하지 않고, 설정에서 명시적으로
+ * 다시 입력하게 한다. 인증 주체가 바뀌는 일은 사용자가 의도적으로 선택해야 한다.
+ *
+ * @param raw DEFAULT_SETTINGS와 병합된 저장 설정(구 `awsAuthMethod`가 남아 있을 수 있다)
+ * @param credentials 로컬 자격증명 파일에서 복호화한 값
+ */
+export function filterStaleCredentials(
+  raw: { awsAuthMethod?: string },
+  credentials: Record<string, string>
+): Record<string, string> {
+  // 구 설정이 프로필 방식이 아니었다면 그대로 적용한다.
+  if (raw.awsAuthMethod !== "profile") return credentials;
+
+  const filtered = { ...credentials };
+  delete filtered.bedrockApiKey;
+  return filtered;
+}
+
 export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   language: "en",
   geminiApiKey: "",

@@ -5,7 +5,7 @@ import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
-import { DEFAULT_SETTINGS, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
+import { DEFAULT_SETTINGS, filterStaleCredentials, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING, updateBranding, getBranding } from "./branding";
 import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
 import {
@@ -834,8 +834,15 @@ export default class GeminiAssistantPlugin extends Plugin {
       await this.saveData(stripped);
       this.settings = decrypted;
     } else {
-      // 로컬 전용 파일에서 자격증명 로드
-      const credentials = loadCredentialsFromLocal();
+      // 로컬 전용 파일에서 자격증명 로드.
+      //
+      // 구 설정이 프로필 인증이었으면 로컬에 남은 Bedrock API 키를 적용하지 않는다.
+      // 그대로 병합하면 사용자가 마지막에 고른 것은 프로필인데도 과거 키의 계정으로
+      // 요청이 나가 조용히 과금된다 (filterStaleCredentials 주석 참조).
+      const credentials = filterStaleCredentials(
+        raw as { awsAuthMethod?: string },
+        loadCredentialsFromLocal()
+      );
       this.settings = { ...raw, ...credentials } as GeminiAssistantSettings;
     }
 

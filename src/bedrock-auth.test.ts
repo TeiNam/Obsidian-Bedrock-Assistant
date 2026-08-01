@@ -17,6 +17,7 @@ vi.mock("obsidian", () => ({ requestUrl: vi.fn() }));
 import { buildBedrockClientConfig } from "./bedrock-client";
 import {
   DEFAULT_SETTINGS,
+  filterStaleCredentials,
   type GeminiAssistantSettings,
 } from "./types";
 
@@ -72,5 +73,46 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     const config = buildBedrockClientConfig(makeSettings({ bedrockApiKey: "" }));
     expect(typeof config.credentials).toBe("function");
     expect(config.token).toBeUndefined();
+  });
+});
+
+// ============================================
+// 구 프로필 사용자의 잔존 API 키 차단
+// ============================================
+
+describe("filterStaleCredentials: 구 프로필 사용자 보호", () => {
+  it("구 설정이 profile이면 로컬에 남은 bedrockApiKey를 적용하지 않는다", () => {
+    // 0.3.0 이전에 API 키 A를 쓰다 프로필 B로 바꾼 사용자. A는 로컬 파일에 남아 있다.
+    // 그대로 병합하면 사용자가 마지막에 고른 것은 B인데 모든 요청이 A 계정으로 나간다.
+    const filtered = filterStaleCredentials(
+      { awsAuthMethod: "profile" },
+      { bedrockApiKey: "STALE_KEY_ACCOUNT_A", geminiApiKey: "GEMINI_KEY" }
+    );
+
+    expect(filtered.bedrockApiKey).toBeUndefined();
+    // 다른 프로바이더 키는 인증 방식과 무관하므로 보존한다.
+    expect(filtered.geminiApiKey).toBe("GEMINI_KEY");
+  });
+
+  it("구 설정이 apiKey면 로컬 키를 그대로 적용한다", () => {
+    const filtered = filterStaleCredentials(
+      { awsAuthMethod: "apiKey" },
+      { bedrockApiKey: "USER_CHOSE_THIS" }
+    );
+
+    expect(filtered.bedrockApiKey).toBe("USER_CHOSE_THIS");
+  });
+
+  it("awsAuthMethod가 없는 신규 설치는 로컬 키를 그대로 적용한다", () => {
+    const filtered = filterStaleCredentials({}, { bedrockApiKey: "KEY" });
+
+    expect(filtered.bedrockApiKey).toBe("KEY");
+  });
+
+  it("원본 credentials 객체를 변경하지 않는다", () => {
+    const credentials = { bedrockApiKey: "KEY" };
+    filterStaleCredentials({ awsAuthMethod: "profile" }, credentials);
+
+    expect(credentials.bedrockApiKey).toBe("KEY");
   });
 });
