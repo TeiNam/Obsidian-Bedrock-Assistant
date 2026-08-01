@@ -18,13 +18,9 @@ export function isPluginEnabled(app: unknown, pluginId: string): boolean {
   try {
     const enabled = (app as { plugins?: { enabledPlugins?: unknown } })?.plugins
       ?.enabledPlugins;
-    // Set이 아닌 값(배열 등)은 has가 없거나 의미가 다르므로 거부한다.
-    if (!(enabled instanceof Set)) {
-      // has 메서드를 직접 가진 Set 유사 객체는 예외 처리 경로로 흘려보낸다.
-      const hasFn = (enabled as { has?: unknown })?.has;
-      if (typeof hasFn !== "function") return false;
-      return (enabled as { has: (id: string) => unknown }).has(pluginId) === true;
-    }
+    // 옵시디언은 enabledPlugins를 항상 Set<string>으로 노출한다. 배열이나 다른
+    // 형태가 오면 내부 API가 바뀐 것이므로 미설치로 간주한다.
+    if (!(enabled instanceof Set)) return false;
     return enabled.has(pluginId);
   } catch {
     // 내부 API 구조가 바뀌었거나 접근이 막힌 경우.

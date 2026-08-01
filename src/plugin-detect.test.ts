@@ -41,14 +41,11 @@ describe("isPluginEnabled", () => {
     ).toBe(false);
   });
 
-  it("has가 예외를 던져도 false를 반환한다", () => {
+  it("plugins 접근 자체가 예외를 던져도 false를 반환한다", () => {
+    // getter가 던지는 객체로 내부 API 접근 실패를 재현한다.
     const hostile = {
-      plugins: {
-        enabledPlugins: {
-          has: () => {
-            throw new Error("boom");
-          },
-        },
+      get plugins(): unknown {
+        throw new Error("접근 불가");
       },
     };
 

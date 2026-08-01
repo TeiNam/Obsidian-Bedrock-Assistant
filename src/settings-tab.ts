@@ -1876,7 +1876,9 @@ export class GeminiSettingTab extends PluginSettingTab {
     if (isPluginEnabled(this.app, pluginId)) {
       // 설치·활성 상태 — 버튼 대신 정적 배지를 표시한다.
       const badge = setting.controlEl.createSpan({ cls: "ba-plugin-installed" });
-      setIcon(badge, "check");
+      // 체크 아이콘은 장식이므로 스크린리더에서 제외하고, 상태는 텍스트로 전달한다.
+      const iconEl = badge.createSpan({ attr: { "aria-hidden": "true" } });
+      setIcon(iconEl, "check");
       badge.createSpan({ text: installedLabel });
       return;
     }
