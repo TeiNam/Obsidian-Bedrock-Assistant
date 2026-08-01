@@ -394,3 +394,38 @@ describe("branding.ts 정적 참조 금지 검증 (예시)", () => {
     expect(brandingSourceLower).not.toContain("readme");
   });
 });
+
+// ============================================
+// 아이콘 SVG의 DOM ID 충돌 방지
+// ============================================
+
+describe("아이콘 SVG의 id 속성", () => {
+  const BACKENDS = ["bedrock", "gemini", "openai", "ollama"] as const;
+
+  it("SVG 내부 id는 아이콘 이름으로 접두사가 붙어 고유하다", () => {
+    // addIcon은 SVG를 문서에 그대로 주입한다. id="m" 같은 짧은 이름을 쓰면
+    // 다른 아이콘이나 플러그인의 동명 id와 충돌해 mask·gradient가 엉뚱한
+    // 그래픽에 적용된다. 짧은 일반 이름을 금지한다.
+    for (const backend of BACKENDS) {
+      const svg = getBranding(backend).icon.svg ?? "";
+      for (const match of svg.matchAll(/\bid="([^"]+)"/g)) {
+        const id = match[1];
+        // 3자 이하의 일반 이름은 충돌 위험이 높다.
+        expect(id.length).toBeGreaterThan(3);
+      }
+    }
+  });
+
+  it("id를 참조하는 url(#...)이 모두 같은 SVG 안에 정의되어 있다", () => {
+    // 참조가 정의를 벗어나면 다른 곳의 동명 id를 집어간다.
+    for (const backend of BACKENDS) {
+      const svg = getBranding(backend).icon.svg ?? "";
+      const defined = new Set(
+        Array.from(svg.matchAll(/\bid="([^"]+)"/g)).map((m) => m[1])
+      );
+      for (const match of svg.matchAll(/url\(#([^)]+)\)/g)) {
+        expect(defined.has(match[1])).toBe(true);
+      }
+    }
+  });
+});
