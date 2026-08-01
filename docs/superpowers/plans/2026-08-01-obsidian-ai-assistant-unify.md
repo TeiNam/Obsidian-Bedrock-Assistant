@@ -20,6 +20,15 @@
 - **표시명 정책:** 프로바이더별 전환 유지(`Bedrock Assistant` / `Gemini Assistant` / `OpenAI Assistant` / `Ollama Assistant`). `manifest.json`의 `name`만 `AI Assistant`로 고정.
 - **Anthropic 백엔드는 추가하지 않는다.** 임베딩 API가 없는 벤더는 지원하지 않는다는 정책을 문서에 명시한다.
 - **한국어 주석.** 이 저장소의 모든 코드 주석은 한국어다. 새 코드도 한국어 주석을 단다.
+- **커뮤니티 플러그인 심사 기준 (obsidian-plugin-develop 스킬):**
+  - `console.log` / `console.warn` / `console.debug` **금지**. `console.error`만 허용. 현재 저장소는 0건이므로 이 상태를 유지한다.
+  - `innerHTML` / `outerHTML` / `insertAdjacentHTML` 금지. `createEl()` / `createDiv()` / `createSpan()` / `setText()` 사용.
+  - 하드코딩 스타일(`el.style.color`) 금지. CSS 클래스 + `var(--text-normal)` 등 테마 변수 사용.
+  - `manifest.json`의 `description`은 250자 이내, 동작을 서술하는 문장으로 시작하고 마침표로 끝낸다. 이모지·특수문자 금지.
+  - `manifest.json`의 `id`는 소문자와 하이픈만 쓴다.
+  - Node/Electron API를 쓰므로 `isDesktopOnly: true`를 유지한다(`safe-storage.ts`가 `require("fs")`, `require("electron")`을 쓴다).
+  - 설정 탭 섹션 제목은 `setHeading()`을 쓴다. `createEl("h2")` 금지.
+  - 사용자 입력 경로는 `normalizePath()`를 거친다. **이 계획의 마이그레이션 경로는 사용자 입력이 아니라 코드 상수로 조립하므로 해당되지 않는다.**
 - **`src/aws-profile.ts`, `src/aws-profile.test.ts`, `src/aws-profile-runtime.ts`에 이 계획과 무관한 미커밋 변경(+177/−7)이 있다.** 절대 건드리지 말고, 커밋에도 포함하지 않는다. `git add`는 항상 파일을 명시한다 — `git add -A`나 `git add .`를 쓰지 않는다.
 
 ---
@@ -878,7 +887,7 @@ npx tsc --noEmit -skipLibCheck 2>&1 | head -20
 
 Expected: 에러 없음.
 
-`Notice`가 `main.ts`에 이미 import되어 있는지 확인한다(1행에 있다). `adapter.mkdir`이 타입에 있는지도 확인한다 — 없으면 `(adapter as any).mkdir(dir)`로 캐스팅하고 그 이유를 한국어 주석으로 남긴다.
+`Notice`가 `main.ts`에 이미 import되어 있는지 확인한다(1행에 있다). `adapter.mkdir`은 옵시디언 공식 타입(`obsidian.d.ts:1481`)에 있으므로 캐스팅이 필요 없다.
 
 - [ ] **Step 7: manifest.json 수정**
 
