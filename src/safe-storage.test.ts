@@ -289,6 +289,42 @@ describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않�
 });
 
 // ============================================
+// 폐기된 액세스 키 필드 제거
+// ============================================
+
+describe("stripSensitiveFields: 폐기된 액세스 키 필드", () => {
+  it("구 data.json에 남은 평문 액세스 키를 제거한다", () => {
+    // 0.3.0에서 액세스 키 인증을 제거하면서 두 필드를 SENSITIVE_FIELDS에서 뺐다.
+    // strip 대상에서도 빠지면 구 설정의 평문 키가 클라우드 동기화되는 data.json에
+    // 그대로 재저장된다 — 제거가 오히려 유출을 만든다.
+    const legacy = {
+      awsAuthMethod: "profile",
+      awsProfile: "my-profile",
+      awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
+      awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    } as unknown as GeminiAssistantSettings;
+
+    const stripped = stripSensitiveFields(legacy) as unknown as Record<string, unknown>;
+
+    // 빈 문자열로 남기지 않고 키 자체를 지운다.
+    expect("awsAccessKeyId" in stripped).toBe(false);
+    expect("awsSecretAccessKey" in stripped).toBe(false);
+    // 비민감 필드는 보존한다.
+    expect(stripped.awsProfile).toBe("my-profile");
+  });
+
+  it("원본 객체를 변경하지 않는다", () => {
+    const legacy = {
+      awsAccessKeyId: "AKID",
+    } as unknown as GeminiAssistantSettings;
+
+    stripSensitiveFields(legacy);
+
+    expect((legacy as unknown as Record<string, unknown>).awsAccessKeyId).toBe("AKID");
+  });
+});
+
+// ============================================
 // Property 4: 민감 필드 strip 일관성
 // ============================================
 

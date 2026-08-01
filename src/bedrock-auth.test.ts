@@ -15,7 +15,11 @@ vi.mock("@aws-sdk/client-bedrock", () => ({
 vi.mock("obsidian", () => ({ requestUrl: vi.fn() }));
 
 import { buildBedrockClientConfig } from "./bedrock-client";
-import { DEFAULT_SETTINGS, type GeminiAssistantSettings } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  migrateAwsAuthMethod,
+  type GeminiAssistantSettings,
+} from "./types";
 import type { ProfileDeps } from "./aws-profile";
 
 function makeSettings(overrides: Partial<GeminiAssistantSettings> = {}): GeminiAssistantSettings {
@@ -105,6 +109,30 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(/프로필/);
   });
 
+  it("profile 방식은 authSchemePreference를 sigv4로 고정한다", () => {
+    // AWS SDK는 환경에 AWS_BEARER_TOKEN_BEDROCK이 있으면 authSchemePreference를
+    // ["httpBearerAuth"]로 강제하고(@aws-sdk/core의 NODE_AUTH_SCHEME_PREFERENCE_OPTIONS),
+    // 그러면 우리가 넣은 credentials 공급자를 아예 호출하지 않는다. 즉 프로필을
+    // 명시해도 다른 계정의 ambient 토큰으로 요청이 나간다. 스킴을 고정해 막는다.
+    const config = buildBedrockClientConfig(
+      makeSettings({ awsAuthMethod: "profile", awsProfile: "default" }),
+      stubDeps
+    );
+    expect(config.authSchemePreference).toEqual(["aws.auth#sigv4"]);
+  });
+
+  it("인증값이 비어 fail-closed일 때도 authSchemePreference를 sigv4로 고정한다", () => {
+    // 거부 공급자를 넣어도 스킴을 고정하지 않으면 ambient 베어러 토큰이 우회한다.
+    for (const settings of [
+      makeSettings({ awsAuthMethod: "profile", awsProfile: "" }),
+      makeSettings({ awsAuthMethod: "apiKey", bedrockApiKey: "" }),
+      makeSettings({ awsAuthMethod: "accessKey" as any }),
+    ]) {
+      const config = buildBedrockClientConfig(settings, stubDeps);
+      expect(config.authSchemePreference).toEqual(["aws.auth#sigv4"]);
+    }
+  });
+
   it("어떤 인증 방식에서도 비밀값이 의도하지 않은 경로로 노출되지 않는다", () => {
     // apiKey 방식: token 경로는 의도된 노출이므로 허용. credentials 경로로는 새지 않는지 확인
     const config = buildBedrockClientConfig(
@@ -151,6 +179,3 @@ describe("migrateAwsAuthMethod: 구 설정 마이그레이션", () => {
     expect(migrated.awsAuthMethod).toBe("profile");
   });
 });
-
-// migrateAwsAuthMethod 함수 import 추가 필요
-import { migrateAwsAuthMethod } from "./types";

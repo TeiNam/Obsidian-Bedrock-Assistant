@@ -43,6 +43,15 @@ export const SENSITIVE_FIELDS = [
 ] as const;
 
 /**
+ * 더 이상 지원하지 않지만 구 `data.json`에 평문으로 남아 있을 수 있는 자격증명 필드.
+ *
+ * 0.3.0에서 액세스 키 인증을 제거하면서 이 필드들을 SENSITIVE_FIELDS에서 뺐는데,
+ * 그러면 strip 대상에서도 빠져 구 설정의 평문 키가 클라우드 동기화되는 data.json에
+ * 그대로 재저장된다. 제거가 오히려 유출을 만드는 셈이므로, 읽지는 않되 지우기는 한다.
+ */
+export const LEGACY_SENSITIVE_FIELDS = ["awsAccessKeyId", "awsSecretAccessKey"] as const;
+
+/**
  * Electron safeStorage 모듈 가져오기 (런타임에서만 사용 가능)
  * 옵시디언 환경이 아니거나 safeStorage를 지원하지 않으면 null 반환
  */
@@ -141,6 +150,13 @@ export function stripSensitiveFields<T extends object>(settings: T): T {
   for (const field of SENSITIVE_FIELDS) {
     if (field in result) {
       result[field] = "";
+    }
+  }
+  // 폐기된 액세스 키 필드는 값을 비우는 대신 키 자체를 지운다. 지금은 읽지 않는
+  // 필드이므로 빈 문자열로 남겨둘 이유가 없고, 남기면 구 설정의 잔재가 계속 따라온다.
+  for (const field of LEGACY_SENSITIVE_FIELDS) {
+    if (field in result) {
+      delete result[field];
     }
   }
   return result as T;

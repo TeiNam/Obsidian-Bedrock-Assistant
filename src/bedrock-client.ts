@@ -32,6 +32,20 @@ import { runtimeProfileDeps } from "./aws-profile-runtime";
 /** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
 const EMBEDDING_MAX_CHARS = 20000;
 
+/**
+ * SigV4 서명 스킴 식별자. 프로필 인증과 fail-closed 경로에서 이 값으로 고정한다.
+ *
+ * 고정하지 않으면 AWS SDK가 환경변수 `AWS_BEARER_TOKEN_BEDROCK`을 감지해
+ * authSchemePreference를 `["httpBearerAuth"]`로 자동 승격시키고(@aws-sdk/core의
+ * NODE_AUTH_SCHEME_PREFERENCE_OPTIONS), 그러면 우리가 넣은 credentials 공급자를
+ * 아예 호출하지 않는다. 즉 사용자가 프로필을 명시하거나 인증값을 비워 fail-closed로
+ * 막아뒀는데도 환경에 남은 다른 계정의 토큰으로 요청이 나간다.
+ */
+const SIGV4_AUTH_SCHEME = "aws.auth#sigv4";
+
+/** 베어러 토큰 스킴 식별자. Bedrock API 키 인증에서만 사용한다. */
+const BEARER_AUTH_SCHEME = "httpBearerAuth";
+
 /** Titan 임베딩 요청 시 지정할 출력 차원. Titan v2만 이 파라미터를 받는다. */
 const TITAN_EMBED_DIMENSIONS = 512;
 
@@ -120,12 +134,14 @@ export function buildBedrockClientConfig(
       const apiKey = settings.bedrockApiKey?.trim();
       if (apiKey) {
         config.token = { token: apiKey };
-        config.authSchemePreference = ["httpBearerAuth"];
+        config.authSchemePreference = [BEARER_AUTH_SCHEME];
       } else {
         config.credentials = () =>
           Promise.reject(
             new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
           );
+        // 값이 비어도 스킴을 고정한다 — 아래 SIGV4_AUTH_SCHEME 주석 참조.
+        config.authSchemePreference = [SIGV4_AUTH_SCHEME];
       }
       break;
     }
@@ -140,6 +156,7 @@ export function buildBedrockClientConfig(
             new Error("AWS 프로필이 선택되지 않았습니다. 설정에서 프로필을 선택하세요")
           );
       }
+      config.authSchemePreference = [SIGV4_AUTH_SCHEME];
       break;
     }
     default: {
@@ -151,6 +168,7 @@ export function buildBedrockClientConfig(
             "지원하지 않는 인증 방식입니다. 설정에서 Bedrock API 키 또는 AWS 프로필을 선택하세요"
           )
         );
+      config.authSchemePreference = [SIGV4_AUTH_SCHEME];
       break;
     }
   }
