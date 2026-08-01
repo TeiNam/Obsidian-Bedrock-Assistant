@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   loadProfileCredentials,
+  parseCredentialProcessOutput,
   parseIni,
   pickSsoToken,
   resolveProfile,
+  splitCommand,
   type AwsCredentials,
   type ProfileDeps,
 } from "./aws-profile";
@@ -163,9 +165,20 @@ sso_role_name = R
     expect((result as { reason: string }).reason).toContain("ghost");
   });
 
-  it("credential_process / role_arn 프로필은 미지원임을 명시한다", () => {
-    const cp = resolveProfile("a", parseIni("[profile a]\ncredential_process = /bin/x"), {});
-    expect(cp).toMatchObject({ kind: "unsupported" });
+  it("credential_process 프로필은 process로 해석한다", () => {
+    // IAM Roles Anywhere(aws_signing_helper)가 이 경로를 쓴다.
+    const cp = resolveProfile(
+      "a",
+      parseIni("[profile a]\ncredential_process = /opt/aws_signing_helper credential-process --role-arn x"),
+      {}
+    );
+    expect(cp).toMatchObject({
+      kind: "process",
+      command: "/opt/aws_signing_helper credential-process --role-arn x",
+    });
+  });
+
+  it("role_arn 프로필은 미지원임을 명시한다", () => {
     const ra = resolveProfile("b", parseIni("[profile b]\nrole_arn = arn:aws:iam::1:role/R"), {});
     expect(ra).toMatchObject({ kind: "unsupported" });
   });
@@ -370,5 +383,78 @@ describe("loadProfileCredentials: 프로필 → 자격증명 해석", () => {
       "/home/u/.aws/config": "[profile x]\nrole_arn=arn:aws:iam::1:role/R",
     });
     await expect(loadProfileCredentials("x", deps)).rejects.toThrow(/role_arn/);
+  });
+});
+
+describe("credential_process", () => {
+  it("명령을 argv로 쪼갠다(따옴표로 감싼 공백 경로 포함)", () => {
+    expect(splitCommand('/opt/helper credential-process --certificate "/a b/c.crt" --x 1')).toEqual([
+      "/opt/helper",
+      "credential-process",
+      "--certificate",
+      "/a b/c.crt",
+      "--x",
+      "1",
+    ]);
+  });
+
+  it("헬퍼 출력(JSON)을 자격증명으로 변환하고 만료를 Date로 넘긴다", () => {
+    // expiration을 채우는 것이 핵심이다 — SDK가 만료 전에 헬퍼를 다시 호출해
+    // 11시간 세션이 자동 갱신된다(별도 갱신 로직이 필요 없다).
+    const creds = parseCredentialProcessOutput(
+      JSON.stringify({
+        Version: 1,
+        AccessKeyId: "ASIAEXAMPLE",
+        SecretAccessKey: "secret",
+        SessionToken: "token",
+        Expiration: "2026-08-01T12:34:56Z",
+      })
+    );
+    expect(creds.accessKeyId).toBe("ASIAEXAMPLE");
+    expect(creds.sessionToken).toBe("token");
+    expect(creds.expiration?.toISOString()).toBe("2026-08-01T12:34:56.000Z");
+  });
+
+  it("JSON이 아닌 출력은 앞부분을 담아 오류를 낸다", () => {
+    // 헬퍼는 인증서 만료·신뢰정책 오류를 사람이 읽는 문장으로 낸다. 그 문장을 삼키면
+    // 사용자는 원인을 알 수 없다.
+    expect(() => parseCredentialProcessOutput("Error: certificate has expired")).toThrow(
+      /certificate has expired/
+    );
+  });
+
+  it("필수 필드가 없으면 오류를 낸다", () => {
+    expect(() => parseCredentialProcessOutput(JSON.stringify({ Version: 1 }))).toThrow(
+      /AccessKeyId/
+    );
+  });
+
+  it("loadProfileCredentials가 헬퍼를 실행해 자격증명을 반환한다", async () => {
+    const calls: string[] = [];
+    const creds = await loadProfileCredentials("wl-obsidian-models", {
+      readTextFile: (path: string) =>
+        path.endsWith("config")
+          ? '[profile wl-obsidian-models]\ncredential_process = /opt/helper credential-process --x 1\n'
+          : null,
+      listFiles: () => [],
+      joinPath: (...parts: string[]) => parts.join("/"),
+      homeDir: () => "/home/u",
+      getRoleCredentials: async () => {
+        throw new Error("SSO 경로를 타면 안 된다");
+      },
+      runProcess: (command: string) => {
+        calls.push(command);
+        return JSON.stringify({
+          Version: 1,
+          AccessKeyId: "ASIA1",
+          SecretAccessKey: "s",
+          SessionToken: "t",
+          Expiration: "2026-08-01T12:00:00Z",
+        });
+      },
+      now: () => 0,
+    });
+    expect(calls).toEqual(["/opt/helper credential-process --x 1"]);
+    expect(creds).toMatchObject({ accessKeyId: "ASIA1", sessionToken: "t" });
   });
 });

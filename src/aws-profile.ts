@@ -106,14 +106,25 @@ export interface SsoProfile {
   roleName: string;
 }
 
-/** 지원하지 않는 프로필(예: credential_process, role_arn 체이닝). */
+/**
+ * credential_process 프로필. 외부 헬퍼 프로세스가 stdout으로 JSON 자격증명을 낸다.
+ * IAM Roles Anywhere(aws_signing_helper)가 이 방식을 쓴다 — 장기 액세스 키 없이
+ * X.509 인증서로 임시 자격증명을 받는다.
+ */
+export interface ProcessProfile {
+  kind: "process";
+  /** 실행할 명령 전체(인자 포함). ini에 적힌 문자열 그대로. */
+  command: string;
+}
+
+/** 지원하지 않는 프로필(예: role_arn 체이닝). */
 export interface UnsupportedProfile {
   kind: "unsupported";
   /** 사용자에게 보여줄 이유. */
   reason: string;
 }
 
-export type ResolvedProfile = StaticProfile | SsoProfile | UnsupportedProfile;
+export type ResolvedProfile = StaticProfile | SsoProfile | ProcessProfile | UnsupportedProfile;
 
 /** config 파일에서 해당 프로필의 섹션명을 구한다(default는 접두사 없음). */
 function configSectionName(profileName: string): string {
@@ -171,8 +182,7 @@ export function resolveProfile(
   }
 
   if (merged.credential_process) {
-    // ponytail: 외부 프로세스 실행은 지원하지 않는다. 필요해지면 child_process로 확장.
-    return { kind: "unsupported", reason: `프로필 '${name}'의 credential_process는 지원하지 않습니다` };
+    return { kind: "process", command: merged.credential_process };
   }
   if (merged.role_arn) {
     return { kind: "unsupported", reason: `프로필 '${name}'의 role_arn(역할 위임)은 지원하지 않습니다` };
@@ -249,8 +259,58 @@ export interface ProfileDeps {
     accountId: string;
     roleName: string;
   }): Promise<AwsCredentials>;
+  /**
+   * credential_process 명령을 실행하고 stdout을 반환한다.
+   * 셸을 거치지 않는다 — 명령 문자열을 argv로 쪼개 그대로 실행한다.
+   */
+  runProcess(command: string): string;
   /** 현재 시각(ms). 만료 판정에 사용. */
   now(): number;
+}
+
+/**
+ * credential_process 명령 문자열을 argv로 쪼갠다.
+ * 셸을 거치지 않으므로 따옴표만 처리하면 된다(경로에 공백이 있는 경우).
+ */
+export function splitCommand(command: string): string[] {
+  const argv: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(command)) !== null) argv.push(m[1] ?? m[2] ?? m[3]);
+  return argv;
+}
+
+/**
+ * credential_process 의 stdout(JSON)을 자격증명으로 변환한다.
+ * 형식은 AWS가 정한 것: Version 1 + AccessKeyId/SecretAccessKey/SessionToken/Expiration.
+ * expiration을 채우면 SDK가 만료 전에 이 프로세스를 다시 호출한다 — 갱신 로직이 필요 없다.
+ */
+export function parseCredentialProcessOutput(stdout: string): AwsCredentials {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(stdout) as Record<string, unknown>;
+  } catch {
+    // 헬퍼가 오류 메시지를 stdout에 낸 경우가 흔하다 — 앞부분을 그대로 보여준다.
+    throw new Error(`credential_process 출력이 JSON이 아닙니다: ${stdout.slice(0, 200)}`);
+  }
+  const version = parsed.Version;
+  if (version !== undefined && version !== 1) {
+    throw new Error(`지원하지 않는 credential_process 버전입니다: ${String(version)}`);
+  }
+  const accessKeyId = typeof parsed.AccessKeyId === "string" ? parsed.AccessKeyId : "";
+  const secretAccessKey = typeof parsed.SecretAccessKey === "string" ? parsed.SecretAccessKey : "";
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("credential_process 출력에 AccessKeyId/SecretAccessKey가 없습니다");
+  }
+  const sessionToken = typeof parsed.SessionToken === "string" ? parsed.SessionToken : undefined;
+  const expirationRaw = typeof parsed.Expiration === "string" ? parsed.Expiration : "";
+  const expiration = expirationRaw ? new Date(expirationRaw) : undefined;
+  return {
+    accessKeyId,
+    secretAccessKey,
+    ...(sessionToken ? { sessionToken } : {}),
+    ...(expiration && !Number.isNaN(expiration.getTime()) ? { expiration } : {}),
+  };
 }
 
 /**
@@ -272,6 +332,9 @@ export async function loadProfileCredentials(
   const resolved = resolveProfile(profileName, parseIni(configText), parseIni(credentialsText));
 
   if (resolved.kind === "unsupported") throw new Error(resolved.reason);
+  if (resolved.kind === "process") {
+    return parseCredentialProcessOutput(deps.runProcess(resolved.command));
+  }
   if (resolved.kind === "static") {
     return {
       accessKeyId: resolved.accessKeyId,

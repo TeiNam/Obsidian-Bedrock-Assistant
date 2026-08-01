@@ -6,6 +6,7 @@
  */
 
 import { requestUrl } from "obsidian";
+import { splitCommand } from "./aws-profile";
 import type { AwsCredentials, ProfileDeps } from "./aws-profile";
 
 /* eslint-disable @typescript-eslint/no-var-requires */
@@ -28,6 +29,13 @@ const nodePath: any = (() => {
 const nodeOs: any = (() => {
   try {
     return require("os");
+  } catch {
+    return null;
+  }
+})();
+const nodeChildProcess: any = (() => {
+  try {
+    return require("child_process");
   } catch {
     return null;
   }
@@ -109,6 +117,19 @@ export const runtimeProfileDeps: ProfileDeps = {
     return nodeOs?.homedir?.() ?? "";
   },
   getRoleCredentials,
+  runProcess(command: string): string {
+    if (!nodeChildProcess) throw new Error("이 환경에서는 credential_process를 실행할 수 없습니다");
+    const argv = splitCommand(command);
+    if (argv.length === 0) throw new Error("credential_process 명령이 비어 있습니다");
+    // 셸을 거치지 않는다(execFileSync) — 명령 문자열이 셸 확장·주입 대상이 되지 않는다.
+    // 그래서 ~ 나 $HOME 은 확장되지 않으니 config에는 절대 경로를 적어야 한다.
+    return nodeChildProcess.execFileSync(argv[0], argv.slice(1), {
+      encoding: "utf8",
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    }) as string;
+  },
+
   now(): number {
     return Date.now();
   },
