@@ -735,10 +735,10 @@ export class GeminiSettingTab extends PluginSettingTab {
         await leaf.openFile(
           this.app.vault.getAbstractFileByPath(readmeFilePath) as any
         ).catch(() => {
-          window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/main/${t.readmeFile}`);
+          window.open(`https://github.com/teinam/obsidian-ai-assistant/blob/main/${t.readmeFile}`);
         });
       } catch {
-        window.open(`https://github.com/teinam/obsidian-bedrock-assistant/blob/main/${t.readmeFile}`);
+        window.open(`https://github.com/teinam/obsidian-ai-assistant/blob/main/${t.readmeFile}`);
       }
     });
 

@@ -4,9 +4,29 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르며,
 버전 규칙은 [Semantic Versioning](https://semver.org/lang/ko/)을 따릅니다.
 
-> **에디션 안내**: 이 CHANGELOG는 **Bedrock Assistant (`main`)** 전용입니다.
-> 이 에디션은 **AWS Bedrock · Google Gemini · OpenAI · Ollama** 멀티프로바이더 백엔드를 지원합니다.
-> Bedrock 전용 에디션은 `kiro-edition` 브랜치(Assistant Kiro)에서 관리됩니다.
+> **에디션 안내**: 이 프로젝트는 **AWS Bedrock · Google Gemini · OpenAI · Ollama** 멀티프로바이더 백엔드를 지원합니다.
+> 과거 `kiro-edition` 브랜치(Assistant Kiro)는 0.3.0에서 main으로 통합되었습니다.
+
+## [0.3.0] - 2026-08-01
+
+### Breaking
+
+- 플러그인 ID를 `bedrock-assistant` → `ai-assistant`로 변경. 플러그인 폴더가 바뀌므로 재설치가 필요하고, 사이드바를 한 번 다시 열어야 한다.
+- `kiro-edition` 브랜치 폐기. Bedrock 전용 에디션은 main으로 통합되었고, `assistant-kiro` 데이터도 자동 마이그레이션 대상이다.
+
+### Added
+
+- 구 플러그인 ID(`bedrock-assistant`, `assistant-kiro`)의 설정(`data.json`), 볼트 데이터, MCP 설정, 자격증명을 첫 실행 시 새 경로로 자동 복사. 원본은 보존하므로 이전 버전으로 되돌려도 동작한다.
+- 추천 플러그인(Code Styler, Tasks) 설치 여부를 감지해, 이미 설치한 경우 설치 버튼 대신 "설치됨" 배지를 표시.
+
+### Changed
+
+- 임베딩 API를 제공하지 않는 벤더는 백엔드로 지원하지 않는다는 정책을 문서에 기록.
+
+### Removed
+
+- 참조되지 않던 `gemini-icon.svg`, `kiro-icon.svg` 삭제 (아이콘 SVG는 `branding.ts`에 인라인).
+- `.gitattributes`의 `branding.ts merge=ours` 삭제 — 단일 브랜치에서는 정상적인 머지 변경을 조용히 버리는 함정이 된다.
 
 ## [Unreleased]
 
