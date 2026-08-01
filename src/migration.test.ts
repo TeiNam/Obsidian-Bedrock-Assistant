@@ -110,7 +110,25 @@ describe("planMigrations", () => {
     ]);
   });
 
-  it("configDir이 커스텀이어도 MCP 경로를 올바르게 만든다", () => {
+  // data.json은 Plugin.loadData()가 읽는 설정 파일이다. 이것을 빠뜨리면
+  // 사용자의 모든 설정(백엔드·모델·리전·Second Brain·커스텀 스킬)이 초기화된다.
+  it("data.json도 계획에 포함한다", () => {
+    const tasks = planMigrations(
+      ["bedrock-assistant"],
+      "obsidian-ai-assistant",
+      existsFrom([".obsidian/plugins/bedrock-assistant/data.json"]),
+      ".obsidian"
+    );
+
+    expect(tasks).toEqual([
+      {
+        from: ".obsidian/plugins/bedrock-assistant/data.json",
+        to: ".obsidian/plugins/obsidian-ai-assistant/data.json",
+      },
+    ]);
+  });
+
+  it("configDir이 커스텀이어도 플러그인 폴더 경로를 올바르게 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
       "obsidian-ai-assistant",
@@ -122,7 +140,7 @@ describe("planMigrations", () => {
     expect(tasks[0].to).toBe("my-config/plugins/obsidian-ai-assistant/mcp.json");
   });
 
-  it("볼트 데이터 4개와 MCP가 모두 있으면 5개 작업을 만든다", () => {
+  it("볼트 데이터 4개와 플러그인 폴더 2개가 모두 있으면 6개 작업을 만든다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
       "obsidian-ai-assistant",
@@ -131,12 +149,13 @@ describe("planMigrations", () => {
         ".bedrock-assistant-chat.json",
         ".bedrock-assistant-sessions.json",
         ".bedrock-assistant-sessions.json.bak",
+        ".obsidian/plugins/bedrock-assistant/data.json",
         ".obsidian/plugins/bedrock-assistant/mcp.json",
       ]),
       ".obsidian"
     );
 
-    expect(tasks).toHaveLength(5);
+    expect(tasks).toHaveLength(6);
   });
 
   it("신 ID가 레거시 ID와 같으면 아무 작업도 만들지 않는다", () => {
@@ -248,6 +267,7 @@ describe("planMigrations 속성", () => {
         // 1차: 레거시만 존재
         const legacyPaths = new Set([
           ...legacyDataFileNames(legacy),
+          `.obsidian/plugins/${legacy}/data.json`,
           `.obsidian/plugins/${legacy}/mcp.json`,
         ]);
         const first = planMigrations(

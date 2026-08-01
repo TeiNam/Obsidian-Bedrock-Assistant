@@ -23,8 +23,14 @@ const DATA_SUFFIXES = [
   "-sessions.json.bak",
 ] as const;
 
-/** MCP 설정 파일명. main.ts의 MCP_CONFIG_FILE과 같은 값이다. */
-const MCP_CONFIG_FILE = "mcp.json";
+/**
+ * 플러그인 폴더(`{configDir}/plugins/{id}/`) 안에서 옮겨야 하는 파일들.
+ *
+ * - `data.json`: Plugin.loadData()/saveData()가 쓰는 설정 파일. 이것을 잃으면
+ *   사용자의 모든 설정이 기본값으로 초기화된다. 가장 중요한 대상이다.
+ * - `mcp.json`: MCP 서버 설정. main.ts의 MCP_CONFIG_FILE과 같은 값이다.
+ */
+const PLUGIN_FOLDER_FILES = ["data.json", "mcp.json"] as const;
 
 /** 자격증명 파일명 접미사. safe-storage.ts의 CREDENTIALS_FILE 규칙과 대응한다. */
 const CREDENTIALS_SUFFIX = "-credentials.json";
@@ -37,9 +43,9 @@ export function legacyDataFileNames(pluginId: string): string[] {
   return DATA_SUFFIXES.map((suffix) => `.${pluginId}${suffix}`);
 }
 
-/** MCP 설정 파일의 볼트 상대 경로를 만든다. */
-function mcpConfigPath(configDir: string, pluginId: string): string {
-  return `${configDir}/plugins/${pluginId}/${MCP_CONFIG_FILE}`;
+/** 플러그인 폴더 안 파일의 볼트 상대 경로를 만든다. */
+function pluginFolderPath(configDir: string, pluginId: string, fileName: string): string {
+  return `${configDir}/plugins/${pluginId}/${fileName}`;
 }
 
 /**
@@ -77,11 +83,11 @@ export function planMigrations(
         from: `.${legacyId}${suffix}`,
         to: `.${newId}${suffix}`,
       })),
-      // MCP 설정
-      {
-        from: mcpConfigPath(configDir, legacyId),
-        to: mcpConfigPath(configDir, newId),
-      },
+      // 플러그인 폴더 파일 2종 (data.json, mcp.json)
+      ...PLUGIN_FOLDER_FILES.map((fileName) => ({
+        from: pluginFolderPath(configDir, legacyId, fileName),
+        to: pluginFolderPath(configDir, newId, fileName),
+      })),
     ];
 
     for (const pair of pairs) {
