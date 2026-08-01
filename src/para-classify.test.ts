@@ -4,13 +4,21 @@ vi.mock("obsidian", () => ({
   TFile: class {},
   TFolder: class {},
   Notice: class {},
+  normalizePath: (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, ""),
 }));
 
+import { TFolder } from "obsidian";
 import {
   parseCategory,
   organizeVaultPara,
+  collectProtectedFolders,
   PARA_MAX_CLASSIFICATIONS,
 } from "./para-organizer";
+
+/** cleanEmptyFolders는 `f instanceof TFolder`로 필터하므로 mock 클래스의 인스턴스여야 한다. */
+function makeFolder(path: string, children: unknown[] = []): TFolder {
+  return Object.assign(new (TFolder as new () => TFolder)(), { path, children }) as TFolder;
+}
 
 // ============================================
 // P.A.R.A 분류 응답 파싱 회귀 테스트
@@ -96,13 +104,20 @@ interface FakeFile {
   extension: string;
 }
 
-function makeParaEnv(fileCount: number, existingTargets: Set<string> = new Set()) {
-  const files: FakeFile[] = Array.from({ length: fileCount }, (_, i) => ({
-    path: `note${i}.md`,
-    name: `note${i}.md`,
-    basename: `note${i}`,
-    extension: "md",
-  }));
+function makeFile(path: string): FakeFile {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return { path, name, basename: name.replace(/\.md$/, ""), extension: "md" };
+}
+
+function makeParaEnv(
+  fileCount: number,
+  existingTargets: Set<string> = new Set(),
+  extraPaths: string[] = []
+) {
+  const files: FakeFile[] = [
+    ...Array.from({ length: fileCount }, (_, i) => makeFile(`note${i}.md`)),
+    ...extraPaths.map(makeFile),
+  ];
   const renamed: string[] = [];
   const app = {
     vault: {
@@ -123,9 +138,10 @@ function makeParaEnv(fileCount: number, existingTargets: Set<string> = new Set()
   return { app, files, renamed };
 }
 
-function makePlugin(respond: () => string) {
+function makePlugin(respond: () => string, settings?: Record<string, unknown>) {
   const calls = { count: 0 };
   const plugin = {
+    settings,
     aiClient: {
       converseLight: async () => {
         calls.count++;
@@ -199,5 +215,134 @@ describe("organizeVaultPara: LLM 호출 예산", () => {
     expect(calls.count).toBeLessThan(30);
     expect(result.errors.some((e) => e.includes("연속 실패해 중단"))).toBe(true);
     expect(result.errors.some((e) => e.includes("중단으로"))).toBe(true);
+  });
+});
+
+// ============================================
+// 플러그인 자기 폴더 보호 회귀 테스트
+// ============================================
+// 배경: organizeVaultPara는 getMarkdownFiles()로 볼트 전체를 훑고, shouldSkip은
+// P.A.R.A 4폴더·configDir·.obsidian만 제외했다. 그 결과 플러그인이 스스로 만든
+// ToDo/·Templates/·WebClips/·Second Brain/ 노트가 전부 분류·이동 대상이 되고,
+// 이어서 cleanEmptyFolders가 비워진 원본 폴더를 삭제했다.
+// 이후 To-Do 이월·회고·템플릿 로드·위키 경로가 조용히 멈춘다(사용자는 원인을 알 수 없다).
+
+const PLUGIN_SETTINGS = {
+  todoFolder: "ToDo",
+  templateFolder: "Templates",
+  webClipFolder: "WebClips",
+  todoArchiveFolder: "ToDo/Archive",
+  archiveCleanFolder: "ToDo/Archive",
+  secondBrain: { wikiFolder: "Second Brain" },
+};
+
+describe("collectProtectedFolders", () => {
+  it("설정된 플러그인 전용 폴더를 모두 수집한다", () => {
+    const folders = collectProtectedFolders(PLUGIN_SETTINGS as never);
+    expect(folders).toContain("ToDo");
+    expect(folders).toContain("Templates");
+    expect(folders).toContain("WebClips");
+    expect(folders).toContain("Second Brain");
+  });
+
+  it("빈 문자열·공백 폴더는 제외한다", () => {
+    // 빈 값이 목록에 들어가면 startsWith("/")로 볼트 전체가 보호되어 정리가 no-op이 된다.
+    const folders = collectProtectedFolders({
+      todoFolder: "",
+      templateFolder: "   ",
+      webClipFolder: "WebClips",
+      secondBrain: { wikiFolder: "" },
+    } as never);
+    expect(folders).toEqual(["WebClips"]);
+  });
+
+  it("settings가 없어도 빈 배열을 반환한다", () => {
+    expect(collectProtectedFolders(undefined as never)).toEqual([]);
+    expect(collectProtectedFolders({} as never)).toEqual([]);
+  });
+
+  it("중복 폴더는 한 번만 담는다", () => {
+    const folders = collectProtectedFolders({
+      todoFolder: "ToDo",
+      todoArchiveFolder: "ToDo",
+      templateFolder: "ToDo",
+    } as never);
+    expect(folders).toEqual(["ToDo"]);
+  });
+});
+
+describe("organizeVaultPara: 플러그인 전용 폴더 보호", () => {
+  it("ToDo·Templates·WebClips·Second Brain 노트를 이동하지 않는다", async () => {
+    const { app, renamed } = makeParaEnv(0, new Set(), [
+      "ToDo/2026-08-02 To-Do.md",
+      "ToDo/Archive/2026-07-01 To-Do.md",
+      "Templates/Daily To-Do.md",
+      "WebClips/some-article.md",
+      "Second Brain/concepts/Vector Search.md",
+      "Second Brain/Knowledge Gaps.md",
+    ]);
+    const { plugin, calls } = makePlugin(() => "resources", PLUGIN_SETTINGS);
+
+    const result = await organizeVaultPara(app as never, plugin as never);
+
+    // 호출 자체가 없어야 한다 — 분류 후 스킵이 아니라 후보에서 빠져야 토큰도 안 쓴다.
+    expect(calls.count).toBe(0);
+    expect(renamed).toEqual([]);
+    expect(result.moved).toEqual([]);
+  });
+
+  it("보호 폴더 밖의 노트는 그대로 정리한다", async () => {
+    const { app, renamed } = makeParaEnv(2, new Set(), ["ToDo/2026-08-02 To-Do.md"]);
+    const { plugin, calls } = makePlugin(() => "resources", PLUGIN_SETTINGS);
+
+    const result = await organizeVaultPara(app as never, plugin as never);
+
+    expect(calls.count).toBe(2);
+    expect(result.moved.map((m) => m.from)).toEqual(["note0.md", "note1.md"]);
+    expect(renamed).toEqual(["03. Resources/note0.md", "03. Resources/note1.md"]);
+  });
+
+  it("폴더 이름이 접두사로 겹치는 노트는 보호하지 않는다", async () => {
+    // "ToDoList/"는 "ToDo"로 시작하지만 다른 폴더다. 세그먼트 경계로 비교해야 한다.
+    const { app } = makeParaEnv(0, new Set(), ["ToDoList/plan.md"]);
+    const { plugin, calls } = makePlugin(() => "projects", PLUGIN_SETTINGS);
+
+    const result = await organizeVaultPara(app as never, plugin as never);
+
+    expect(calls.count).toBe(1);
+    expect(result.moved.map((m) => m.from)).toEqual(["ToDoList/plan.md"]);
+  });
+
+  it("보호 폴더는 비어 있어도 삭제하지 않는다", async () => {
+    const deleted: string[] = [];
+    // 후보 파일이 0건이면 organizeVaultPara가 cleanEmptyFolders 전에 조기 반환한다.
+    const { app } = makeParaEnv(1);
+    // Second Brain은 첫 실행 시 비어 있는 게 정상이다. 지우면 다음 실행에서 다시 만든다.
+    const folders = [
+      makeFolder("ToDo"),
+      makeFolder("Second Brain"),
+      makeFolder("Second Brain/concepts"),
+      makeFolder("Junk"),
+    ];
+    app.vault.getAllLoadedFiles = () => folders as never;
+    app.vault.delete = async (f: { path: string }) => {
+      deleted.push(f.path);
+    };
+    const { plugin } = makePlugin(() => "resources", PLUGIN_SETTINGS);
+
+    await organizeVaultPara(app as never, plugin as never);
+
+    expect(deleted).toEqual(["Junk"]);
+  });
+
+  it("settings가 없으면 기존 동작을 유지한다", async () => {
+    // 보호 목록이 비어도 정리가 no-op이 되어서는 안 된다.
+    const { app } = makeParaEnv(2);
+    const { plugin, calls } = makePlugin(() => "resources");
+
+    const result = await organizeVaultPara(app as never, plugin as never);
+
+    expect(calls.count).toBe(2);
+    expect(result.moved.length).toBe(2);
   });
 });
