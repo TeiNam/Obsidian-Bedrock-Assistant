@@ -89,16 +89,11 @@ The sidebar icon, model list, and branding update dynamically when you switch.
 
 ### 2. Configure Credentials
 
-**Bedrock:** Choose one of two authentication methods, then set the AWS Region.
+**Bedrock:** Enter a **long-term Bedrock API key** (AWS Console → Bedrock → API keys) and set the AWS Region. The key is encrypted with the OS keychain and stored locally — it never lands in your vault.
 
-| Method | What you provide |
-|--------|------------------|
-| Bedrock API Key | A long-term Bedrock API key, sent as a bearer token |
-| AWS Profile | A profile name from `~/.aws/config` or `~/.aws/credentials`. For SSO profiles, run `aws sso login --profile <name>` in a terminal first. |
+Key issuance, model access, and using multiple machines: [Bedrock setup guide](docs/bedrock-setup-kr.md) (Korean)
 
-For SSO profile setup, token expiry, and using multiple machines: [AWS SSO setup guide](docs/aws-sso-setup-kr.md) (Korean)
-
-> Long-term AWS access key authentication was removed in 0.3.0. Existing access-key settings migrate to the profile method, and you will need to pick a profile in settings.
+> AWS access key and `~/.aws` profile (including SSO) authentication were removed in 0.3.0. Access keys are long-lived credentials with the largest blast radius, and SSO requires `aws sso login` on every machine plus re-login every 8-12 hours — too much friction for a note-taking app used across several machines. Existing users need to enter a Bedrock API key in settings.
 
 Required IAM permissions:
 - `bedrock:InvokeModelWithResponseStream`

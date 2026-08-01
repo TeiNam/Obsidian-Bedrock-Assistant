@@ -89,16 +89,11 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 
 ### 2. 認証情報を設定
 
-**Bedrock:** 2つの認証方法のいずれかを選択してから、AWSリージョンを設定します。
+**Bedrock:** AWSコンソール(Bedrock → API keys)で発行した**長期Bedrock APIキー**を入力し、AWSリージョンを設定します。キーはOSキーチェーンで暗号化してローカルにのみ保存され、ボルトには残りません。
 
-| 方法 | 提供するもの |
-|------|--------------|
-| Bedrock API Key | 長期Bedrock APIキー(ベアラートークンとして送信) |
-| AWS Profile | `~/.aws/config`または`~/.aws/credentials`からのプロファイル名。SSOプロファイルの場合は、まずターミナルで`aws sso login --profile <name>`を実行 |
+キーの発行、モデルアクセスの有効化、複数端末での利用: [Bedrock セットアップガイド](docs/bedrock-setup-kr.md)(韓国語)
 
-SSOプロファイルの設定、トークン期限切れへの対応、複数端末での利用: [AWS SSO セットアップガイド](docs/aws-sso-setup-kr.md)(韓国語)
-
-> 長期AWSアクセスキー認証は0.3.0で削除されました。アクセスキーを使用していた設定はプロファイル方式に自動移行され、設定画面でプロファイルを選択する必要があります。
+> 0.3.0でAWSアクセスキーと`~/.aws`プロファイル(SSO含む)認証を削除しました。アクセスキーは長期資格情報のためリスクが大きく、SSOは端末ごとに`aws sso login`と8〜12時間ごとの再ログインが必要で、複数端末で使うノートアプリには負担が大きいためです。既存ユーザーは設定画面でBedrock APIキーを入力する必要があります。
 
 必要なIAM権限:
 - `bedrock:InvokeModelWithResponseStream`
