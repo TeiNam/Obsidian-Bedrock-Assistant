@@ -94,6 +94,42 @@ describe("planMigrations", () => {
     ]);
   });
 
+  it("레거시 A와 B가 서로 다른 종류의 파일을 가지면 둘 다 복사한다", () => {
+    const tasks = planMigrations(
+      ["bedrock-assistant", "assistant-kiro"],
+      "obsidian-ai-assistant",
+      existsFrom([
+        ".obsidian/plugins/bedrock-assistant/data.json",
+        ".obsidian/plugins/assistant-kiro/mcp.json",
+      ]),
+      ".obsidian"
+    );
+
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((t) => t.from).sort()).toEqual([
+      ".obsidian/plugins/assistant-kiro/mcp.json",
+      ".obsidian/plugins/bedrock-assistant/data.json",
+    ]);
+  });
+
+  it("같은 data.json이 양쪽에 있으면 앞선 레거시 ID의 것을 복사한다", () => {
+    const tasks = planMigrations(
+      ["bedrock-assistant", "assistant-kiro"],
+      "obsidian-ai-assistant",
+      existsFrom([
+        ".obsidian/plugins/bedrock-assistant/data.json",
+        ".obsidian/plugins/bedrock-assistant/mcp.json",
+        ".obsidian/plugins/assistant-kiro/data.json",
+      ]),
+      ".obsidian"
+    );
+
+    // data.json은 bedrock 것 하나만, mcp.json도 bedrock 것 하나.
+    expect(tasks).toHaveLength(2);
+    const dataTask = tasks.find((t) => t.to.endsWith("data.json"));
+    expect(dataTask?.from).toBe(".obsidian/plugins/bedrock-assistant/data.json");
+  });
+
   it("MCP 설정 경로도 계획에 포함한다", () => {
     const tasks = planMigrations(
       ["bedrock-assistant"],
@@ -240,10 +276,35 @@ describe("planMigrations 속성", () => {
     );
   });
 
-  it("모든 작업의 from과 to는 서로 다르다", () => {
+  it("레거시 ID와 신 ID가 같으면 자기 복사를 만들지 않는다", () => {
+    fc.assert(
+      fc.property(idArb, (id) => {
+        // 모든 경로가 존재해도 자기 자신으로의 복사는 나오지 않아야 한다.
+        const tasks = planMigrations([id], id, () => true, ".obsidian");
+        expect(tasks).toEqual([]);
+      })
+    );
+  });
+
+  it("서로 다른 ID면 모든 작업의 from과 to가 다르고, 작업이 하나 이상 나온다", () => {
     fc.assert(
       fc.property(idArb, idArb, (legacy, next) => {
-        const tasks = planMigrations([legacy], next, () => true, ".obsidian");
+        // 같은 ID가 생성되면 이 속성의 대상이 아니다(위 테스트가 담당).
+        fc.pre(legacy !== next);
+        // 레거시 경로만 존재하고 신 경로는 없는 상태 — 마이그레이션이 필요하다.
+        const legacyPaths = new Set([
+          ...legacyDataFileNames(legacy),
+          `.obsidian/plugins/${legacy}/data.json`,
+          `.obsidian/plugins/${legacy}/mcp.json`,
+        ]);
+        const tasks = planMigrations(
+          [legacy],
+          next,
+          (p) => legacyPaths.has(p),
+          ".obsidian"
+        );
+        // 레거시만 존재하므로 작업이 나와야 한다.
+        expect(tasks.length).toBeGreaterThan(0);
         for (const t of tasks) {
           expect(t.from).not.toBe(t.to);
         }
