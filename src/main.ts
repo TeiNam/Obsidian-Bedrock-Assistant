@@ -18,7 +18,7 @@ import {
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
 import { migratePlannerSettings } from "./planner-settings";
-import { planMigrations } from "./migration";
+import { planMigrations, isPluginFolderTask } from "./migration";
 import {
   activeChatModelId,
   clampEffort,
@@ -477,8 +477,6 @@ export default class GeminiAssistantPlugin extends Plugin {
   ): Promise<void> {
     try {
       const result = await this.toolExecutor.execute(toolName, input);
-      // 긴 응답도 잘리지 않도록 콘솔에 전체를 남기고, Notice는 10초간 표시한다.
-      console.info(`[SecondBrain:${toolName}] ${result}`);
       new Notice(result, 10000);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1012,7 +1010,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       );
 
       // 플러그인 폴더 태스크만 필터링한다(to 경로에 configDir이 포함됨).
-      const settingsTasks = allTasks.filter((t) => t.to.startsWith(`${configDir}/`));
+      const settingsTasks = allTasks.filter((t) => isPluginFolderTask(t, configDir));
 
       for (const task of settingsTasks) {
         try {
@@ -1082,8 +1080,13 @@ export default class GeminiAssistantPlugin extends Plugin {
         configDir
       );
 
-      // 볼트 루트 태스크만 필터링한다(to 경로가 .으로 시작함).
-      const vaultTasks = allTasks.filter((t) => t.to.startsWith("."));
+      // 볼트 루트 태스크만 필터링한다.
+      //
+      // 1단계(migrateSettingsFiles)가 가져간 플러그인 폴더 태스크의 여집합으로
+      // 정의한다. startsWith(".")로 판정하면 기본 configDir(".obsidian")이 점으로
+      // 시작하므로 플러그인 폴더 경로가 양쪽 단계에 모두 걸리고, 1단계가 실패한
+      // 뒤 사용자가 설정을 저장하면 2단계가 그 설정을 레거시 내용으로 덮어쓴다.
+      const vaultTasks = allTasks.filter((t) => !isPluginFolderTask(t, configDir));
 
       for (const task of vaultTasks) {
         try {

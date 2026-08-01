@@ -1,11 +1,9 @@
 // ============================================
-// 브랜딩 설정 (브랜치별로 이 파일만 다르게 유지)
+// 브랜딩 설정
 // ============================================
-// .gitattributes에서 merge=ours로 설정되어 있어
-// 머지 시 각 브랜치의 브랜딩이 자동으로 보존됩니다.
-//
 // AI 백엔드 통합: getBranding() / updateBranding()으로
-// 백엔드에 따라 displayName, icon, settingsTitle을 동적 전환합니다.
+// 백엔드(Bedrock, Gemini, OpenAI, Ollama)에 따라 displayName, icon,
+// settingsTitle을 런타임에 동적으로 전환합니다.
 // pluginId, viewType, files는 백엔드와 무관하게 고정됩니다.
 
 // aiBackend union(4값)을 단일 출처에서 참조하기 위해 타입 전용 import 사용

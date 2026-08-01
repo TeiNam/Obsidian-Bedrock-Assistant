@@ -64,6 +64,7 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 
 Version 0.3.0 changes the plugin ID from `bedrock-assistant` to `ai-assistant`.
 
+- **Disable the old plugin before enabling the new one.** If both are enabled simultaneously, the old plugin's index save can interleave with the new plugin's migration read, resulting in a torn copy (this self-heals through re-indexing but takes time).
 - **The plugin folder changes, so reinstallation is required.** If you use BRAT, remove the old entry and add it again.
 - **Settings (`data.json`)**, vault index, chat history, sessions, MCP config, and credentials **are automatically copied on first launch**. Your backend choice, models, region, Second Brain settings, and custom skills are all preserved. The old files remain in place, so rolling back to a previous version works seamlessly.
 - **You must reopen the sidebar once.** Obsidian records view identifiers in the workspace layout, and the plugin cannot rewrite that for you.

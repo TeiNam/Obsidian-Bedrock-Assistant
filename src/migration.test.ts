@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { planMigrations, planCredentialMigration, legacyDataFileNames } from "./migration";
+import { planMigrations, planCredentialMigration, legacyDataFileNames, isPluginFolderTask } from "./migration";
 
 describe("legacyDataFileNames", () => {
   it("주어진 ID로 볼트 데이터 4개 파일명을 생성한다", () => {
@@ -315,7 +315,28 @@ describe("planMigrations 속성", () => {
   it("to 경로에 중복이 없다", () => {
     fc.assert(
       fc.property(idArb, idArb, idArb, (legacyA, legacyB, next) => {
-        const tasks = planMigrations([legacyA, legacyB], next, () => true, ".obsidian");
+        // 레거시가 신 ID와 같으면 자기 복사 제외 규칙에 걸려 태스크가 줄어든다.
+        fc.pre(legacyA !== next && legacyB !== next);
+        // 레거시 경로만 존재하게 만든다. exists를 항상 true로 두면 대상이 이미
+        // 있는 것으로 판정되어 태스크가 0개가 되고, 중복 검사가 무의미해진다.
+        const legacyPaths = new Set([
+          ...legacyDataFileNames(legacyA),
+          ...legacyDataFileNames(legacyB),
+          `.obsidian/plugins/${legacyA}/data.json`,
+          `.obsidian/plugins/${legacyA}/mcp.json`,
+          `.obsidian/plugins/${legacyB}/data.json`,
+          `.obsidian/plugins/${legacyB}/mcp.json`,
+        ]);
+
+        const tasks = planMigrations(
+          [legacyA, legacyB],
+          next,
+          (p) => legacyPaths.has(p),
+          ".obsidian"
+        );
+
+        // 레거시 경로가 존재하므로 태스크가 나와야 한다.
+        expect(tasks.length).toBeGreaterThan(0);
         const targets = tasks.map((t) => t.to);
         expect(new Set(targets).size).toBe(targets.length);
       })
@@ -350,5 +371,72 @@ describe("planMigrations 속성", () => {
         expect(second).toEqual([]);
       })
     );
+  });
+});
+
+describe("isPluginFolderTask 분할", () => {
+  // 기본 configDir이 점으로 시작하는 것이 이 결함의 핵심 원인이었다.
+  for (const configDir of [".obsidian", "my-config"]) {
+    it(`configDir="${configDir}"에서 모든 태스크가 정확히 한 단계에만 속한다`, () => {
+      // 레거시 경로만 존재한다고 가정 (신 경로는 없음).
+      const legacyPaths = new Set([
+        ...legacyDataFileNames("bedrock-assistant"),
+        ...legacyDataFileNames("assistant-kiro"),
+        `${configDir}/plugins/bedrock-assistant/data.json`,
+        `${configDir}/plugins/bedrock-assistant/mcp.json`,
+        `${configDir}/plugins/assistant-kiro/data.json`,
+        `${configDir}/plugins/assistant-kiro/mcp.json`,
+      ]);
+
+      const tasks = planMigrations(
+        ["bedrock-assistant", "assistant-kiro"],
+        "ai-assistant",
+        (p) => legacyPaths.has(p),
+        configDir
+      );
+
+      // 레거시 경로가 존재하므로 태스크가 나와야 한다.
+      expect(tasks.length).toBeGreaterThan(0);
+
+      const settings = tasks.filter((t) => isPluginFolderTask(t, configDir));
+      const vault = tasks.filter((t) => !isPluginFolderTask(t, configDir));
+
+      // 배타: 교집합이 없다.
+      expect(settings.filter((t) => vault.includes(t))).toEqual([]);
+      // 완전: 합집합이 전체다.
+      expect(settings.length + vault.length).toBe(tasks.length);
+      // 각 단계가 실제로 태스크를 가진다(분할이 한쪽으로 쏠리지 않았다).
+      expect(settings.length).toBeGreaterThan(0);
+      expect(vault.length).toBeGreaterThan(0);
+
+      // 결함의 핵심: 플러그인 폴더 경로가 vault 단계에 섞이지 않아야 한다.
+      // 버그가 있으면 .obsidian/plugins/ 경로가 startsWith(".")에 걸려
+      // vault 배열에도 나타난다.
+      for (const task of vault) {
+        expect(task.to).not.toMatch(/plugins\/ai-assistant\/(data|mcp)\.json$/);
+      }
+    });
+  }
+
+  it("플러그인 폴더 대상은 data.json과 mcp.json뿐이다", () => {
+    // 레거시 경로만 존재한다고 가정.
+    const legacyPaths = new Set([
+      ...legacyDataFileNames("bedrock-assistant"),
+      ".obsidian/plugins/bedrock-assistant/data.json",
+      ".obsidian/plugins/bedrock-assistant/mcp.json",
+    ]);
+
+    const tasks = planMigrations(
+      ["bedrock-assistant"],
+      "ai-assistant",
+      (p) => legacyPaths.has(p),
+      ".obsidian"
+    );
+    const settings = tasks.filter((t) => isPluginFolderTask(t, ".obsidian"));
+
+    expect(settings.map((t) => t.to).sort()).toEqual([
+      ".obsidian/plugins/ai-assistant/data.json",
+      ".obsidian/plugins/ai-assistant/mcp.json",
+    ]);
   });
 });

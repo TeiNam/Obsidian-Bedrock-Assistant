@@ -15,6 +15,18 @@ export interface MigrationTask {
   to: string;
 }
 
+/**
+ * 마이그레이션 태스크가 플러그인 폴더 대상인지 판정한다.
+ *
+ * 두 단계(설정 먼저, 볼트 데이터 나중)가 이 함수와 그 여집합으로 분할되므로
+ * 어떤 태스크도 양쪽에 걸치거나 어느 쪽에도 속하지 않는 일이 없다.
+ * 기본 configDir(".obsidian")이 점으로 시작하는 탓에 startsWith(".")로는
+ * 배타 분할이 되지 않는다 — 반드시 이 함수를 기준으로 여집합을 취해야 한다.
+ */
+export function isPluginFolderTask(task: MigrationTask, configDir: string): boolean {
+  return task.to.startsWith(`${configDir}/`);
+}
+
 /** 볼트 루트 데이터 파일의 접미사 4종. branding.ts의 files 필드와 대응한다. */
 const DATA_SUFFIXES = [
   "-index.json",
