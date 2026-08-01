@@ -281,6 +281,36 @@ export const TOOLS: ToolDefinition[] = [
   },
 ];
 
+/**
+ * Second Brain 전용 도구 이름 목록 (위 TOOLS 의 "Second Brain Layer 도구" 구간과 1:1 대응).
+ *
+ * secondBrain.enabled 가 false 면 이 8개를 LLM 에 아예 보내지 않는다. 과거에는 항상
+ * 보냈기 때문에 SB 를 끈 사용자도 매 요청마다 스키마 8개를 실어 보냈고, LLM 이 호출하면
+ * "Second Brain 기능이 비활성화되어 있습니다" 거부 문자열만 돌아왔다. 도구를 빼면
+ * "설정에서 켜세요" 안내 경로는 사라지지만, LLM 이 처음부터 못 한다고 정직하게 답한다.
+ */
+export const SECOND_BRAIN_TOOLS = [
+  // 쓰기 도구 — 위키 노트를 생성·갱신한다
+  "create_wiki_note",
+  "update_index",
+  "synthesize_topic",
+  "architect",
+  // 읽기 전용 도구 — 리포트만 반환하고 노트를 수정하지 않는다
+  "reconcile_topic",
+  "challenge",
+  "connect",
+  "emerge",
+];
+
+/**
+ * Second Brain 활성화 여부에 따라 LLM 에 전달할 도구 목록을 만든다.
+ * 원본 TOOLS 배열은 변형하지 않고 항상 새 배열을 반환한다.
+ */
+export function getEnabledTools(secondBrainEnabled: boolean): ToolDefinition[] {
+  if (secondBrainEnabled) return [...TOOLS];
+  return TOOLS.filter((tool) => !SECOND_BRAIN_TOOLS.includes(tool.name));
+}
+
 // 도구 실행기
 export class ToolExecutor {
   private app: App;

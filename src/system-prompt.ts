@@ -26,10 +26,23 @@ export const LEGACY_DEFAULT_SYSTEM_PROMPTS: string[] = [
  *  - 내장 기본 프롬프트(BASE_SYSTEM_PROMPT)는 항상 포함된다.
  *  - 설정의 systemPrompt 값이 비어 있지 않으면 "추가 지침"으로 뒤에 덧붙인다.
  *  - 활성화된 Obsidian 스킬 지식(buildSkillsPrompt)을 마지막에 덧붙인다(기존 동작 유지).
+ *  - Second Brain 이 켜져 있으면 second-brain 스킬을 자동 주입한다(아래 주석 참고).
  */
 export function buildSystemPrompt(settings: GeminiAssistantSettings): string {
   const custom = (settings.systemPrompt ?? "").trim();
-  const skills = buildSkillsPrompt(settings.enabledSkills || [], settings.customSkills || []);
+
+  // Second Brain 을 켠 사용자는 SB 도구 8개를 쓰게 되는데, 그 규약(AI-first 노트 규격·
+  // wikilink 규약·비파괴 원칙)은 second-brain 스킬에만 들어 있다. 설정 화면에서 스킬
+  // 토글을 따로 찾아 켜지 않으면 LLM 이 규약을 모른 채 도구를 호출하므로 여기서 합집합으로
+  // 채워 넣는다. settings.enabledSkills 를 직접 변형하면 저장 시 항목이 박혀 SB 를 껐을 때도
+  // 스킬이 남으므로, 반드시 새 배열을 만든다(수동 토글 경로는 그대로 유지).
+  const enabledSkills = settings.enabledSkills || [];
+  const skillIds =
+    settings.secondBrain?.enabled && !enabledSkills.includes("second-brain")
+      ? [...enabledSkills, "second-brain"]
+      : enabledSkills;
+
+  const skills = buildSkillsPrompt(skillIds, settings.customSkills || []);
 
   let prompt = BASE_SYSTEM_PROMPT;
   if (custom) {

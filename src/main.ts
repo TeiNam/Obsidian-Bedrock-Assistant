@@ -129,6 +129,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private lastAccountScope = "";
   // 마이그레이션 복사 건수 누적 (두 단계 분리에 따라 집계용)
   private migratedFileCount = 0;
+  // 실행 중인 Second Brain 도구 이름. 중복 실행으로 LLM 비용이 두 배 되는 것을 막는다.
+  private runningSecondBrainTools = new Set<string>();
 
   async onload(): Promise<void> {
     // 구 플러그인 ID의 설정·자격증명 파일을 새 경로로 복사한다. loadSettings보다
@@ -476,12 +478,27 @@ export default class GeminiAssistantPlugin extends Plugin {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<void> {
+    // 같은 도구가 이미 돌고 있으면 거절한다. synthesize·reconcile·architect 등은
+    // 검색 + LLM 호출로 10~60초가 걸리는데, 그 사이 피드백이 없으면 사용자가 실패로
+    // 오인해 다시 실행하고 LLM 비용이 중복된다.
+    if (this.runningSecondBrainTools.has(toolName)) {
+      new Notice(`이미 실행 중입니다: ${toolName}`);
+      return;
+    }
+    this.runningSecondBrainTools.add(toolName);
+
+    // timeout 0 = 수동으로 닫을 때까지 유지. finally에서 반드시 hide한다.
+    const progress = new Notice(`Second Brain 실행 중... (${toolName})`, 0);
     try {
       const result = await this.toolExecutor.execute(toolName, input);
       new Notice(result, 10000);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       new Notice(`Second Brain 도구 실행 실패 (${toolName}): ${reason}`, 10000);
+    } finally {
+      // delete를 빠뜨리면 예외 경로에서 그 도구가 영구히 잠긴다.
+      progress.hide();
+      this.runningSecondBrainTools.delete(toolName);
     }
   }
 
