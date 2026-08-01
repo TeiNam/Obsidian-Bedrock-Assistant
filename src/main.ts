@@ -14,6 +14,7 @@ import {
   saveCredentialsToLocal,
   loadCredentialsFromLocal,
   SENSITIVE_FIELDS,
+  LEGACY_SENSITIVE_FIELDS,
   migrateCredentialsFile,
 } from "./safe-storage";
 import { createAiClient } from "./ai-client-factory";
@@ -802,8 +803,12 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
 
     // 마이그레이션: data.json에 암호화된 키가 남아있으면 로컬로 이전 후 제거
+    // 폐기된 액세스 키 필드도 감지 대상에 넣는다. SENSITIVE_FIELDS만 검사하면,
+    // 액세스 키만 남은 구 data.json은 이 분기를 타지 않아 재저장이 일어나지 않고
+    // 평문 키가 동기화 대상 파일에 영구 잔존한다. 플러그인 ID 마이그레이션이
+    // data.json을 그대로 복사하므로 새 경로까지 따라온다.
     let hasMigratedKeys = false;
-    for (const field of SENSITIVE_FIELDS) {
+    for (const field of [...SENSITIVE_FIELDS, ...LEGACY_SENSITIVE_FIELDS]) {
       const val = (raw as Record<string, unknown>)[field];
       if (typeof val === "string" && val.length > 0) {
         hasMigratedKeys = true;

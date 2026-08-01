@@ -19,16 +19,17 @@ Bedrock API 키는 기기당 한 번 입력하고, 만료 관리는 AWS 콘솔�
 | 항목 | 요구사항 |
 |---|---|
 | AWS 계정 | Bedrock을 사용할 리전에서 모델 접근이 활성화되어 있어야 합니다 |
-| IAM 권한 | 아래 3개 |
+| IAM 권한 | 아래 4개 |
 | 플러그인 | 데스크톱 전용입니다 |
 
 ```
 bedrock:InvokeModelWithResponseStream
 bedrock:InvokeModel
 bedrock:ListFoundationModels
+bedrock:ListInferenceProfiles
 ```
 
-`bedrock:ListInferenceProfiles`도 있으면 채팅 모델 드롭다운이 채워집니다. 없으면 모델 ID를 직접 입력해야 합니다.
+`bedrock:ListInferenceProfiles`도 필요합니다. 채팅 모델은 드롭다운으로만 선택할 수 있어서, 이 권한이 없으면 목록이 비어 모델을 고를 수 없습니다.
 
 ## 1. 모델 접근 활성화
 
@@ -62,7 +63,7 @@ AWS 콘솔 → Bedrock → **API keys**에서 발급합니다.
 
 키는 발급 직후 한 번만 표시됩니다. 그 자리에서 복사해 두세요.
 
-> 발급된 키는 특정 IAM 사용자의 권한을 그대로 씁니다. 최소 권한 원칙에 따라 위 3~4개 권한만 가진 사용자로 발급하는 편이 안전합니다.
+> 발급된 키는 특정 IAM 사용자의 권한을 그대로 씁니다. 최소 권한 원칙에 따라 위 4개 권한만 가진 사용자로 발급하는 편이 안전합니다.
 
 ## 3. 플러그인 설정
 
@@ -118,7 +119,7 @@ OS 키체인을 쓸 수 없는 환경에서는 키를 **파일에 아예 쓰지 
 2. 모델 접근이 활성화됐는지 — 1절의 `aws bedrock list-foundation-models` 명령
 3. 권한 — 채팅 목록은 `bedrock:ListInferenceProfiles`, 임베딩 목록은 `bedrock:ListFoundationModels`가 필요합니다
 
-권한이 없어도 모델 ID를 직접 입력하면 호출은 동작합니다.
+모델은 드롭다운으로만 선택할 수 있으므로, 목록 조회 권한이 없으면 모델을 설정할 수 없습니다. 위 권한을 IAM 정책에 추가하세요.
 
 ### `ExpiredTokenException` 또는 `401`
 
@@ -126,11 +127,11 @@ OS 키체인을 쓸 수 없는 환경에서는 키를 **파일에 아예 쓰지 
 
 ### `AccessDeniedException`
 
-키에 연결된 IAM 사용자에게 위 3개 권한이 없거나, 호출하려는 모델에 접근 권한이 없습니다. 콘솔의 Model access에서 해당 모델 상태를 확인하세요.
+키에 연결된 IAM 사용자에게 위 권한이 없거나, 호출하려는 모델에 접근 권한이 없습니다. 콘솔의 Model access에서 해당 모델 상태를 확인하세요.
 
 ### `ValidationException` (임베딩 호출 시)
 
-지원하지 않는 임베딩 모델일 수 있습니다. 플러그인은 Amazon Titan과 Cohere Embed 계열만 요청·응답 스키마를 구현했습니다. 드롭다운은 지원 모델만 노출하지만, 모델 ID를 직접 입력했다면 이 오류가 날 수 있습니다.
+지원하지 않는 임베딩 모델일 수 있습니다. 플러그인은 Amazon Titan과 Cohere Embed 계열만 요청·응답 스키마를 구현했습니다. 드롭다운은 지원 모델만 노출하지만, 구 설정에 다른 모델 ID가 저장돼 있으면 이 오류가 날 수 있습니다.
 
 ### 임베딩 모델을 바꿨더니 검색 결과가 이상합니다
 

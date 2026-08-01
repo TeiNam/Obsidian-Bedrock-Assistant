@@ -31,7 +31,7 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 - **To-Do管理** — 日次To-Do、未完了項目の自動引き継ぎ、アーカイブ
 - **アーカイブクリーンアップ** — 設定タブから古いアーカイブファイルをクリーンアップ
 - **P.A.R.A オーガナイザー** — P.A.R.Aフォルダ構造(Projects, Areas, Resources, Archives)をセットアップし、既存ノートをAIで分類
-- **Webクリッパー** — WebページをマークダウンノートとしてfetchLambertson、翻訳、要約
+- **Webクリッパー** — Webページをマークダウンノートとして取得・翻訳・要約
 - **MCPサーバー連携** — Model Context Protocolサーバー(uvx、Docker)
 - **ファイル管理** — AIによるノートの作成、編集、移動、削除
 - **多言語UI** — English、한국어、日本語
@@ -99,6 +99,7 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
 - `bedrock:ListFoundationModels`
+- `bedrock:ListInferenceProfiles`
 
 **Gemini:** [Google AI Studio](https://aistudio.google.com/)からAPIキーを入力
 

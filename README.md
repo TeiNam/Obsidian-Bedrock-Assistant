@@ -99,6 +99,7 @@ Required IAM permissions:
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
 - `bedrock:ListFoundationModels`
+- `bedrock:ListInferenceProfiles`
 
 **Gemini:** Enter your API key from [Google AI Studio](https://aistudio.google.com/).
 

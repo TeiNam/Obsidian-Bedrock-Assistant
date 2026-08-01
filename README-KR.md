@@ -99,6 +99,7 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
 - `bedrock:ListFoundationModels`
+- `bedrock:ListInferenceProfiles`
 
 **Gemini:** [Google AI Studio](https://aistudio.google.com/)에서 발급한 API 키 입력
 
