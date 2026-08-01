@@ -80,13 +80,6 @@ describe("SENSITIVE_FIELDS", () => {
     expect(SENSITIVE_FIELDS).toContain("geminiApiKey");
   });
 
-  it("awsAccessKeyId를 포함한다 (Bedrock 자격증명)", () => {
-    expect(SENSITIVE_FIELDS).toContain("awsAccessKeyId");
-  });
-
-  it("awsSecretAccessKey를 포함한다 (Bedrock 자격증명)", () => {
-    expect(SENSITIVE_FIELDS).toContain("awsSecretAccessKey");
-  });
 });
 
 // ============================================
@@ -269,8 +262,6 @@ describe("SENSITIVE_FIELDS 멤버십 (multi-provider)", () => {
 describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않는다", () => {
   const settings = {
     geminiApiKey: "GKEY",
-    awsAccessKeyId: "AKID",
-    awsSecretAccessKey: "SECRET",
     openaiApiKey: "sk-openai",
     bedrockApiKey: "APIKEY",
   };
@@ -289,7 +280,7 @@ describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않�
 
   it("빈 값은 담지 않는다", () => {
     const payload = buildCredentialsPayload(
-      { geminiApiKey: "", awsAccessKeyId: "", bedrockApiKey: "" },
+      { geminiApiKey: "", bedrockApiKey: "" },
       mockEncryptValue
     );
     expect(payload).toEqual({});
@@ -301,7 +292,7 @@ describe("buildCredentialsPayload: 평문 자격증명은 파일에 쓰지 않�
       v === "APIKEY" ? v : mockEncryptValue(v)
     );
     expect(payload.bedrockApiKey).toBeUndefined();
-    expect(isEncrypted(payload.awsAccessKeyId)).toBe(true);
+    expect(isEncrypted(payload.geminiApiKey)).toBe(true);
   });
 });
 

@@ -55,7 +55,6 @@ export const I18N = {
     // Bedrock 자격증명
     authMethodLabel: "Authentication Method",
     authMethodDesc: "How to authenticate with Bedrock",
-    authMethodAccessKey: "Access key",
     authMethodApiKey: "Bedrock API key",
     authMethodProfile: "AWS profile (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API Key",
@@ -66,12 +65,6 @@ export const I18N = {
       "Profile from ~/.aws/config or ~/.aws/credentials. For SSO profiles, run `aws sso login --profile <name>` in a terminal first.",
     awsProfileEmpty: "No profiles found in ~/.aws",
     awsProfileRefresh: "Reload profiles",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "AWS Access Key ID for Bedrock",
-    awsAccessKeyPlaceholder: "Enter AWS Access Key ID",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "AWS Secret Access Key for Bedrock",
-    awsSecretKeyPlaceholder: "Enter AWS Secret Access Key",
     awsRegionLabel: "AWS Region",
     awsRegionDesc: "AWS Region for Bedrock API",
     awsRegionPlaceholder: "us-east-1",
@@ -266,7 +259,6 @@ export const I18N = {
     // Bedrock 자격증명
     authMethodLabel: "인증 방식",
     authMethodDesc: "Bedrock 인증에 사용할 방식",
-    authMethodAccessKey: "액세스 키",
     authMethodApiKey: "Bedrock API 키",
     authMethodProfile: "AWS 프로필 (~/.aws)",
     bedrockApiKeyLabel: "Bedrock API 키",
@@ -277,12 +269,6 @@ export const I18N = {
       "~/.aws/config 또는 ~/.aws/credentials의 프로필. SSO 프로필은 터미널에서 `aws sso login --profile <이름>`을 먼저 실행하세요.",
     awsProfileEmpty: "~/.aws에서 프로필을 찾을 수 없습니다",
     awsProfileRefresh: "프로필 다시 읽기",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "Bedrock용 AWS Access Key ID",
-    awsAccessKeyPlaceholder: "AWS Access Key ID 입력",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "Bedrock용 AWS Secret Access Key",
-    awsSecretKeyPlaceholder: "AWS Secret Access Key 입력",
     awsRegionLabel: "AWS 리전",
     awsRegionDesc: "Bedrock API용 AWS 리전",
     awsRegionPlaceholder: "us-east-1",
@@ -477,7 +463,6 @@ export const I18N = {
     // Bedrock 資格情報
     authMethodLabel: "認証方式",
     authMethodDesc: "Bedrock 認証に使用する方式",
-    authMethodAccessKey: "アクセスキー",
     authMethodApiKey: "Bedrock APIキー",
     authMethodProfile: "AWSプロファイル (~/.aws)",
     bedrockApiKeyLabel: "Bedrock APIキー",
@@ -488,12 +473,6 @@ export const I18N = {
       "~/.aws/config または ~/.aws/credentials のプロファイル。SSOプロファイルの場合は、先にターミナルで `aws sso login --profile <名前>` を実行してください。",
     awsProfileEmpty: "~/.aws にプロファイルが見つかりません",
     awsProfileRefresh: "プロファイルを再読み込み",
-    awsAccessKeyLabel: "AWS Access Key ID",
-    awsAccessKeyDesc: "Bedrock用 AWS Access Key ID",
-    awsAccessKeyPlaceholder: "AWS Access Key IDを入力",
-    awsSecretKeyLabel: "AWS Secret Access Key",
-    awsSecretKeyDesc: "Bedrock用 AWS Secret Access Key",
-    awsSecretKeyPlaceholder: "AWS Secret Access Keyを入力",
     awsRegionLabel: "AWSリージョン",
     awsRegionDesc: "Bedrock API用 AWSリージョン",
     awsRegionPlaceholder: "us-east-1",
@@ -845,7 +824,6 @@ export class GeminiSettingTab extends PluginSettingTab {
         .setDesc(t.authMethodDesc)
         .addDropdown((dropdown) =>
           dropdown
-            .addOption("accessKey", t.authMethodAccessKey)
             .addOption("apiKey", t.authMethodApiKey)
             .addOption("profile", t.authMethodProfile)
             .setValue(authMethod)
@@ -858,44 +836,6 @@ export class GeminiSettingTab extends PluginSettingTab {
               this.display();
             })
         );
-
-      if (authMethod === "accessKey") {
-        const awsAccessKeySetting = new Setting(containerEl)
-          .setName(t.awsAccessKeyLabel)
-          .setDesc(t.awsAccessKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.awsAccessKeyPlaceholder)
-              .setValue(this.plugin.settings.awsAccessKeyId)
-              .onChange(async (value) => {
-                this.plugin.settings.awsAccessKeyId = value.trim();
-                await this.plugin.saveSettings();
-                // 자격증명 변경 시 모델 목록 재로드 예약
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(awsAccessKeySetting.controlEl);
-
-        const awsSecretKeySetting = new Setting(containerEl)
-          .setName(t.awsSecretKeyLabel)
-          .setDesc(t.awsSecretKeyDesc)
-          .addText((text) => {
-            text
-              .setPlaceholder(t.awsSecretKeyPlaceholder)
-              .setValue(this.plugin.settings.awsSecretAccessKey)
-              .onChange(async (value) => {
-                this.plugin.settings.awsSecretAccessKey = value.trim();
-                await this.plugin.saveSettings();
-                // 자격증명 변경 시 모델 목록 재로드 예약
-                this.scheduleModelReload();
-              });
-            text.inputEl.type = "password";
-            text.inputEl.addClass("ba-secret-input");
-          });
-        this.addToggleVisibilityButton(awsSecretKeySetting.controlEl);
-      }
 
       if (authMethod === "apiKey") {
         const bedrockApiKeySetting = new Setting(containerEl)

@@ -98,17 +98,14 @@ export function extractEmbedding(modelId: string, body: unknown): number[] | nul
  *    authSchemePreference를 httpBearerAuth로 지정한다.
  *  - profile: `~/.aws` 프로필을 읽는 비동기 공급자를 credentials에 전달한다.
  *    SDK가 요청 시점에 호출하고 만료(expiration) 이후 자동 재호출한다.
- *  - accessKey: 입력된 키를 그대로 사용한다.
+ *  - 알 수 없는 인증 방식(구 설정의 "accessKey" 등)은 SDK 기본 체인으로 폴백하지
+ *    않고 명시적으로 거부한다.
  *
- * 세 방식 모두 값이 비어 있으면 fail-closed로 처리한다. SDK 기본 자격증명 체인으로
+ * 두 방식 모두 값이 비어 있으면 fail-closed로 처리한다. SDK 기본 자격증명 체인으로
  * 폴백하면 사용자가 선택하지 않은 AWS 계정으로 프롬프트가 전송되고 과금될 수 있기
  * 때문이다. 특히 볼트 인덱싱은 자동으로 대량 호출하므로 사용자가 알아차리기 전에
  * 번진다 — `~/.aws/credentials`의 `[default]` 프로필이나 환경변수·IAM 역할이
  * 조용히 집히는 경로를 남기지 않는다.
- *
- * accessKey는 Access Key ID와 Secret 둘 다 있어야 유효하다. 한쪽만 채우면 서명이
- * 실패해 InvalidSignatureException만 보이므로, 여기서 원인이 드러나게 막는다.
- * IAM 역할이 붙은 환경에서 키 없이 쓰려면 별도 인증 방식이 필요하다(현재 미지원).
  *
  * 순수 함수로 분리해 단위 테스트가 가능하게 한다(SDK 인스턴스화 없이 검증).
  */
@@ -146,18 +143,14 @@ export function buildBedrockClientConfig(
       break;
     }
     default: {
-      const accessKeyId = settings.awsAccessKeyId?.trim();
-      const secretAccessKey = settings.awsSecretAccessKey?.trim();
-      if (accessKeyId && secretAccessKey) {
-        config.credentials = { accessKeyId, secretAccessKey };
-      } else {
-        config.credentials = () =>
-          Promise.reject(
-            new Error(
-              "AWS 자격증명이 설정되지 않았습니다. 설정에서 Access Key ID와 Secret Access Key를 입력하거나 다른 인증 방식을 선택하세요"
-            )
-          );
-      }
+      // 알 수 없는 인증 방식(구 설정의 "accessKey" 등). SDK 기본 자격증명 체인으로
+      // 폴백하면 사용자가 선택하지 않은 AWS 계정으로 노트가 전송되고 과금된다.
+      config.credentials = () =>
+        Promise.reject(
+          new Error(
+            "지원하지 않는 인증 방식입니다. 설정에서 Bedrock API 키 또는 AWS 프로필을 선택하세요"
+          )
+        );
       break;
     }
   }

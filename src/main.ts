@@ -825,6 +825,14 @@ export default class GeminiAssistantPlugin extends Plugin {
           : DEFAULT_SETTINGS.effort;
     }
 
+    // 마이그레이션: 액세스 키 인증 방식 제거(장기 자격증명 위험). 구 설정은 프로필
+    // 방식으로 옮긴다. 프로필이 비어 있으면 fail-closed 오류가 떠서 사용자가 설정에서
+    // 프로필을 고르게 된다 — 임의로 골라주면 의도하지 않은 AWS 계정을 쓰게 된다.
+    const method = (raw as { awsAuthMethod?: string }).awsAuthMethod;
+    if (method !== "apiKey" && method !== "profile") {
+      (raw as { awsAuthMethod: string }).awsAuthMethod = "profile";
+    }
+
     if (hasMigratedKeys) {
       // 기존 data.json의 키를 복호화 후 로컬 파일로 저장
       const decrypted = decryptSettings(raw);
@@ -900,9 +908,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         const subject =
           s.awsAuthMethod === "profile"
             ? s.awsProfile
-            : s.awsAuthMethod === "apiKey"
-              ? digestSecret(s.bedrockApiKey)
-              : s.awsAccessKeyId;
+            : digestSecret(s.bedrockApiKey);
         return `bedrock:${s.awsAuthMethod}:${subject}:${s.awsRegion}`;
       }
       case "openai":

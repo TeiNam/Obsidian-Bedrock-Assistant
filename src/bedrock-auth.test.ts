@@ -39,55 +39,28 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     );
   });
 
-  it("accessKey: 입력된 키를 credentials로 전달한다", () => {
+  it("구 설정의 accessKey 인증 방식은 fail-closed로 거부한다", async () => {
+    // 액세스 키 방식을 제거했지만, 구 data.json에는 "accessKey" 문자열이 남아있을 수 있다.
+    // loadSettings의 마이그레이션이 "profile"로 바꾸지만, 만약 마이그레이션 전에
+    // buildBedrockClientConfig가 호출되거나 다른 경로로 stale 값이 들어오면
+    // SDK 기본 체인으로 새는 대신 명시적으로 거부해야 한다.
     const config = buildBedrockClientConfig(
-      makeSettings({
-        awsAuthMethod: "accessKey",
-        awsAccessKeyId: "AKID",
-        awsSecretAccessKey: "SECRET",
-      })
-    );
-    expect(config.credentials).toEqual({ accessKeyId: "AKID", secretAccessKey: "SECRET" });
-    // SigV4를 사용하므로 베어러 토큰 설정은 없다
-    expect(config.token).toBeUndefined();
-    expect(config.authSchemePreference).toBeUndefined();
-  });
-
-  it("accessKey: 키가 비어 있으면 fail-closed로 거부한다(기본 체인 폴백 금지)", async () => {
-    // 과거에는 config.credentials를 비워 SDK 기본 자격증명 체인에 위임했다.
-    // 그러면 ~/.aws/credentials의 [default] 프로필이나 환경변수·IAM 역할이
-    // 집혀, 사용자가 선택하지 않은 AWS 계정으로 노트 내용이 전송되고 과금된다.
-    // 특히 볼트 인덱싱은 자동으로 대량 호출하므로 눈치채기 전에 번진다.
-    const config = buildBedrockClientConfig(
-      makeSettings({ awsAuthMethod: "accessKey", awsAccessKeyId: "" })
+      makeSettings({ awsAuthMethod: "accessKey" as any })
     );
     expect(typeof config.credentials).toBe("function");
     await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
-      /자격증명/
+      /지원하지 않는 인증 방식/
     );
   });
 
-  it("accessKey: Access Key ID만 있고 Secret이 비어 있으면 fail-closed로 거부한다", async () => {
-    // 한쪽만 채운 상태로 서명하면 InvalidSignatureException이 나는데, 그 오류만
-    // 보고는 원인을 알기 어렵다. 설정 단계에서 명확히 막는다.
+  it("알 수 없는 인증 방식은 fail-closed로 거부한다", async () => {
+    // 임의의 문자열이 awsAuthMethod에 들어왔을 때 SDK 기본 체인으로 폴백하지 않는다.
     const config = buildBedrockClientConfig(
-      makeSettings({ awsAuthMethod: "accessKey", awsAccessKeyId: "AKID", awsSecretAccessKey: "" })
+      makeSettings({ awsAuthMethod: "unknown-method" as any })
     );
     expect(typeof config.credentials).toBe("function");
     await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
-      /자격증명/
-    );
-  });
-
-  it("awsAuthMethod가 없는 구버전 설정도 키가 비면 fail-closed다", async () => {
-    // DEFAULT_SETTINGS의 awsAuthMethod는 "accessKey"이므로 구버전 data.json을
-    // 병합한 사용자가 이 분기에 놓인다. 여기서 폴백하면 조용히 남의 계정을 쓴다.
-    const settings = makeSettings({ awsAccessKeyId: "" });
-    delete (settings as Record<string, unknown>).awsAuthMethod;
-    const config = buildBedrockClientConfig(settings);
-    expect(typeof config.credentials).toBe("function");
-    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(
-      /자격증명/
+      /지원하지 않는 인증 방식/
     );
   });
 
@@ -132,16 +105,52 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(/프로필/);
   });
 
-  it("어떤 인증 방식에서도 비밀값이 설정 객체에 중복 노출되지 않는다", () => {
-    // 액세스 키 방식에서 token(베어러) 경로로 키가 새지 않는지 확인
+  it("어떤 인증 방식에서도 비밀값이 의도하지 않은 경로로 노출되지 않는다", () => {
+    // apiKey 방식: token 경로는 의도된 노출이므로 허용. credentials 경로로는 새지 않는지 확인
     const config = buildBedrockClientConfig(
       makeSettings({
-        awsAuthMethod: "accessKey",
-        awsAccessKeyId: "AKID",
-        awsSecretAccessKey: "SECRET",
-        bedrockApiKey: "SHOULD-NOT-APPEAR",
+        awsAuthMethod: "apiKey",
+        bedrockApiKey: "KEY123",
       })
     );
-    expect(JSON.stringify(config)).not.toContain("SHOULD-NOT-APPEAR");
+    expect(config.token).toEqual({ token: "KEY123" });
+    expect(config.credentials).toBeUndefined();
   });
 });
+
+describe("DEFAULT_SETTINGS: 기본 인증 방식", () => {
+  it("기본 인증 방식은 profile이다", () => {
+    expect(DEFAULT_SETTINGS.awsAuthMethod).toBe("profile");
+  });
+});
+
+describe("migrateAwsAuthMethod: 구 설정 마이그레이션", () => {
+  it("accessKey를 profile로 마이그레이션한다", () => {
+    const raw = { awsAuthMethod: "accessKey" as any };
+    const migrated = migrateAwsAuthMethod(raw);
+    expect(migrated.awsAuthMethod).toBe("profile");
+  });
+
+  it("이미 profile이면 그대로 둔다", () => {
+    const raw = { awsAuthMethod: "profile" as any, awsProfile: "my-profile" };
+    const migrated = migrateAwsAuthMethod(raw);
+    expect(migrated.awsAuthMethod).toBe("profile");
+    expect(migrated.awsProfile).toBe("my-profile");
+  });
+
+  it("이미 apiKey이면 그대로 둔다", () => {
+    const raw = { awsAuthMethod: "apiKey" as any, bedrockApiKey: "KEY" };
+    const migrated = migrateAwsAuthMethod(raw);
+    expect(migrated.awsAuthMethod).toBe("apiKey");
+    expect(migrated.bedrockApiKey).toBe("KEY");
+  });
+
+  it("알 수 없는 인증 방식도 profile로 마이그레이션한다", () => {
+    const raw = { awsAuthMethod: "unknown-method" as any };
+    const migrated = migrateAwsAuthMethod(raw);
+    expect(migrated.awsAuthMethod).toBe("profile");
+  });
+});
+
+// migrateAwsAuthMethod 함수 import 추가 필요
+import { migrateAwsAuthMethod } from "./types";
