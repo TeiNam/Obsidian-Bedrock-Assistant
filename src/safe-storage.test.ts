@@ -313,12 +313,11 @@ describe("Property 4: 민감 필드 strip 일관성", () => {
         fc.string({ minLength: 1, maxLength: 80 }),
         // 비민감 필드 ollamaBaseUrl 값 (빈 문자열 포함 가능)
         fc.string({ maxLength: 120 }),
-        (geminiKey, accessKey, secretKey, openaiKey, ollamaUrl) => {
+        (geminiKey, bedrockKey, openaiKey, ollamaUrl) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
             geminiApiKey: geminiKey,
-            awsAccessKeyId: accessKey,
-            awsSecretAccessKey: secretKey,
+            bedrockApiKey: bedrockKey,
             openaiApiKey: openaiKey,
             ollamaBaseUrl: ollamaUrl,
           };
