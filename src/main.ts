@@ -57,7 +57,7 @@ const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
 
 /**
- * 구 플러그인 ID 목록. pluginId가 obsidian-ai-assistant로 바뀌기 전의 값들이다.
+ * 구 플러그인 ID 목록. pluginId가 ai-assistant로 바뀌기 전의 값들이다.
  * 배열 순서가 우선순위다 — 같은 대상 파일에 둘 다 후보로 걸리면 앞선 것을 택한다.
  * bedrock-assistant가 main 계보의 정본이므로 앞에 둔다.
  */

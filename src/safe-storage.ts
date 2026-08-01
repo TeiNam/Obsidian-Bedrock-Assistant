@@ -26,7 +26,7 @@ import { planCredentialMigration } from "./migration";
 const ENCRYPTED_PREFIX = "enc:";
 
 // 로컬 전용 자격증명 파일명
-const CREDENTIALS_FILE = "obsidian-ai-assistant-credentials.json";
+const CREDENTIALS_FILE = "ai-assistant-credentials.json";
 
 // Node.js 모듈 (Obsidian/Electron 런타임에서 사용 가능)
 const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();
