@@ -91,11 +91,7 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "test-gemini-key",
-      awsAccessKeyId: "AKIAIOSFODNN7EXAMPLE",
-      awsSecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-      // OpenAI API 키도 민감 필드이므로 암호화 대상 (Req 3.1)
       openaiApiKey: "sk-test-openai-key",
-      // Bedrock API 키도 장기 자격증명이므로 암호화 대상
       bedrockApiKey: "BEDROCK-API-KEY-EXAMPLE",
     };
 
@@ -112,16 +108,16 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "my-api-key-123",
-      awsAccessKeyId: "AKID-TEST",
-      awsSecretAccessKey: "SECRET-TEST",
+      openaiApiKey: "sk-test-openai",
+      bedrockApiKey: "bedrock-test-key",
     };
 
     const encrypted = encryptSettings(settings);
     const decrypted = decryptSettings(encrypted);
 
     expect(decrypted.geminiApiKey).toBe("my-api-key-123");
-    expect(decrypted.awsAccessKeyId).toBe("AKID-TEST");
-    expect(decrypted.awsSecretAccessKey).toBe("SECRET-TEST");
+    expect(decrypted.openaiApiKey).toBe("sk-test-openai");
+    expect(decrypted.bedrockApiKey).toBe("bedrock-test-key");
   });
 
   it("비민감 필드는 암호화되지 않는다", () => {
@@ -143,16 +139,16 @@ describe("encryptSettings / decryptSettings 통합 테스트", () => {
     const settings: GeminiAssistantSettings = {
       ...DEFAULT_SETTINGS,
       geminiApiKey: "",
-      awsAccessKeyId: "",
-      awsSecretAccessKey: "",
+      openaiApiKey: "",
+      bedrockApiKey: "",
     };
 
     const encrypted = encryptSettings(settings);
 
     // 빈 문자열은 그대로 유지
     expect(encrypted.geminiApiKey).toBe("");
-    expect(encrypted.awsAccessKeyId).toBe("");
-    expect(encrypted.awsSecretAccessKey).toBe("");
+    expect(encrypted.openaiApiKey).toBe("");
+    expect(encrypted.bedrockApiKey).toBe("");
   });
 });
 
@@ -183,11 +179,7 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
         const settings: GeminiAssistantSettings = {
           ...DEFAULT_SETTINGS,
           geminiApiKey: value,
-          awsAccessKeyId: value,
-          awsSecretAccessKey: value,
-          // openaiApiKey도 SENSITIVE_FIELDS에 포함되므로 동일 값 설정 (Req 3.1)
           openaiApiKey: value,
-          // bedrockApiKey도 SENSITIVE_FIELDS에 포함된다
           bedrockApiKey: value,
         };
 
@@ -210,20 +202,20 @@ describe("Property 2: 민감 필드 암호화 라운드트립", () => {
         nonEmptyStringArb,
         nonEmptyStringArb,
         nonEmptyStringArb,
-        (geminiKey, accessKey, secretKey) => {
+        (geminiKey, openaiKey, bedrockKey) => {
           const settings: GeminiAssistantSettings = {
             ...DEFAULT_SETTINGS,
             geminiApiKey: geminiKey,
-            awsAccessKeyId: accessKey,
-            awsSecretAccessKey: secretKey,
+            openaiApiKey: openaiKey,
+            bedrockApiKey: bedrockKey,
           };
 
           const encrypted = encryptSettings(settings);
           const decrypted = decryptSettings(encrypted);
 
           expect(decrypted.geminiApiKey).toBe(geminiKey);
-          expect(decrypted.awsAccessKeyId).toBe(accessKey);
-          expect(decrypted.awsSecretAccessKey).toBe(secretKey);
+          expect(decrypted.openaiApiKey).toBe(openaiKey);
+          expect(decrypted.bedrockApiKey).toBe(bedrockKey);
         },
       ),
       { numRuns: 100 },

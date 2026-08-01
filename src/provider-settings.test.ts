@@ -98,8 +98,7 @@ describe("Property 13: 설정 마이그레이션 (기본값 보강 + 기존값 �
         // === 기존 필드 (항상 존재, 임의의 커스텀 값 보유) ===
         aiBackend: fc.constantFrom<"bedrock" | "gemini">("bedrock", "gemini"),
         geminiApiKey: fc.string(),
-        awsAccessKeyId: fc.string(),
-        awsSecretAccessKey: fc.string(),
+        bedrockApiKey: fc.string(),
         bedrockChatModel: fc.string(),
         bedrockEmbeddingModel: fc.string(),
         // === 신규 백엔드 필드 (선택적 — 누락 가능) ===
@@ -116,8 +115,7 @@ describe("Property 13: 설정 마이그레이션 (기본값 보강 + 기존값 �
         requiredKeys: [
           "aiBackend",
           "geminiApiKey",
-          "awsAccessKeyId",
-          "awsSecretAccessKey",
+          "bedrockApiKey",
           "bedrockChatModel",
           "bedrockEmbeddingModel",
         ],
@@ -143,8 +141,7 @@ describe("Property 13: 설정 마이그레이션 (기본값 보강 + 기존값 �
         // 기존 Bedrock/Gemini 필드 값은 항상 보존된다 (Req 14.3)
         expect(merged.aiBackend).toBe(loaded.aiBackend);
         expect(merged.geminiApiKey).toBe(loaded.geminiApiKey);
-        expect(merged.awsAccessKeyId).toBe(loaded.awsAccessKeyId);
-        expect(merged.awsSecretAccessKey).toBe(loaded.awsSecretAccessKey);
+        expect(merged.bedrockApiKey).toBe(loaded.bedrockApiKey);
         expect(merged.bedrockChatModel).toBe(loaded.bedrockChatModel);
         expect(merged.bedrockEmbeddingModel).toBe(loaded.bedrockEmbeddingModel);
       }),
