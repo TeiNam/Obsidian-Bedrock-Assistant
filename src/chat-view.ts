@@ -26,6 +26,9 @@ import {
 } from "./second-brain/note-to-wiki";
 import { SECOND_BRAIN_SYSTEM_PROMPT } from "./second-brain/search-adapter";
 import { sanitizeTitleForFilename } from "./conversation-harvest";
+// 검색 근거 mermaid 그래프 — 부착 판단·문구 조립은 순수 함수로 분리되어 있다.
+import { buildSearchGraph } from "./graph-rag/mermaid-graph";
+import { composeGraphMessage, shouldAttachSearchGraph } from "./graph-rag/graph-message";
 
 export const VIEW_TYPE = BRANDING.viewType;
 
@@ -460,6 +463,37 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * 외부(명령 팔레트)에서 만든 마크다운을 어시스턴트 메시지로 채팅에 붙인다.
+   *
+   * 명령 3종(유사도·공백·위키 그래프)은 질문 없이 볼트 전체를 훑으므로 대화 turn 이
+   * 없다. 그래도 결과를 채팅에 내보내는 이유는 사용자가 선택한 인라인 방침에 맞고,
+   * mermaid 렌더·위키링크 클릭 이동이 이미 이 경로에서 검증돼 있기 때문이다.
+   * 볼트에 노트로 저장하는 방식은 읽기 전용 계약을 깨고(그래프 조회가 파일을 만든다)
+   * 매 실행마다 노트가 쌓여 정리 부담을 남긴다.
+   *
+   * **this.messages 에는 넣지 않는다.** 그래프는 명령 결과 표시물이고 대화 turn 이
+   * 아니다. 히스토리에 넣으면 두 가지가 실제로 깨진다:
+   *  1. 빈 채팅에서 그래프를 띄운 뒤 첫 질문을 하면 messages 가 [assistant, user] 가
+   *     되는데, trimConversationHistory 의 선행 assistant 제거 루프는
+   *     `length > MIN_MESSAGES(2)` 조건이라 길이 2에서 동작하지 않는다(실측 확인).
+   *     그대로 Converse API 로 가서 "first message must use the user role" 로 실패하고,
+   *     persistHistory 가 깨진 배열을 볼트에 저장하므로 재시작해도 복구되지 않는다.
+   *  2. 그래프가 마지막 assistant 가 되어, 직전 답변의 재생성 버튼이 답변 대신
+   *     그래프를 지운다(prepareRegeneration 은 마지막 assistant 를 제거한다).
+   *
+   * 대가로 세션 복원 시 그래프는 사라진다. 명령을 다시 실행하면 되고, 그래프는 인덱스
+   * 상태의 스냅샷이라 오래된 것을 복원하는 편이 오히려 오해를 부른다.
+   */
+  async appendAssistantMarkdown(markdown: string): Promise<void> {
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+    await MarkdownRenderer.render(this.app, markdown, contentEl, "", this);
+
+    this.scrollToBottom();
+  }
+
+  /**
    * 채팅 기반 회고 처리.
    * 어시스턴트 메시지 컨테이너를 생성하고, 진행 상태를 표시하며,
    * RetrospectiveService를 호출하여 결과를 채팅에 렌더링한다.
@@ -876,6 +910,9 @@ export class ChatView extends ItemView {
               text: result.slice(0, 80).replace(/\n/g, " "),
             });
 
+            // 검색이었다면 근거 그래프를 이 도구 블록 아래에 붙인다.
+            await this.appendSearchGraph(toolEl);
+
             this.scrollToBottom();
             return result;
           } catch (error) {
@@ -892,8 +929,40 @@ export class ChatView extends ItemView {
           }
         }
 
+  /**
+   * 방금 실행된 검색의 근거 그래프를 접히는 블록으로 붙인다.
+   *
+   * `takeLastSearchResult()` 는 소비형이라 검색이 아닌 도구에서는 null 이 돌아오고
+   * 아무 일도 일어나지 않는다 — 도구 이름을 문자열로 비교하지 않는 이유다(MCP 도구가
+   * 같은 이름을 쓰거나 도구가 늘어나도 배선이 어긋나지 않는다).
+   *
+   * 그래프를 그리지 않는 경우에는 **아무것도 붙이지 않는다**. 빈 mermaid 블록은 실제
+   * 파스 에러이고, 시드만 있는 그래프는 바로 위 도구 결과 텍스트와 같은 정보라
+   * 노이즈다(shouldAttachSearchGraph 주석 참조).
+   *
+   * 기본 접힘: 그래프는 "왜 이 결과인가"를 확인하고 싶을 때 보는 보조 정보다. 매 검색마다
+   * 펼쳐져 있으면 답변 본문이 도형에 밀려 내려가므로 헤더만 두고 접어 둔다. 새 설정을
+   * 만들지 않은 이유도 이것 — 접힌 블록은 이미 "원할 때만 보는" 상태다.
+   */
+  private async appendSearchGraph(toolEl: HTMLElement): Promise<void> {
+    const searchResult = this.plugin.toolExecutor.takeLastSearchResult();
+    if (!searchResult) return;
+    if (!shouldAttachSearchGraph(searchResult)) return;
 
+    const graph = buildSearchGraph(searchResult);
+    const markdown = composeGraphMessage("", graph, {
+      truncated: this.t.graphTruncated,
+      truncatedEdges: this.t.graphTruncatedEdges,
+    });
+    // 순수 코어가 빈 문자열을 돌려주면(노드 0개) 여기서 중단한다 — 게이트와 이중 방어.
+    if (!markdown) return;
 
+    // <details> 는 접힘 상태를 브라우저가 관리하므로 토글 스크립트도 CSS 도 필요 없다.
+    const details = toolEl.createEl("details", { cls: "ba-tool-graph" });
+    details.createEl("summary", { text: this.t.graphSearchHeading.replace(/\*\*/g, "") });
+    const body = details.createDiv();
+    await MarkdownRenderer.render(this.app, markdown, body, "", this);
+  }
 
 
 

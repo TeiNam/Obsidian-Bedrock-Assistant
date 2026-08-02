@@ -319,6 +319,16 @@ export class ToolExecutor {
   // Second Brain Layer 의존성 (옵트인). 기존 호출자 하위호환을 위해 선택적으로 주입한다.
   private getSecondBrain?: () => SecondBrainSettings;
   private getAiClient?: () => IAiClient;
+  /**
+   * 마지막 search_vault 의 원본 결과. 채팅 뷰가 검색 근거 그래프를 그릴 때 가져간다.
+   *
+   * execute() 는 문자열만 반환하므로 그래프에 필요한 hop·seedPath 정보가 소실된다.
+   * 뷰가 그래프를 위해 indexer.search 를 다시 부르면 쿼리 임베딩 API 를 한 번 더
+   * 호출해 요금과 지연이 두 배가 되므로, 이미 계산된 결과를 1건만 넘겨준다.
+   * 결과가 있을 때만 채워지고(실패·빈 결과·빈 쿼리는 제외) takeLastSearchResult 로
+   * 소비하면 즉시 비워진다.
+   */
+  private lastSearchResult: GraphRagResult | null = null;
 
   constructor(
     app: App,
@@ -333,6 +343,19 @@ export class ToolExecutor {
     this.getTemplateFolder = getTemplateFolder;
     this.getSecondBrain = getSecondBrain;
     this.getAiClient = getAiClient;
+  }
+
+  /**
+   * 마지막 search_vault 결과를 가져오고 즉시 비운다(소비형 조회).
+   *
+   * 비우는 이유: 남겨두면 다음 턴에 read_note 같은 무관한 도구를 호출했을 때도 지난
+   * 검색 그래프가 답변에 따라붙어, 사용자가 방금 검색이 일어난 것으로 오독한다.
+   * 검색이 실패하거나 결과가 0건이면 애초에 채워지지 않으므로 null 이 온다.
+   */
+  takeLastSearchResult(): GraphRagResult | null {
+    const result = this.lastSearchResult;
+    this.lastSearchResult = null;
+    return result;
   }
 
   async execute(toolName: string, input: Record<string, unknown>): Promise<string> {
@@ -446,6 +469,12 @@ export class ToolExecutor {
     const body = result.items
       .map((item, i) => this.formatSearchItem(item, i + 1))
       .join("\n\n");
+
+    // 검색 근거 그래프용으로 원본 결과를 남긴다. 여기까지 왔으면 검색이 성공하고
+    // 결과가 1건 이상이라는 뜻이다(실패·빈 쿼리·0건은 위에서 이미 반환됐다).
+    // 그래프 마크다운을 이 반환 문자열에 섞지 않는다 — 이 문자열은 LLM 에게 가므로
+    // 도형 문법이 들어가면 토큰만 낭비하고 답변 품질에 도움이 되지 않는다.
+    this.lastSearchResult = result;
 
     return `${header}\n\n${body}${staleWarning}`;
   }

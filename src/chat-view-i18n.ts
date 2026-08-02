@@ -126,6 +126,41 @@ export const VIEW_I18N = {
     // 같은 문장을 각자 하드코딩하고 있어 한 키로 통일했다.
     // (wikiDisabled와 문구가 미묘하게 다르므로 합치지 않는다 — 기존 표기 보존)
     sbDisabled: "Second Brain is disabled. Enable it in settings and try again.",
+    // ── mermaid 그래프 (검색 근거 인라인 + 명령 팔레트 3종) ────────────────────
+    // 절단 고지는 코드블록 '밖'에 마크다운 한 줄로 붙인다. 블록 안에 넣으면 안내 노드도
+    // 노드라서 상한 계산에 섞이고 사용자가 실제 노트로 착각한다. 분모(전체 수)를 반드시
+    // 포함해야 "이건 일부다"를 알 수 있고, 절단이 없을 때는 이 줄을 아예 넣지 않는다.
+    graphTruncated: (shown: number, total: number) =>
+      `Showing top ${shown} of ${total} notes`,
+    graphTruncatedEdges: (
+      shownNodes: number,
+      totalNodes: number,
+      shownEdges: number,
+      totalEdges: number
+    ) =>
+      `Showing ${shownNodes} of ${totalNodes} notes and ${shownEdges} of ${totalEdges} links`,
+    graphSearchHeading: "**Search evidence**",
+    cmdSimilarityGraph: "Graph: similar notes to current note",
+    cmdGapGraph: "Graph: knowledge gaps",
+    cmdWikiGraph: "Graph: wiki structure",
+    graphIndexEmpty: "The vault index is empty. Run vault indexing first.",
+    graphNoActiveNote: "Open a note first — this graph is based on the active note.",
+    graphRunning: "Building graph...",
+    graphAlreadyRunning: "Already building a graph. Please wait.",
+    graphFailed: (reason: string) => `Failed to build graph: ${reason}`,
+    graphSimilarityHeading: (title: string) => `**Notes similar to "${title}"**`,
+    graphSimilarityEmpty:
+      "No similar notes found. Nothing exceeded the similarity threshold, or they are already linked.",
+    graphSimilarityNoVector:
+      "The current note has no embedding. Re-index the vault and try again.",
+    graphSimilarityDegenerate:
+      "Embeddings look degenerate (nearly everything is identical). Re-index the vault.",
+    graphGapHeading: "**Knowledge gaps**",
+    graphGapEmpty: "No structural gaps found.",
+    graphWikiHeading: "**Wiki structure**",
+    graphWikiEmpty: "No wiki notes yet. Create one first.",
+    graphWikiIsolated: (isolated: number, total: number) =>
+      `${isolated} of ${total} wiki notes have no links (dashed outline).`,
     // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
     // 모달은 title/submitLabel/field.label을 옵션으로 받으므로 모달 코드는 그대로 두고
     // 값만 이 테이블에서 주입한다. 모달 제목은 위 cmd* 키를 재사용해 팔레트 표기와 맞춘다.
@@ -277,6 +312,37 @@ ${content}`,
     cmdReviewQueue: "복습 큐 (다시 볼 노트)",
     cmdRunScheduler: "Second Brain 정리 실행 (스케줄러)",
     sbDisabled: "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.",
+    // ── mermaid 그래프 (검색 근거 인라인 + 명령 팔레트 3종) ────────────────────
+    graphTruncated: (shown: number, total: number) =>
+      `전체 ${total}개 중 상위 ${shown}개만 표시`,
+    graphTruncatedEdges: (
+      shownNodes: number,
+      totalNodes: number,
+      shownEdges: number,
+      totalEdges: number
+    ) => `노트 ${totalNodes}개 중 ${shownNodes}개, 연결 ${totalEdges}개 중 ${shownEdges}개만 표시`,
+    graphSearchHeading: "**검색 근거**",
+    cmdSimilarityGraph: "그래프: 현재 노트와 비슷한 노트",
+    cmdGapGraph: "그래프: 지식 공백",
+    cmdWikiGraph: "그래프: 위키 구조",
+    graphIndexEmpty: "볼트 인덱스가 비어 있습니다. 먼저 볼트 인덱싱을 실행해 주세요.",
+    graphNoActiveNote: "먼저 노트를 열어 주세요 — 이 그래프는 현재 노트를 기준으로 만듭니다.",
+    graphRunning: "그래프를 만들고 있습니다...",
+    graphAlreadyRunning: "이미 그래프를 만들고 있습니다. 잠시 기다려 주세요.",
+    graphFailed: (reason: string) => `그래프 생성 실패: ${reason}`,
+    graphSimilarityHeading: (title: string) => `**"${title}" 와(과) 비슷한 노트**`,
+    graphSimilarityEmpty:
+      "비슷한 노트를 찾지 못했습니다. 유사도 기준을 넘는 노트가 없거나 이미 링크로 연결돼 있습니다.",
+    graphSimilarityNoVector:
+      "현재 노트에 임베딩이 없습니다. 볼트를 다시 인덱싱한 뒤 시도해 주세요.",
+    graphSimilarityDegenerate:
+      "임베딩이 붕괴한 것으로 보입니다(거의 모든 노트가 동일). 볼트를 다시 인덱싱해 주세요.",
+    graphGapHeading: "**지식 공백**",
+    graphGapEmpty: "구조적 공백이 발견되지 않았습니다.",
+    graphWikiHeading: "**위키 구조**",
+    graphWikiEmpty: "아직 위키 노트가 없습니다. 먼저 위키 노트를 만들어 주세요.",
+    graphWikiIsolated: (isolated: number, total: number) =>
+      `위키 노트 ${total}개 중 ${isolated}개가 아무 링크도 없습니다(점선 표시).`,
     // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
     sbSubmitCreate: "생성",
     sbSubmitSynthesize: "종합",
@@ -425,6 +491,37 @@ ${content}`,
     cmdReviewQueue: "復習キュー (再確認するノート)",
     cmdRunScheduler: "Second Brain 整理を実行 (スケジューラ)",
     sbDisabled: "Second Brain機能が無効になっています。設定で有効化してから再度お試しください。",
+    // ── mermaid グラフ (検索根拠インライン + コマンドパレット3種) ────────────────
+    graphTruncated: (shown: number, total: number) =>
+      `全${total}件のうち上位${shown}件のみ表示`,
+    graphTruncatedEdges: (
+      shownNodes: number,
+      totalNodes: number,
+      shownEdges: number,
+      totalEdges: number
+    ) => `ノート${totalNodes}件中${shownNodes}件、リンク${totalEdges}件中${shownEdges}件のみ表示`,
+    graphSearchHeading: "**検索根拠**",
+    cmdSimilarityGraph: "グラフ: 現在のノートに似たノート",
+    cmdGapGraph: "グラフ: 知識ギャップ",
+    cmdWikiGraph: "グラフ: Wiki構造",
+    graphIndexEmpty: "ボルトのインデックスが空です。先にボルトのインデックス作成を実行してください。",
+    graphNoActiveNote: "先にノートを開いてください — このグラフは現在のノートを基準に作成します。",
+    graphRunning: "グラフを作成しています...",
+    graphAlreadyRunning: "すでにグラフを作成中です。しばらくお待ちください。",
+    graphFailed: (reason: string) => `グラフの作成に失敗しました: ${reason}`,
+    graphSimilarityHeading: (title: string) => `**「${title}」に似たノート**`,
+    graphSimilarityEmpty:
+      "似たノートが見つかりませんでした。類似度の基準を超えるノートがないか、すでにリンクで繋がっています。",
+    graphSimilarityNoVector:
+      "現在のノートに埋め込みがありません。ボルトを再インデックスしてからお試しください。",
+    graphSimilarityDegenerate:
+      "埋め込みが劣化しているようです(ほぼすべてのノートが同一)。ボルトを再インデックスしてください。",
+    graphGapHeading: "**知識ギャップ**",
+    graphGapEmpty: "構造的なギャップは見つかりませんでした。",
+    graphWikiHeading: "**Wiki構造**",
+    graphWikiEmpty: "まだWikiノートがありません。先にWikiノートを作成してください。",
+    graphWikiIsolated: (isolated: number, total: number) =>
+      `Wikiノート${total}件のうち${isolated}件にリンクがありません(破線表示)。`,
     // ── Second Brain 入力モーダル (SecondBrainInputModal オプション) ─────────
     sbSubmitCreate: "作成",
     sbSubmitSynthesize: "統合",

@@ -42,6 +42,17 @@ import {
   hasPath,
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
+// mermaid 그래프 3종(명령 팔레트). 그래프 조립·문구 분기는 모두 순수 함수다.
+import { buildSimilarityGraph } from "./graph-rag/similarity-graph";
+import { buildGapGraph } from "./graph-rag/gap-graph";
+import { buildWikiGraph } from "./graph-rag/wiki-graph";
+import {
+  buildSimilarityMessage,
+  buildGapMessage,
+  buildWikiMessage,
+  type GraphCommandLabels,
+  type GraphCommandOutput,
+} from "./graph-rag/graph-command";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
@@ -280,6 +291,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 옵트인 격리: enabled=false면 핸들러(execute)·스케줄러가 내부에서 쓰기를 거부한다.
     this.registerSecondBrainCommands(t);
 
+    // mermaid 그래프 3종(유사도·공백·위키). 전부 읽기 전용이며, 위키 구조만 SB 기능이다.
+    // 검색 근거 그래프는 대화 turn 에 붙으므로 명령이 아니라 chat-view 에 배선돼 있다.
+    this.registerGraphCommands(t);
+
     // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
     // indexVault 진행 중이면 indexer가 내부 대기열(pendingFiles)로 큐잉하므로
     // 여기서 걸러내지 않는다. 걸러내면 인덱싱 중 편집이 영구 유실된다.
@@ -510,6 +525,164 @@ export default class GeminiAssistantPlugin extends Plugin {
       progress.hide();
       this.runningSecondBrainTools.delete(toolName);
     }
+  }
+
+  /**
+   * VIEW_I18N 에서 그래프 명령용 문구만 뽑아 순수 함수에 넘길 묶음을 만든다.
+   * 순수 코어가 언어 테이블을 import 하지 않게 하는 경계이며, 문구 조립 로직은
+   * graph-command.ts 에서 vault 없이 테스트된다.
+   */
+  private graphLabels(t: ViewLang): GraphCommandLabels {
+    return {
+      truncated: t.graphTruncated,
+      truncatedEdges: t.graphTruncatedEdges,
+      similarityHeading: t.graphSimilarityHeading,
+      similarityEmpty: t.graphSimilarityEmpty,
+      similarityNoVector: t.graphSimilarityNoVector,
+      similarityDegenerate: t.graphSimilarityDegenerate,
+      gapHeading: t.graphGapHeading,
+      gapEmpty: t.graphGapEmpty,
+      wikiHeading: t.graphWikiHeading,
+      wikiEmpty: t.graphWikiEmpty,
+      wikiIsolated: t.graphWikiIsolated,
+      sbDisabled: t.sbDisabled,
+    };
+  }
+
+  /**
+   * 그래프 명령 3종의 공통 실행 껍데기 — 재진입 가드 + 진행 표시 + 결과 분기.
+   *
+   * runSecondBrainTool 과 같은 `runningSecondBrainTools` Set 을 재사용한다(새 상태를
+   * 만들지 않는다). 유사도 그래프는 전체 노트와 벡터를 비교하므로 큰 볼트에서 체감
+   * 지연이 생기는데, 피드백이 없으면 사용자가 실패로 오인해 다시 실행한다.
+   *
+   * 그래프는 전부 **읽기 전용**이다 — getEntries() 스냅샷만 읽고 LLM 호출·파일 쓰기가
+   * 0회다. 그래서 위키 그래프를 제외하면 secondBrain.enabled 와 무관하게 동작한다
+   * (Graph RAG 는 Second Brain 기능이 아니다).
+   *
+   * @param build 그래프를 만들어 "채팅에 낼 마크다운" 또는 "Notice 문구"를 돌려주는 순수 조립부
+   */
+  private async runGraphCommand(
+    commandKey: string,
+    t: ViewLang,
+    build: () => GraphCommandOutput,
+  ): Promise<void> {
+    if (this.runningSecondBrainTools.has(commandKey)) {
+      new Notice(t.graphAlreadyRunning);
+      return;
+    }
+
+    // 인덱스가 비어 있으면 어떤 그래프도 그릴 수 없다. 빈 그래프를 내보내는 대신
+    // 원인(인덱싱 필요)을 바로 알려준다.
+    if (this.indexer.getEntries().length === 0) {
+      new Notice(t.graphIndexEmpty);
+      return;
+    }
+
+    this.runningSecondBrainTools.add(commandKey);
+    // timeout 0 = 수동으로 닫을 때까지 유지. finally에서 반드시 hide한다.
+    const progress = new Notice(t.graphRunning, 0);
+    try {
+      const output = build();
+      if (output.notice) {
+        new Notice(output.notice, 8000);
+        return;
+      }
+      if (!output.markdown) return;
+
+      // 채팅 뷰로 내보낸다 — 사용자가 선택한 인라인 방침에 맞고, mermaid 렌더와
+      // 위키링크 클릭 이동이 이미 이 경로에서 검증돼 있다. 볼트에 노트로 저장하면
+      // 읽기 전용 계약이 깨지고 실행마다 파일이 쌓인다.
+      await this.activateView();
+      const view = this.app.workspace
+        .getLeavesOfType(VIEW_TYPE)
+        .map((leaf) => leaf.view as { appendAssistantMarkdown?: (md: string) => Promise<void> })
+        .find((v) => typeof v.appendAssistantMarkdown === "function");
+      await view?.appendAssistantMarkdown?.(output.markdown);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(t.graphFailed(reason), 10000);
+    } finally {
+      // delete를 빠뜨리면 예외 경로에서 그 명령이 영구히 잠긴다.
+      progress.hide();
+      this.runningSecondBrainTools.delete(commandKey);
+    }
+  }
+
+  /**
+   * mermaid 그래프 3종을 명령 팔레트에 등록한다.
+   *
+   * 질문 없이 볼트 전체를 훑는 동작이라 대화 turn 에 붙일 게 없어 검색 근거 그래프
+   * (채팅 인라인)와 달리 명령으로 낸다. id 접두사는 기존 `second-brain-*` 과 구분되게
+   * `graph-*` 를 쓴다 — 3종 중 2종은 Second Brain 기능이 아니다.
+   */
+  private registerGraphCommands(t: ViewLang): void {
+    // 의미 유사도 — 현재 노트 기준. 계산이 가장 무거운 명령이다.
+    this.addCommand({
+      id: "graph-similar-notes",
+      name: t.cmdSimilarityGraph,
+      callback: () => {
+        // 활성 노트가 그래프의 중심이므로 없으면 계산할 대상 자체가 없다.
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+          new Notice(t.graphNoActiveNote);
+          return;
+        }
+        return this.runGraphCommand("graph-similar-notes", t, () => {
+          const entries = this.indexer.getEntries();
+          const center = entries.find((e) => e.path === active.path);
+          // 열려 있지만 아직 인덱싱되지 않은 노트(신규 생성 직후 등).
+          if (!center) return { notice: t.graphSimilarityNoVector };
+          return buildSimilarityMessage(
+            center.title || active.basename,
+            buildSimilarityGraph(center, entries),
+            this.graphLabels(t),
+          );
+        });
+      },
+    });
+
+    // 지식 공백 — 볼트 전체 구조 지표. LLM 호출 0회, 파일 쓰기 0회.
+    // 기존 second-brain-knowledge-gaps 명령(리포트 노트 작성)은 그대로 두고 별도 id 를
+    // 쓴다. 그쪽은 노트를 쓰고 이쪽은 채팅에 그림만 낸다.
+    this.addCommand({
+      id: "graph-knowledge-gaps",
+      name: t.cmdGapGraph,
+      callback: () =>
+        this.runGraphCommand("graph-knowledge-gaps", t, () => {
+          // metadataCache 가 아직 준비되지 않았을 수 있다. 없으면 깨진 링크 지표만
+          // 비고 인덱스 기반 세 지표는 그대로 계산된다.
+          const unresolved =
+            (
+              this.app.metadataCache as
+                | { unresolvedLinks?: Record<string, Record<string, number>> }
+                | undefined
+            )?.unresolvedLinks ?? {};
+          const gaps = collectGaps(
+            this.indexer.getEntries(),
+            unresolved,
+            this.settings.secondBrain.wikiFolder,
+          );
+          return buildGapMessage(buildGapGraph(gaps), this.graphLabels(t));
+        }),
+    });
+
+    // 위키 구조 — 3종 중 유일하게 Second Brain 기능이라 enabled 를 확인한다.
+    // 확인은 buildWikiGraph 안에서 하고(status:"disabled") 문구는 기존 sbDisabled 재사용.
+    this.addCommand({
+      id: "graph-wiki-structure",
+      name: t.cmdWikiGraph,
+      callback: () =>
+        this.runGraphCommand("graph-wiki-structure", t, () =>
+          buildWikiMessage(
+            buildWikiGraph(this.indexer.getEntries(), {
+              wikiFolder: this.settings.secondBrain.wikiFolder,
+              enabled: this.settings.secondBrain.enabled,
+            }),
+            this.graphLabels(t),
+          ),
+        ),
+    });
   }
 
   /**
