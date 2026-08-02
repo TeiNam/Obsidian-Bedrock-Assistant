@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_SETTINGS, type GeminiAssistantSettings } from "./types";
 import { buildSystemPrompt } from "./system-prompt";
 import { TOOLS, SECOND_BRAIN_TOOLS, getEnabledTools } from "./obsidian-tools";
+import { VIEW_I18N } from "./chat-view-i18n";
 
 /**
  * Second Brain 배선(wiring) 테스트
@@ -191,5 +192,173 @@ describe("buildSystemPrompt - 설정 불변성 (Property 3)", () => {
     getEnabledTools(true);
 
     expect(TOOLS).toHaveLength(before);
+  });
+});
+
+// --- Property 4: 명령 팔레트 레이블 i18n ---
+//
+// main.ts 의 addCommand({ name }) 13개가 한국어로 하드코딩돼 있었다. 그중 11개는
+// Second Brain 기능이고 대응 버튼이 UI 에 없어 명령 팔레트가 유일한 진입점이다.
+// README 를 en/ko/ja 3종으로 배포하는 플러그인에서 그 11개는 비한국어 사용자에게
+// 사실상 미출시 상태였다. 아래 테스트는 세 언어가 같은 키 집합을 갖는지, ko 값이
+// 기존 리터럴과 글자 그대로 같은지(핫키를 걸어둔 기존 사용자의 검색 습관 보존),
+// 그리고 어떤 언어에도 undefined 가 새지 않는지를 고정한다.
+
+/**
+ * 명령 팔레트 레이블 13키 + 비활성 안내 1키.
+ *
+ * `indexVault` 는 채팅 뷰 상단 인덱싱 버튼 툴팁으로 이미 en/ko/ja 3개 언어가
+ * 완비돼 있고 값도 명령 이름과 완전히 같으므로 새 키를 만들지 않고 재사용한다.
+ */
+const COMMAND_LABEL_KEYS = [
+  "cmdOpenAssistant",
+  "indexVault",
+  "cmdCreateWikiNote",
+  "cmdUpdateIndex",
+  "cmdSynthesize",
+  "cmdReconcile",
+  "cmdChallenge",
+  "cmdConnect",
+  "cmdEmerge",
+  "cmdArchitect",
+  "cmdKnowledgeGaps",
+  "cmdReviewQueue",
+  "cmdRunScheduler",
+  "sbDisabled",
+] as const;
+
+/**
+ * 명령 팔레트에서 모달로 이어지는 입력 UI 문자열(제출 버튼·필드 레이블·플레이스홀더).
+ * SecondBrainInputModal 은 title/submitLabel/field.label 을 옵션으로 받으므로 모달
+ * 코드는 그대로 두고 같은 테이블에서 값만 주입한다.
+ */
+const MODAL_LABEL_KEYS = [
+  "sbSubmitCreate",
+  "sbSubmitSynthesize",
+  "sbSubmitReconcile",
+  "sbSubmitChallenge",
+  "sbSubmitConnect",
+  "sbSubmitEmerge",
+  "sbSubmitArchitect",
+  "sbFieldTitle",
+  "sbFieldBody",
+  "sbFieldTopic",
+  "sbFieldClaim",
+  "sbFieldTopicA",
+  "sbFieldTopicB",
+  "sbFieldDays",
+  "sbFieldPath",
+  "sbPhTitle",
+  "sbPhBody",
+  "sbPhSynthesizeTopic",
+  "sbPhReconcileTopic",
+  "sbPhClaim",
+  "sbPhTopicA",
+  "sbPhTopicB",
+  "sbPhPath",
+] as const;
+
+describe("VIEW_I18N 명령 팔레트 레이블 (Property 4)", () => {
+  it("en/ko/ja 모두 명령 레이블 13키와 sbDisabled 를 비어 있지 않은 문자열로 보유한다", () => {
+    for (const lang of ["en", "ko", "ja"] as const) {
+      const t = VIEW_I18N[lang] as Record<string, unknown>;
+      expect(t, `VIEW_I18N[${lang}] 존재`).toBeTruthy();
+      for (const key of COMMAND_LABEL_KEYS) {
+        expect(typeof t[key], `VIEW_I18N[${lang}].${key} 타입`).toBe("string");
+        expect((t[key] as string).trim().length, `VIEW_I18N[${lang}].${key} 비어있지 않음`)
+          .toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("en/ko/ja 모두 모달 입력 UI 키를 비어 있지 않은 문자열로 보유한다", () => {
+    for (const lang of ["en", "ko", "ja"] as const) {
+      const t = VIEW_I18N[lang] as Record<string, unknown>;
+      for (const key of MODAL_LABEL_KEYS) {
+        expect(typeof t[key], `VIEW_I18N[${lang}].${key} 타입`).toBe("string");
+        expect((t[key] as string).trim().length, `VIEW_I18N[${lang}].${key} 비어있지 않음`)
+          .toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("ko 레이블이 기존 하드코딩 리터럴과 글자 그대로 일치한다(기존 사용자 회귀 방지)", () => {
+    // 기존 main.ts 의 addCommand({ name }) 값을 그대로 하드코딩해 둔다. 명령 ID 는
+    // 핫키에 묶여 있고 이름은 사용자가 팔레트에서 외워 검색하므로 둘 다 불변이어야 한다.
+    const ko = VIEW_I18N.ko as Record<string, string>;
+    expect(ko.cmdOpenAssistant).toBe("어시스턴트 열기");
+    expect(ko.indexVault).toBe("볼트 인덱싱");
+    expect(ko.cmdCreateWikiNote).toBe("위키 노트 생성");
+    expect(ko.cmdUpdateIndex).toBe("위키 인덱스 갱신");
+    expect(ko.cmdSynthesize).toBe("주제 종합 (synthesize)");
+    expect(ko.cmdReconcile).toBe("모순 점검 (reconcile)");
+    expect(ko.cmdChallenge).toBe("주장 반박 (challenge)");
+    expect(ko.cmdConnect).toBe("두 주제 연결 (connect)");
+    expect(ko.cmdEmerge).toBe("최근 패턴 발견 (emerge)");
+    expect(ko.cmdArchitect).toBe("코드베이스 아키텍트 (architect)");
+    expect(ko.cmdKnowledgeGaps).toBe("지식 공백 리포트 갱신");
+    expect(ko.cmdReviewQueue).toBe("복습 큐 (다시 볼 노트)");
+    expect(ko.cmdRunScheduler).toBe("Second Brain 정리 실행 (스케줄러)");
+    // 3곳에 중복돼 있던 비활성 안내를 한 키로 통일한다. 문장은 기존 그대로 유지한다.
+    expect(ko.sbDisabled).toBe(
+      "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요."
+    );
+  });
+
+  it("ko 모달 리터럴이 기존 하드코딩 값과 글자 그대로 일치한다", () => {
+    const ko = VIEW_I18N.ko as Record<string, string>;
+    expect(ko.sbSubmitCreate).toBe("생성");
+    expect(ko.sbSubmitSynthesize).toBe("종합");
+    expect(ko.sbSubmitReconcile).toBe("점검");
+    expect(ko.sbSubmitChallenge).toBe("반박");
+    expect(ko.sbSubmitConnect).toBe("연결");
+    expect(ko.sbSubmitEmerge).toBe("발견");
+    expect(ko.sbSubmitArchitect).toBe("분석");
+    expect(ko.sbFieldTitle).toBe("제목");
+    expect(ko.sbFieldBody).toBe("본문");
+    expect(ko.sbFieldTopic).toBe("주제");
+    expect(ko.sbFieldClaim).toBe("주장");
+    expect(ko.sbFieldTopicA).toBe("주제 A");
+    expect(ko.sbFieldTopicB).toBe("주제 B");
+    expect(ko.sbFieldDays).toBe("최근 일수");
+    expect(ko.sbFieldPath).toBe("스캔 경로 (비우면 볼트 전체)");
+    expect(ko.sbPhTitle).toBe("노트 제목");
+    expect(ko.sbPhBody).toBe("노트 본문");
+    expect(ko.sbPhSynthesizeTopic).toBe("종합할 주제/태그");
+    expect(ko.sbPhReconcileTopic).toBe("모순을 점검할 주제");
+    expect(ko.sbPhClaim).toBe("검토(반박)할 주장");
+    expect(ko.sbPhTopicA).toBe("첫 번째 주제");
+    expect(ko.sbPhTopicB).toBe("두 번째 주제");
+    expect(ko.sbPhPath).toBe("예: src");
+  });
+
+  it("en 레이블은 도구명을 그대로 노출한다(문서에서 본 이름으로 검색 가능)", () => {
+    // README/문서가 쓰는 도구명과 팔레트 레이블이 어긋나면 검색으로 찾지 못한다.
+    const en = VIEW_I18N.en as Record<string, string>;
+    expect(en.cmdOpenAssistant).toBe("Open assistant");
+    expect(en.indexVault).toBe("Index vault");
+    expect(en.cmdCreateWikiNote).toBe("Create wiki note");
+    expect(en.cmdUpdateIndex).toBe("Update wiki index");
+    expect(en.cmdSynthesize).toBe("Synthesize topic");
+    expect(en.cmdReconcile).toBe("Reconcile contradictions");
+    expect(en.cmdChallenge).toBe("Challenge a claim");
+    expect(en.cmdConnect).toBe("Connect two topics");
+    expect(en.cmdEmerge).toBe("Emerge recent patterns");
+    expect(en.cmdArchitect).toBe("Codebase architect");
+    expect(en.cmdKnowledgeGaps).toBe("Knowledge gap report");
+    expect(en.cmdReviewQueue).toBe("Review queue");
+    expect(en.cmdRunScheduler).toBe("Run Second Brain cleanup");
+  });
+
+  it("세 언어의 어떤 키에도 undefined 가 없다(팔레트에 undefined 노출 방지)", () => {
+    // 세 블록을 손으로 채우다 한 언어를 빠뜨리면 Obsidian 팔레트에 "undefined"가
+    // 그대로 뜬다. en 을 키 정본으로 삼아 ko/ja 의 누락을 전수 검사한다.
+    const enKeys = Object.keys(VIEW_I18N.en);
+    for (const lang of ["en", "ko", "ja"] as const) {
+      const t = VIEW_I18N[lang] as Record<string, unknown>;
+      for (const key of enKeys) {
+        expect(t[key], `VIEW_I18N[${lang}].${key} 정의됨`).toBeDefined();
+      }
+    }
   });
 });

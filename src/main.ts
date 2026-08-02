@@ -44,6 +44,7 @@ import {
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
+import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
@@ -237,15 +238,24 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.statusBarItem = this.addStatusBarItem();
 
     // 커맨드 등록
+    //
+    // 명령 레이블을 언어 테이블에서 한 번만 조회해 아래 등록 전체에 공유한다. 채팅 뷰와
+    // 같은 VIEW_I18N 테이블을 쓰므로 조회 관용구(`|| VIEW_I18N.en` 폴백)가 하나로 유지된다.
+    //
+    // Obsidian은 addCommand 시점의 name을 고정하므로 이 스냅샷으로 충분하다. 설정에서
+    // 언어를 바꿔도 팔레트 레이블은 재시작 후에 반영되며, 그 사실은 설정 화면의 언어 항목
+    // 설명에 명시해 두었다. removeCommand로 동적 재등록하면 사용자 핫키가 풀릴 위험만 생긴다.
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+
     this.addCommand({
       id: "open-assistant",
-      name: "어시스턴트 열기",
+      name: t.cmdOpenAssistant,
       callback: () => this.activateView(),
     });
 
     this.addCommand({
       id: "index-vault",
-      name: "볼트 인덱싱",
+      name: t.indexVault,
       callback: async () => {
         // 상태바에 인덱싱 진행률 표시
         this.statusBarItem.setText("인덱싱 중... 0%");
@@ -268,7 +278,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 모든 능동 동작을 명령 팔레트에 등록한다. 각 명령은 입력이 필요하면 모달로 수집한 뒤,
     // 채팅 도구와 동일한 핸들러(ToolExecutor.execute / 스케줄러)를 호출한다(DRY).
     // 옵트인 격리: enabled=false면 핸들러(execute)·스케줄러가 내부에서 쓰기를 거부한다.
-    this.registerSecondBrainCommands();
+    this.registerSecondBrainCommands(t);
 
     // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
     // indexVault 진행 중이면 indexer가 내부 대기열(pendingFiles)로 큐잉하므로
@@ -507,29 +517,33 @@ export default class GeminiAssistantPlugin extends Plugin {
    *
    * 입력이 필요한 도구는 SecondBrainInputModal로 값을 수집한 뒤 runSecondBrainTool로
    * 채팅과 동일한 핸들러를 호출한다. update_index와 스케줄러 실행은 입력이 없으므로 즉시 실행한다.
+   *
+   * @param t onload에서 한 번 조회한 언어 테이블. 여기서 다시 조회하지 않고 인자로 받아
+   *   등록 시점의 언어를 명령 등록 경로 전체가 동일하게 공유하도록 한다. 모달 제목·버튼·
+   *   필드 레이블도 같은 테이블을 써서 팔레트 표기와 모달 표기가 갈라지지 않게 한다.
    */
-  private registerSecondBrainCommands(): void {
+  private registerSecondBrainCommands(t: ViewLang): void {
     // create_wiki_note — 위키 노트 생성 (제목 + 본문). 활성 노트 제목/선택 텍스트를 프리필.
     this.addCommand({
       id: "second-brain-create-wiki-note",
-      name: "위키 노트 생성",
+      name: t.cmdCreateWikiNote,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "위키 노트 생성",
-          submitLabel: "생성",
+          title: t.cmdCreateWikiNote,
+          submitLabel: t.sbSubmitCreate,
           fields: [
             {
               key: "title",
-              label: "제목",
+              label: t.sbFieldTitle,
               type: "text",
-              placeholder: "노트 제목",
+              placeholder: t.sbPhTitle,
               defaultValue: this.getActiveNoteTitle(),
             },
             {
               key: "body",
-              label: "본문",
+              label: t.sbFieldBody,
               type: "textarea",
-              placeholder: "노트 본문",
+              placeholder: t.sbPhBody,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -545,24 +559,24 @@ export default class GeminiAssistantPlugin extends Plugin {
     // update_index — 위키 인덱스 카탈로그 갱신 (입력 불필요, 즉시 실행).
     this.addCommand({
       id: "second-brain-update-index",
-      name: "위키 인덱스 갱신",
+      name: t.cmdUpdateIndex,
       callback: () => this.runSecondBrainTool("update_index", {}),
     });
 
     // synthesize_topic — 주제 종합. 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-synthesize",
-      name: "주제 종합 (synthesize)",
+      name: t.cmdSynthesize,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "주제 종합 (synthesize)",
-          submitLabel: "종합",
+          title: t.cmdSynthesize,
+          submitLabel: t.sbSubmitSynthesize,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.sbFieldTopic,
               type: "text",
-              placeholder: "종합할 주제/태그",
+              placeholder: t.sbPhSynthesizeTopic,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -575,17 +589,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // reconcile_topic — 모순 점검(비파괴). 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-reconcile",
-      name: "모순 점검 (reconcile)",
+      name: t.cmdReconcile,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "모순 점검 (reconcile)",
-          submitLabel: "점검",
+          title: t.cmdReconcile,
+          submitLabel: t.sbSubmitReconcile,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.sbFieldTopic,
               type: "text",
-              placeholder: "모순을 점검할 주제",
+              placeholder: t.sbPhReconcileTopic,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -598,17 +612,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // challenge — 주장 반박. 에디터 선택 텍스트를 기본값으로.
     this.addCommand({
       id: "second-brain-challenge",
-      name: "주장 반박 (challenge)",
+      name: t.cmdChallenge,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "주장 반박 (challenge)",
-          submitLabel: "반박",
+          title: t.cmdChallenge,
+          submitLabel: t.sbSubmitChallenge,
           fields: [
             {
               key: "claim",
-              label: "주장",
+              label: t.sbFieldClaim,
               type: "textarea",
-              placeholder: "검토(반박)할 주장",
+              placeholder: t.sbPhClaim,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -621,14 +635,14 @@ export default class GeminiAssistantPlugin extends Plugin {
     // connect — 두 주제 연결 (topicA, topicB).
     this.addCommand({
       id: "second-brain-connect",
-      name: "두 주제 연결 (connect)",
+      name: t.cmdConnect,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "두 주제 연결 (connect)",
-          submitLabel: "연결",
+          title: t.cmdConnect,
+          submitLabel: t.sbSubmitConnect,
           fields: [
-            { key: "topicA", label: "주제 A", type: "text", placeholder: "첫 번째 주제" },
-            { key: "topicB", label: "주제 B", type: "text", placeholder: "두 번째 주제" },
+            { key: "topicA", label: t.sbFieldTopicA, type: "text", placeholder: t.sbPhTopicA },
+            { key: "topicB", label: t.sbFieldTopicB, type: "text", placeholder: t.sbPhTopicB },
           ],
           onSubmit: (values) =>
             this.runSecondBrainTool("connect", {
@@ -642,15 +656,15 @@ export default class GeminiAssistantPlugin extends Plugin {
     // emerge — 최근 N일 패턴 발견 (days, 기본 7).
     this.addCommand({
       id: "second-brain-emerge",
-      name: "최근 패턴 발견 (emerge)",
+      name: t.cmdEmerge,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "최근 패턴 발견 (emerge)",
-          submitLabel: "발견",
+          title: t.cmdEmerge,
+          submitLabel: t.sbSubmitEmerge,
           fields: [
             {
               key: "days",
-              label: "최근 일수",
+              label: t.sbFieldDays,
               type: "number",
               placeholder: "7",
               defaultValue: "7",
@@ -669,17 +683,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // architect — 코드베이스 아키텍트. 경로 입력(미입력 시 볼트 전체).
     this.addCommand({
       id: "second-brain-architect",
-      name: "코드베이스 아키텍트 (architect)",
+      name: t.cmdArchitect,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "코드베이스 아키텍트 (architect)",
-          submitLabel: "분석",
+          title: t.cmdArchitect,
+          submitLabel: t.sbSubmitArchitect,
           fields: [
             {
               key: "path",
-              label: "스캔 경로 (비우면 볼트 전체)",
+              label: t.sbFieldPath,
               type: "text",
-              placeholder: "예: src",
+              placeholder: t.sbPhPath,
             },
           ],
           onSubmit: (values) => {
@@ -696,10 +710,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 스케줄러 파이프라인에도 같은 단계가 있지만, 주기를 기다리지 않고 즉시 보고 싶을 때 쓴다.
     this.addCommand({
       id: "second-brain-knowledge-gaps",
-      name: "지식 공백 리포트 갱신",
+      name: t.cmdKnowledgeGaps,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {
@@ -737,10 +751,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
     this.addCommand({
       id: "second-brain-review-queue",
-      name: "복습 큐 (다시 볼 노트)",
+      name: t.cmdReviewQueue,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         const now = Date.now();
@@ -775,10 +789,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // (자동 트리거와 달리 수동 실행은 schedulerEnabled와 무관하게 사용자 명시 요청으로 동작)
     this.addCommand({
       id: "second-brain-run-scheduler",
-      name: "Second Brain 정리 실행 (스케줄러)",
+      name: t.cmdRunScheduler,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {

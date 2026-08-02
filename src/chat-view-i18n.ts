@@ -99,6 +99,59 @@ export const VIEW_I18N = {
     regenerate: "Regenerate",
     sessionSearch: "Search conversations...",
     sessionSearchNoResults: "No matching conversations.",
+    // ── 명령 팔레트 레이블 (main.ts addCommand) ──────────────────────────────
+    // 명령 13개 중 11개는 Second Brain 기능이고 대응 버튼이 UI에 없어 명령 팔레트가
+    // 유일한 진입점이다. 레이블이 한국어로 고정돼 있으면 그 11개는 비한국어
+    // 사용자에게 사실상 존재하지 않는 기능이 된다.
+    //
+    // 영문 레이블은 도구명(create_wiki_note → "Create wiki note")을 그대로 옮긴다.
+    // 사용자가 README에서 본 이름으로 팔레트를 검색해 바로 찾게 하는 것이 목적이므로,
+    // 여기서 의역하면 검색이 실패한다.
+    //
+    // 볼트 인덱싱 명령은 채팅 뷰 상단 버튼 툴팁과 문구가 같으므로 기존 indexVault를
+    // 재사용한다(키를 새로 만들면 두 표기가 갈라진다).
+    cmdOpenAssistant: "Open assistant",
+    cmdCreateWikiNote: "Create wiki note",
+    cmdUpdateIndex: "Update wiki index",
+    cmdSynthesize: "Synthesize topic",
+    cmdReconcile: "Reconcile contradictions",
+    cmdChallenge: "Challenge a claim",
+    cmdConnect: "Connect two topics",
+    cmdEmerge: "Emerge recent patterns",
+    cmdArchitect: "Codebase architect",
+    cmdKnowledgeGaps: "Knowledge gap report",
+    cmdReviewQueue: "Review queue",
+    cmdRunScheduler: "Run Second Brain cleanup",
+    // Second Brain 비활성 안내. main.ts의 세 명령(지식 공백·복습 큐·스케줄러)이
+    // 같은 문장을 각자 하드코딩하고 있어 한 키로 통일했다.
+    // (wikiDisabled와 문구가 미묘하게 다르므로 합치지 않는다 — 기존 표기 보존)
+    sbDisabled: "Second Brain is disabled. Enable it in settings and try again.",
+    // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
+    // 모달은 title/submitLabel/field.label을 옵션으로 받으므로 모달 코드는 그대로 두고
+    // 값만 이 테이블에서 주입한다. 모달 제목은 위 cmd* 키를 재사용해 팔레트 표기와 맞춘다.
+    sbSubmitCreate: "Create",
+    sbSubmitSynthesize: "Synthesize",
+    sbSubmitReconcile: "Reconcile",
+    sbSubmitChallenge: "Challenge",
+    sbSubmitConnect: "Connect",
+    sbSubmitEmerge: "Emerge",
+    sbSubmitArchitect: "Analyze",
+    sbFieldTitle: "Title",
+    sbFieldBody: "Body",
+    sbFieldTopic: "Topic",
+    sbFieldClaim: "Claim",
+    sbFieldTopicA: "Topic A",
+    sbFieldTopicB: "Topic B",
+    sbFieldDays: "Recent days",
+    sbFieldPath: "Scan path (empty = whole vault)",
+    sbPhTitle: "Note title",
+    sbPhBody: "Note body",
+    sbPhSynthesizeTopic: "Topic or tag to synthesize",
+    sbPhReconcileTopic: "Topic to check for contradictions",
+    sbPhClaim: "Claim to challenge",
+    sbPhTopicA: "First topic",
+    sbPhTopicB: "Second topic",
+    sbPhPath: "e.g. src",
     tagPrompt: (title: string, content: string) => `Analyze the following note and generate 3 to 5 appropriate tags.
 Output only the tags separated by commas on a single line. No other explanation needed.
 Tags can be in English or the note's language, matching the content.
@@ -208,6 +261,46 @@ ${content}`,
     regenerate: "재생성",
     sessionSearch: "대화 검색...",
     sessionSearchNoResults: "일치하는 대화가 없습니다.",
+    // ── 명령 팔레트 레이블 (main.ts addCommand) ──────────────────────────────
+    // ko 값은 기존 하드코딩 리터럴을 글자 그대로 옮긴 것이다. 명령 ID는 사용자 핫키에
+    // 묶여 있고 이름은 사용자가 외워서 팔레트를 검색하므로 둘 다 바꾸면 안 된다.
+    cmdOpenAssistant: "어시스턴트 열기",
+    cmdCreateWikiNote: "위키 노트 생성",
+    cmdUpdateIndex: "위키 인덱스 갱신",
+    cmdSynthesize: "주제 종합 (synthesize)",
+    cmdReconcile: "모순 점검 (reconcile)",
+    cmdChallenge: "주장 반박 (challenge)",
+    cmdConnect: "두 주제 연결 (connect)",
+    cmdEmerge: "최근 패턴 발견 (emerge)",
+    cmdArchitect: "코드베이스 아키텍트 (architect)",
+    cmdKnowledgeGaps: "지식 공백 리포트 갱신",
+    cmdReviewQueue: "복습 큐 (다시 볼 노트)",
+    cmdRunScheduler: "Second Brain 정리 실행 (스케줄러)",
+    sbDisabled: "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.",
+    // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
+    sbSubmitCreate: "생성",
+    sbSubmitSynthesize: "종합",
+    sbSubmitReconcile: "점검",
+    sbSubmitChallenge: "반박",
+    sbSubmitConnect: "연결",
+    sbSubmitEmerge: "발견",
+    sbSubmitArchitect: "분석",
+    sbFieldTitle: "제목",
+    sbFieldBody: "본문",
+    sbFieldTopic: "주제",
+    sbFieldClaim: "주장",
+    sbFieldTopicA: "주제 A",
+    sbFieldTopicB: "주제 B",
+    sbFieldDays: "최근 일수",
+    sbFieldPath: "스캔 경로 (비우면 볼트 전체)",
+    sbPhTitle: "노트 제목",
+    sbPhBody: "노트 본문",
+    sbPhSynthesizeTopic: "종합할 주제/태그",
+    sbPhReconcileTopic: "모순을 점검할 주제",
+    sbPhClaim: "검토(반박)할 주장",
+    sbPhTopicA: "첫 번째 주제",
+    sbPhTopicB: "두 번째 주제",
+    sbPhPath: "예: src",
     tagPrompt: (title: string, content: string) => `다음 노트의 내용을 분석하여 적절한 태그 3~5개를 생성해주세요.
 태그만 쉼표로 구분하여 한 줄로 출력하세요. 다른 설명은 불필요합니다.
 태그는 한국어 또는 영어로, 노트 내용에 맞게 작성하세요.
@@ -317,6 +410,45 @@ ${content}`,
     regenerate: "再生成",
     sessionSearch: "会話を検索...",
     sessionSearchNoResults: "一致する会話がありません。",
+    // ── コマンドパレット ラベル (main.ts addCommand) ─────────────────────────
+    // en と同じ原則で、ツール名がそのまま伝わる自然な日本語にする。
+    cmdOpenAssistant: "アシスタントを開く",
+    cmdCreateWikiNote: "Wikiノートを作成",
+    cmdUpdateIndex: "Wikiインデックスを更新",
+    cmdSynthesize: "トピックを統合 (synthesize)",
+    cmdReconcile: "矛盾を点検 (reconcile)",
+    cmdChallenge: "主張に反論 (challenge)",
+    cmdConnect: "2つのトピックを接続 (connect)",
+    cmdEmerge: "最近のパターンを発見 (emerge)",
+    cmdArchitect: "コードベースアーキテクト (architect)",
+    cmdKnowledgeGaps: "知識ギャップレポートを更新",
+    cmdReviewQueue: "復習キュー (再確認するノート)",
+    cmdRunScheduler: "Second Brain 整理を実行 (スケジューラ)",
+    sbDisabled: "Second Brain機能が無効になっています。設定で有効化してから再度お試しください。",
+    // ── Second Brain 入力モーダル (SecondBrainInputModal オプション) ─────────
+    sbSubmitCreate: "作成",
+    sbSubmitSynthesize: "統合",
+    sbSubmitReconcile: "点検",
+    sbSubmitChallenge: "反論",
+    sbSubmitConnect: "接続",
+    sbSubmitEmerge: "発見",
+    sbSubmitArchitect: "分析",
+    sbFieldTitle: "タイトル",
+    sbFieldBody: "本文",
+    sbFieldTopic: "トピック",
+    sbFieldClaim: "主張",
+    sbFieldTopicA: "トピック A",
+    sbFieldTopicB: "トピック B",
+    sbFieldDays: "直近の日数",
+    sbFieldPath: "スキャンパス (空欄ならボルト全体)",
+    sbPhTitle: "ノートのタイトル",
+    sbPhBody: "ノートの本文",
+    sbPhSynthesizeTopic: "統合するトピック/タグ",
+    sbPhReconcileTopic: "矛盾を点検するトピック",
+    sbPhClaim: "検討(反論)する主張",
+    sbPhTopicA: "1つ目のトピック",
+    sbPhTopicB: "2つ目のトピック",
+    sbPhPath: "例: src",
     tagPrompt: (title: string, content: string) => `以下のノートの内容を分析して、適切なタグを3〜5つ生成してください。
 タグのみをカンマ区切りで1行で出力してください。他の説明は不要です。
 タグは日本語または英語で、ノートの内容に合わせて作成してください。
@@ -331,3 +463,28 @@ ${content}`,
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ViewLang = Record<string, any>;
+
+// ============================================================
+// 언어 블록 키 집합 일치 검증 (컴파일 타임)
+// ============================================================
+// ViewLang이 Record<string, any>인 이유는 chat-view가 `VIEW_I18N[lang] || VIEW_I18N.en`
+// 형태로 조회하기 때문이다 — 테이블이 `as const`라 각 값이 리터럴 타입으로 좁혀져 있어,
+// ViewLang을 `typeof VIEW_I18N.en`으로 바꾸면 ko/ja 블록이 그 타입에 대입되지 않는다.
+// 그래서 조회 타입은 느슨하게 두고, 키 누락만 아래 타입 수준 단정으로 잡는다.
+//
+// 키를 손으로 3개 블록에 채우다 한 언어를 빠뜨리면 그 언어 사용자의 명령 팔레트에
+// "undefined"가 그대로 노출된다(런타임 오류도 아니라서 조용히 배포된다). en을 키의
+// 정본으로 삼아 양방향 차집합이 never인지 검사하면, 누락 즉시 `npm run build`가 깨진다.
+//
+// 아래 타입 별칭들은 런타임 코드를 만들지 않는다(값 선언이 아니므로 번들에 남지 않음).
+
+/** 제약을 만족하지 못하면(=never가 아니면) 컴파일 오류를 내는 단정 헬퍼. */
+type AssertNever<T extends never> = T;
+
+/** Base에는 있고 Target에는 없는 키들. 완전하면 never. */
+type MissingKeys<Base, Target> = Exclude<keyof Base, keyof Target>;
+
+type _KoHasAllEnKeys = AssertNever<MissingKeys<typeof VIEW_I18N.en, typeof VIEW_I18N.ko>>;
+type _EnHasAllKoKeys = AssertNever<MissingKeys<typeof VIEW_I18N.ko, typeof VIEW_I18N.en>>;
+type _JaHasAllEnKeys = AssertNever<MissingKeys<typeof VIEW_I18N.en, typeof VIEW_I18N.ja>>;
+type _EnHasAllJaKeys = AssertNever<MissingKeys<typeof VIEW_I18N.ja, typeof VIEW_I18N.en>>;

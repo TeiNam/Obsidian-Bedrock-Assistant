@@ -39,7 +39,10 @@ export const I18N = {
     readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
-    languageDesc: "UI language for settings",
+    // Obsidian fixes a command's name at addCommand time, so switching language cannot
+    // relabel already-registered commands. Say so here instead of re-registering them —
+    // removeCommand/addCommand would drop the user's assigned hotkeys.
+    languageDesc: "UI language for settings. Command palette labels apply after a restart.",
     // AI 백엔드 선택
     aiBackendLabel: "AI Backend",
     aiBackendDesc: "Select AI backend to use",
@@ -234,7 +237,7 @@ export const I18N = {
     readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
-    languageDesc: "설정 UI 언어",
+    languageDesc: "설정 UI 언어입니다. 명령 팔레트 레이블은 재시작 후 반영됩니다.",
     // AI 백엔드 선택
     aiBackendLabel: "AI 백엔드",
     aiBackendDesc: "사용할 AI 백엔드를 선택합니다",
@@ -429,7 +432,7 @@ export const I18N = {
     readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
     language: "言語",
-    languageDesc: "設定UIの言語",
+    languageDesc: "設定UIの言語です。コマンドパレットのラベルは再起動後に反映されます。",
     // AI バックエンド選択
     aiBackendLabel: "AIバックエンド",
     aiBackendDesc: "使用するAIバックエンドを選択",
