@@ -382,6 +382,12 @@ body.theme-light .ba-message-content pre {
   height: 14px;
 }
 
+/* 실행 중: 중복 클릭이 안 된다는 것을 시각적으로 알린다(위키 생성 등 LLM 호출 동작). */
+.ba-action-btn.is-busy {
+  cursor: progress;
+  opacity: 0.5;
+}
+
 .ba-action-btn-label {
   white-space: nowrap;
 }

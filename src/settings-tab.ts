@@ -39,7 +39,10 @@ export const I18N = {
     readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
     language: "Language",
-    languageDesc: "UI language for settings",
+    // Obsidian fixes a command's name at addCommand time, so switching language cannot
+    // relabel already-registered commands. Say so here instead of re-registering them —
+    // removeCommand/addCommand would drop the user's assigned hotkeys.
+    languageDesc: "UI language for settings. Command palette labels apply after a restart.",
     // AI 백엔드 선택
     aiBackendLabel: "AI Backend",
     aiBackendDesc: "Select AI backend to use",
@@ -106,7 +109,7 @@ export const I18N = {
     greeting: "Welcome Greeting",
     greetingDesc: "Greeting shown when opening the sidebar",
     paraSetup: "Set Up P.A.R.A",
-    paraSetupDesc: "P.A.R.A (Projects, Areas, Resources, Archives) is a universal organizational system. This will create 4 folders at the vault root and use AI to classify existing notes into the appropriate category.",
+    paraSetupDesc: "P.A.R.A (Projects, Areas, Resources, Archives) is a universal organizational system. This will create 4 folders at the vault root and use AI to classify existing notes into the appropriate category. Plugin-owned folders (To-Do, Templates, Web Clips, Second Brain) are excluded.",
     paraSetupBtn: "Set Up P.A.R.A",
     paraModalTitle: "P.A.R.A Setup",
     paraModalRunning: "Organizing vault with P.A.R.A structure...",
@@ -234,7 +237,7 @@ export const I18N = {
     readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
     language: "언어",
-    languageDesc: "설정 UI 언어",
+    languageDesc: "설정 UI 언어입니다. 명령 팔레트 레이블은 재시작 후 반영됩니다.",
     // AI 백엔드 선택
     aiBackendLabel: "AI 백엔드",
     aiBackendDesc: "사용할 AI 백엔드를 선택합니다",
@@ -301,7 +304,7 @@ export const I18N = {
     greeting: "환영 인사",
     greetingDesc: "사이드바를 열 때 표시되는 인사말",
     paraSetup: "P.A.R.A 환경 설정",
-    paraSetupDesc: "P.A.R.A(Projects, Areas, Resources, Archives)는 범용 정보 정리 시스템입니다. 볼트 루트에 4개의 폴더를 생성하고, 기존 노트를 AI가 적절한 카테고리로 분류하여 이동합니다.",
+    paraSetupDesc: "P.A.R.A(Projects, Areas, Resources, Archives)는 범용 정보 정리 시스템입니다. 볼트 루트에 4개의 폴더를 생성하고, 기존 노트를 AI가 적절한 카테고리로 분류하여 이동합니다. 플러그인 전용 폴더(할 일, 템플릿, 웹 클립, Second Brain)는 제외됩니다.",
     paraSetupBtn: "P.A.R.A 설정하기",
     paraModalTitle: "P.A.R.A 환경 설정",
     paraModalRunning: "볼트를 P.A.R.A 구조로 정리하는 중...",
@@ -429,7 +432,7 @@ export const I18N = {
     readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
     language: "言語",
-    languageDesc: "設定UIの言語",
+    languageDesc: "設定UIの言語です。コマンドパレットのラベルは再起動後に反映されます。",
     // AI バックエンド選択
     aiBackendLabel: "AIバックエンド",
     aiBackendDesc: "使用するAIバックエンドを選択",
@@ -496,7 +499,7 @@ export const I18N = {
     greeting: "ウェルカムメッセージ",
     greetingDesc: "サイドバーを開いた時に表示される挨拶",
     paraSetup: "P.A.R.A セットアップ",
-    paraSetupDesc: "P.A.R.A（Projects, Areas, Resources, Archives）は汎用的な情報整理システムです。ボルトのルートに4つのフォルダを作成し、AIが既存のノートを適切なカテゴリに分類して移動します。",
+    paraSetupDesc: "P.A.R.A（Projects, Areas, Resources, Archives）は汎用的な情報整理システムです。ボルトのルートに4つのフォルダを作成し、AIが既存のノートを適切なカテゴリに分類して移動します。プラグイン専用フォルダ（To-Do、テンプレート、Webクリップ、Second Brain）は除外されます。",
     paraSetupBtn: "P.A.R.A セットアップ",
     paraModalTitle: "P.A.R.A セットアップ",
     paraModalRunning: "ボルトをP.A.R.A構造で整理中...",

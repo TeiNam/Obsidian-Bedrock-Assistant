@@ -268,3 +268,50 @@ describe("trimConversationHistory() 동작 보존 (Property 2: Preservation)", (
     expect(withinLimit || atMinimum).toBe(true);
   });
 });
+
+// ============================================
+// 선행 assistant 제거 회귀 테스트
+// ============================================
+// Converse API 는 첫 메시지가 반드시 user 역할이어야 한다. 위반하면 Bedrock 은
+// ValidationException("first message must use the user role"), Gemini 는 400 을 낸다.
+// 기존 제거 루프는 `length > MIN_MESSAGES(2)` 조건이라 **길이가 정확히 2일 때 동작하지
+// 않았다.** 어떤 경로로든 [assistant, user] 가 만들어지면 그대로 API 로 전송됐다.
+
+describe("선행 assistant 제거 — 길이 경계", () => {
+  it("[assistant, user] 에서 선행 assistant 를 제거한다", () => {
+    // 이 케이스가 회귀의 핵심이다. MIN_MESSAGES 하한보다 API 규약이 우선한다 —
+    // 메시지 1개로 줄어도 전송 가능하지만, assistant 로 시작하면 요청 자체가 실패한다.
+    const messages: ConverseMessage[] = [
+      makeMessage("assistant", 10),
+      makeMessage("user", 10),
+    ];
+    trimConversationHistory(messages, emptyTools);
+    expect(messages.map((m) => m.role)).toEqual(["user"]);
+  });
+
+  it("[assistant] 하나만 있으면 비운다", () => {
+    // 남겨두면 user 메시지 없이 전송되어 실패한다. 빈 배열은 호출부가 첫 질문을 넣는다.
+    const messages: ConverseMessage[] = [makeMessage("assistant", 10)];
+    trimConversationHistory(messages, emptyTools);
+    expect(messages).toEqual([]);
+  });
+
+  it("연속된 선행 assistant 를 모두 제거한다", () => {
+    const messages: ConverseMessage[] = [
+      makeMessage("assistant", 10),
+      makeMessage("assistant", 10),
+      makeMessage("user", 10),
+    ];
+    trimConversationHistory(messages, emptyTools);
+    expect(messages.map((m) => m.role)).toEqual(["user"]);
+  });
+
+  it("정상 대화는 그대로 둔다", () => {
+    const messages: ConverseMessage[] = [
+      makeMessage("user", 10),
+      makeMessage("assistant", 10),
+    ];
+    trimConversationHistory(messages, emptyTools);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});

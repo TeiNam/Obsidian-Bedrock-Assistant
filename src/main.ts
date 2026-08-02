@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView } from "obsidian";
+import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView, normalizePath } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
@@ -42,8 +42,35 @@ import {
   hasPath,
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
+// mermaid 그래프 3종(명령 팔레트). 그래프 조립·문구 분기는 모두 순수 함수다.
+import { buildSimilarityGraph } from "./graph-rag/similarity-graph";
+import { buildGapGraph } from "./graph-rag/gap-graph";
+import { buildWikiGraph } from "./graph-rag/wiki-graph";
+import {
+  buildSimilarityMessage,
+  buildGapMessage,
+  buildWikiMessage,
+  type GraphCommandLabels,
+  type GraphCommandOutput,
+} from "./graph-rag/graph-command";
+// 코어 그래프 색상 그룹(PARA 분류). mermaid 4종과 축이 달라 겹치지 않는다 — 그쪽은
+// 쿼리 범위 한정·계산된 지표 뷰이고 이건 볼트 전역 구조를 '기본' 그래프 뷰에 얹는다.
+import {
+  buildParaColorGroups,
+  buildTagColorGroups,
+  collectTagUsage,
+  addedQueriesOf,
+} from "./graph-rag/color-groups";
+import {
+  applyColorGroups,
+  removeColorGroups,
+  readExistingGroups,
+  expandColorGroupSection,
+  type GraphAppLike,
+} from "./graph-rag/apply-color-groups";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
+import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
@@ -129,6 +156,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private lastAccountScope = "";
   // 마이그레이션 복사 건수 누적 (두 단계 분리에 따라 집계용)
   private migratedFileCount = 0;
+  // 실행 중인 Second Brain 도구 이름. 중복 실행으로 LLM 비용이 두 배 되는 것을 막는다.
+  private runningSecondBrainTools = new Set<string>();
 
   async onload(): Promise<void> {
     // 구 플러그인 ID의 설정·자격증명 파일을 새 경로로 복사한다. loadSettings보다
@@ -235,15 +264,24 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.statusBarItem = this.addStatusBarItem();
 
     // 커맨드 등록
+    //
+    // 명령 레이블을 언어 테이블에서 한 번만 조회해 아래 등록 전체에 공유한다. 채팅 뷰와
+    // 같은 VIEW_I18N 테이블을 쓰므로 조회 관용구(`|| VIEW_I18N.en` 폴백)가 하나로 유지된다.
+    //
+    // Obsidian은 addCommand 시점의 name을 고정하므로 이 스냅샷으로 충분하다. 설정에서
+    // 언어를 바꿔도 팔레트 레이블은 재시작 후에 반영되며, 그 사실은 설정 화면의 언어 항목
+    // 설명에 명시해 두었다. removeCommand로 동적 재등록하면 사용자 핫키가 풀릴 위험만 생긴다.
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+
     this.addCommand({
       id: "open-assistant",
-      name: "어시스턴트 열기",
+      name: t.cmdOpenAssistant,
       callback: () => this.activateView(),
     });
 
     this.addCommand({
       id: "index-vault",
-      name: "볼트 인덱싱",
+      name: t.indexVault,
       callback: async () => {
         // 상태바에 인덱싱 진행률 표시
         this.statusBarItem.setText("인덱싱 중... 0%");
@@ -266,7 +304,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 모든 능동 동작을 명령 팔레트에 등록한다. 각 명령은 입력이 필요하면 모달로 수집한 뒤,
     // 채팅 도구와 동일한 핸들러(ToolExecutor.execute / 스케줄러)를 호출한다(DRY).
     // 옵트인 격리: enabled=false면 핸들러(execute)·스케줄러가 내부에서 쓰기를 거부한다.
-    this.registerSecondBrainCommands();
+    this.registerSecondBrainCommands(t);
+
+    // mermaid 그래프 3종(유사도·공백·위키). 전부 읽기 전용이며, 위키 구조만 SB 기능이다.
+    // 검색 근거 그래프는 대화 turn 에 붙으므로 명령이 아니라 chat-view 에 배선돼 있다.
+    this.registerGraphCommands(t);
 
     // 파일 변경 감지 → 인덱스 자동 업데이트 (파일별 2초 디바운스)
     // indexVault 진행 중이면 indexer가 내부 대기열(pendingFiles)로 큐잉하므로
@@ -476,13 +518,293 @@ export default class GeminiAssistantPlugin extends Plugin {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<void> {
+    // 같은 도구가 이미 돌고 있으면 거절한다. synthesize·reconcile·architect 등은
+    // 검색 + LLM 호출로 10~60초가 걸리는데, 그 사이 피드백이 없으면 사용자가 실패로
+    // 오인해 다시 실행하고 LLM 비용이 중복된다.
+    if (this.runningSecondBrainTools.has(toolName)) {
+      new Notice(`이미 실행 중입니다: ${toolName}`);
+      return;
+    }
+    this.runningSecondBrainTools.add(toolName);
+
+    // timeout 0 = 수동으로 닫을 때까지 유지. finally에서 반드시 hide한다.
+    const progress = new Notice(`Second Brain 실행 중... (${toolName})`, 0);
     try {
       const result = await this.toolExecutor.execute(toolName, input);
       new Notice(result, 10000);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       new Notice(`Second Brain 도구 실행 실패 (${toolName}): ${reason}`, 10000);
+    } finally {
+      // delete를 빠뜨리면 예외 경로에서 그 도구가 영구히 잠긴다.
+      progress.hide();
+      this.runningSecondBrainTools.delete(toolName);
     }
+  }
+
+  /**
+   * VIEW_I18N 에서 그래프 명령용 문구만 뽑아 순수 함수에 넘길 묶음을 만든다.
+   * 순수 코어가 언어 테이블을 import 하지 않게 하는 경계이며, 문구 조립 로직은
+   * graph-command.ts 에서 vault 없이 테스트된다.
+   */
+  private graphLabels(t: ViewLang): GraphCommandLabels {
+    return {
+      truncated: t.graphTruncated,
+      truncatedEdges: t.graphTruncatedEdges,
+      similarityHeading: t.graphSimilarityHeading,
+      similarityEmpty: t.graphSimilarityEmpty,
+      similarityNoVector: t.graphSimilarityNoVector,
+      similarityDegenerate: t.graphSimilarityDegenerate,
+      gapHeading: t.graphGapHeading,
+      gapEmpty: t.graphGapEmpty,
+      wikiHeading: t.graphWikiHeading,
+      wikiEmpty: t.graphWikiEmpty,
+      wikiIsolated: t.graphWikiIsolated,
+      sbDisabled: t.sbDisabled,
+    };
+  }
+
+  /**
+   * 그래프 명령 3종의 공통 실행 껍데기 — 재진입 가드 + 진행 표시 + 결과 분기.
+   *
+   * runSecondBrainTool 과 같은 `runningSecondBrainTools` Set 을 재사용한다(새 상태를
+   * 만들지 않는다). 유사도 그래프는 전체 노트와 벡터를 비교하므로 큰 볼트에서 체감
+   * 지연이 생기는데, 피드백이 없으면 사용자가 실패로 오인해 다시 실행한다.
+   *
+   * 그래프는 전부 **읽기 전용**이다 — getEntries() 스냅샷만 읽고 LLM 호출·파일 쓰기가
+   * 0회다. 그래서 위키 그래프를 제외하면 secondBrain.enabled 와 무관하게 동작한다
+   * (Graph RAG 는 Second Brain 기능이 아니다).
+   *
+   * @param build 그래프를 만들어 "채팅에 낼 마크다운" 또는 "Notice 문구"를 돌려주는 순수 조립부
+   */
+  private async runGraphCommand(
+    commandKey: string,
+    t: ViewLang,
+    build: () => GraphCommandOutput,
+  ): Promise<void> {
+    if (this.runningSecondBrainTools.has(commandKey)) {
+      new Notice(t.graphAlreadyRunning);
+      return;
+    }
+
+    // 인덱스가 비어 있으면 어떤 그래프도 그릴 수 없다. 빈 그래프를 내보내는 대신
+    // 원인(인덱싱 필요)을 바로 알려준다.
+    if (this.indexer.getEntries().length === 0) {
+      new Notice(t.graphIndexEmpty);
+      return;
+    }
+
+    this.runningSecondBrainTools.add(commandKey);
+    // timeout 0 = 수동으로 닫을 때까지 유지. finally에서 반드시 hide한다.
+    const progress = new Notice(t.graphRunning, 0);
+    try {
+      const output = build();
+      if (output.notice) {
+        new Notice(output.notice, 8000);
+        return;
+      }
+      if (!output.markdown) return;
+
+      // 채팅 뷰로 내보낸다 — 사용자가 선택한 인라인 방침에 맞고, mermaid 렌더와
+      // 위키링크 클릭 이동이 이미 이 경로에서 검증돼 있다. 볼트에 노트로 저장하면
+      // 읽기 전용 계약이 깨지고 실행마다 파일이 쌓인다.
+      await this.activateView();
+      const view = this.app.workspace
+        .getLeavesOfType(VIEW_TYPE)
+        .map((leaf) => leaf.view as { appendAssistantMarkdown?: (md: string) => Promise<void> })
+        .find((v) => typeof v.appendAssistantMarkdown === "function");
+      await view?.appendAssistantMarkdown?.(output.markdown);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(t.graphFailed(reason), 10000);
+    } finally {
+      // delete를 빠뜨리면 예외 경로에서 그 명령이 영구히 잠긴다.
+      progress.hide();
+      this.runningSecondBrainTools.delete(commandKey);
+    }
+  }
+
+  /**
+   * 그래프 명령을 팔레트에 등록한다 — mermaid 3종 + 코어 그래프 색상 2종.
+   *
+   * 질문 없이 볼트 전체를 훑는 동작이라 대화 turn 에 붙일 게 없어 검색 근거 그래프
+   * (채팅 인라인)와 달리 명령으로 낸다. id 접두사는 기존 `second-brain-*` 과 구분되게
+   * `graph-*` 를 쓴다 — Second Brain 기능은 위키 구조 하나뿐이다.
+   *
+   * 두 부류는 출력 대상이 다르다:
+   *  - mermaid 3종: 채팅에 정적 그림. 읽기 전용이고 인덱스(임베딩)를 요구한다.
+   *  - 색상 2종: Obsidian '기본' 그래프 뷰의 설정을 바꾼다. path: 쿼리라 인덱스가
+   *    필요 없고, 사용자가 조율한 물리 파라미터는 read-modify-write 로 보존한다.
+   */
+  private registerGraphCommands(t: ViewLang): void {
+    // 의미 유사도 — 현재 노트 기준. 계산이 가장 무거운 명령이다.
+    this.addCommand({
+      id: "graph-similar-notes",
+      name: t.cmdSimilarityGraph,
+      callback: () => {
+        // 활성 노트가 그래프의 중심이므로 없으면 계산할 대상 자체가 없다.
+        const active = this.app.workspace.getActiveFile();
+        if (!active) {
+          new Notice(t.graphNoActiveNote);
+          return;
+        }
+        return this.runGraphCommand("graph-similar-notes", t, () => {
+          const entries = this.indexer.getEntries();
+          const center = entries.find((e) => e.path === active.path);
+          // 열려 있지만 아직 인덱싱되지 않은 노트(신규 생성 직후 등).
+          if (!center) return { notice: t.graphSimilarityNoVector };
+          return buildSimilarityMessage(
+            center.title || active.basename,
+            buildSimilarityGraph(center, entries),
+            this.graphLabels(t),
+          );
+        });
+      },
+    });
+
+    // 지식 공백 — 볼트 전체 구조 지표. LLM 호출 0회, 파일 쓰기 0회.
+    // 기존 second-brain-knowledge-gaps 명령(리포트 노트 작성)은 그대로 두고 별도 id 를
+    // 쓴다. 그쪽은 노트를 쓰고 이쪽은 채팅에 그림만 낸다.
+    this.addCommand({
+      id: "graph-knowledge-gaps",
+      name: t.cmdGapGraph,
+      callback: () =>
+        this.runGraphCommand("graph-knowledge-gaps", t, () => {
+          // metadataCache 가 아직 준비되지 않았을 수 있다. 없으면 깨진 링크 지표만
+          // 비고 인덱스 기반 세 지표는 그대로 계산된다.
+          const unresolved =
+            (
+              this.app.metadataCache as
+                | { unresolvedLinks?: Record<string, Record<string, number>> }
+                | undefined
+            )?.unresolvedLinks ?? {};
+          const gaps = collectGaps(
+            this.indexer.getEntries(),
+            unresolved,
+            this.settings.secondBrain.wikiFolder,
+          );
+          return buildGapMessage(buildGapGraph(gaps), this.graphLabels(t));
+        }),
+    });
+
+    // 위키 구조 — 3종 중 유일하게 Second Brain 기능이라 enabled 를 확인한다.
+    // 확인은 buildWikiGraph 안에서 하고(status:"disabled") 문구는 기존 sbDisabled 재사용.
+    this.addCommand({
+      id: "graph-wiki-structure",
+      name: t.cmdWikiGraph,
+      callback: () =>
+        this.runGraphCommand("graph-wiki-structure", t, () =>
+          buildWikiMessage(
+            buildWikiGraph(this.indexer.getEntries(), {
+              wikiFolder: this.settings.secondBrain.wikiFolder,
+              enabled: this.settings.secondBrain.enabled,
+            }),
+            this.graphLabels(t),
+          ),
+        ),
+    });
+
+    // ── 코어 그래프 색상 그룹 ────────────────────────────────────────────
+    // 위 3종과 달리 채팅에 그림을 내지 않고 Obsidian '기본' 그래프 뷰의 설정을 바꾼다.
+    // 그래서 runGraphCommand 를 쓰지 않는다 — 그쪽은 인덱스가 비면 즉시 중단하지만,
+    // PARA 색상 그룹은 path: 쿼리라 임베딩·인덱스가 전혀 필요 없다(인덱싱 전에도 동작).
+    //
+    // 소유 기록(settings.managedColorQueries)이 이 명령의 핵심이다. 볼트에 PARA 폴더가
+    // 실제로 있으므로 사용자가 같은 폴더를 손수 색칠해 뒀을 수 있고, 그 경우 query 가
+    // 우리 것과 한 글자도 다르지 않다. 문자열로 소유를 추측하면 되돌리기가 사용자
+    // 그룹을 지운다. 그래서 "적용 시점에 없던 쿼리"만 기록해 그것만 지운다.
+    this.addCommand({
+      id: "graph-color-para",
+      name: t.cmdColorGroups,
+      callback: () => this.applyGraphColors(t, "para"),
+    });
+
+    // 태그 축. PARA(폴더)와 함께 켜면 "어느 PARA 에 있는 무슨 주제"가 한눈에 보인다.
+    // 인덱스의 tags 를 집계하므로 볼트 재스캔은 없지만, tag: 쿼리 자체는 코어가 모든 md 를
+    // cachedRead 하게 만들어 무료가 아니다 — 그래서 상위 몇 개로만 제한한다.
+    this.addCommand({
+      id: "graph-color-tags",
+      name: t.cmdColorGroupsTags,
+      callback: () => this.applyGraphColors(t, "tags"),
+    });
+
+    // 되돌리기 — 색을 입혔는데 지울 방법이 없으면 사용자가 갇힌다. 기록된 쿼리만
+    // 제거하므로 사용자가 직접 만든 색상 그룹은 순서까지 그대로 남는다.
+    this.addCommand({
+      id: "graph-color-para-remove",
+      name: t.cmdColorGroupsRemove,
+      callback: async () => {
+        const managed = this.settings.managedColorQueries ?? [];
+        if (managed.length === 0) {
+          // 적용 이력이 없으면 지울 것이 없다. 여기서 managedQueriesOf() 같은 추측 목록을
+          // 쓰면 사용자가 손수 만든 동일 쿼리 그룹을 삭제한다.
+          new Notice(t.colorGroupsNothingToRemove, 8000);
+          return;
+        }
+        const result = await removeColorGroups(this.app as unknown as GraphAppLike, managed);
+        if (!result.ok) {
+          new Notice(t.colorGroupsFailed(result.reason ?? ""), 10000);
+          return;
+        }
+        this.settings.managedColorQueries = [];
+        await this.saveSettings();
+        new Notice(t.colorGroupsRemoved, 8000);
+      },
+    });
+  }
+
+  /**
+   * 색상 그룹 적용 공통 몸통 — PARA·태그 두 명령이 공유한다.
+   *
+   * 순서가 중요하다:
+   *  1. 현재 그룹을 읽어 **우리가 실제로 추가할 쿼리**만 계산한다(addedQueriesOf).
+   *     이미 있는 쿼리는 사용자 것이므로 색을 덮지 않고 기록에도 넣지 않는다.
+   *  2. 코어에 적용한다.
+   *  3. 성공했을 때만 기록을 누적 저장한다. 실패 시 기록하면 되돌리기가 존재하지 않는
+   *     그룹을 지우려 하거나, 더 나쁘게는 사용자 그룹을 우리 것으로 오인한다.
+   */
+  private async applyGraphColors(t: ViewLang, axis: "para" | "tags"): Promise<void> {
+    const app = this.app as unknown as GraphAppLike;
+
+    let ours: ReturnType<typeof buildParaColorGroups>;
+    if (axis === "para") {
+      ours = buildParaColorGroups();
+    } else {
+      ours = buildTagColorGroups(collectTagUsage(this.indexer.getEntries()));
+      if (ours.length === 0) {
+        // 인덱싱 전이거나 태그를 거의 쓰지 않는 볼트다. 빈 배열을 적용하면 아무 일도
+        // 일어나지 않는데 성공 문구가 떠서 "안 먹는다"로 읽힌다.
+        new Notice(t.colorGroupsNoTags, 8000);
+        return;
+      }
+    }
+
+    const existing = readExistingGroups(app);
+    const added = addedQueriesOf(existing, ours);
+    const result = await applyColorGroups(app, ours, this.settings.managedColorQueries ?? []);
+    if (!result.ok) {
+      new Notice(t.colorGroupsFailed(result.reason ?? ""), 10000);
+      return;
+    }
+
+    if (added.length > 0) {
+      // 중복 없이 누적한다 — PARA 와 태그를 각각 적용해도 되돌리기가 둘 다 지운다.
+      const merged = new Set([...(this.settings.managedColorQueries ?? []), ...added]);
+      this.settings.managedColorQueries = [...merged];
+    }
+    // 색상 그룹 섹션이 접혀 있으면 사용자가 결과를 보거나 편집할 수 없다. 펼쳐 준다.
+    expandColorGroupSection(app);
+    await this.saveSettings();
+
+    // 이미 있던 쿼리는 사용자 것을 존중해 건드리지 않았다는 사실을 알린다 — 알리지 않으면
+    // "왜 색이 내가 지정한 그대로인가"를 버그로 오해한다.
+    const kept = ours.length - added.length;
+    new Notice(
+      kept > 0
+        ? t.colorGroupsAppliedKept(added.length, kept)
+        : t.colorGroupsApplied(added.length),
+      8000,
+    );
   }
 
   /**
@@ -490,29 +812,33 @@ export default class GeminiAssistantPlugin extends Plugin {
    *
    * 입력이 필요한 도구는 SecondBrainInputModal로 값을 수집한 뒤 runSecondBrainTool로
    * 채팅과 동일한 핸들러를 호출한다. update_index와 스케줄러 실행은 입력이 없으므로 즉시 실행한다.
+   *
+   * @param t onload에서 한 번 조회한 언어 테이블. 여기서 다시 조회하지 않고 인자로 받아
+   *   등록 시점의 언어를 명령 등록 경로 전체가 동일하게 공유하도록 한다. 모달 제목·버튼·
+   *   필드 레이블도 같은 테이블을 써서 팔레트 표기와 모달 표기가 갈라지지 않게 한다.
    */
-  private registerSecondBrainCommands(): void {
+  private registerSecondBrainCommands(t: ViewLang): void {
     // create_wiki_note — 위키 노트 생성 (제목 + 본문). 활성 노트 제목/선택 텍스트를 프리필.
     this.addCommand({
       id: "second-brain-create-wiki-note",
-      name: "위키 노트 생성",
+      name: t.cmdCreateWikiNote,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "위키 노트 생성",
-          submitLabel: "생성",
+          title: t.cmdCreateWikiNote,
+          submitLabel: t.sbSubmitCreate,
           fields: [
             {
               key: "title",
-              label: "제목",
+              label: t.sbFieldTitle,
               type: "text",
-              placeholder: "노트 제목",
+              placeholder: t.sbPhTitle,
               defaultValue: this.getActiveNoteTitle(),
             },
             {
               key: "body",
-              label: "본문",
+              label: t.sbFieldBody,
               type: "textarea",
-              placeholder: "노트 본문",
+              placeholder: t.sbPhBody,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -528,24 +854,24 @@ export default class GeminiAssistantPlugin extends Plugin {
     // update_index — 위키 인덱스 카탈로그 갱신 (입력 불필요, 즉시 실행).
     this.addCommand({
       id: "second-brain-update-index",
-      name: "위키 인덱스 갱신",
+      name: t.cmdUpdateIndex,
       callback: () => this.runSecondBrainTool("update_index", {}),
     });
 
     // synthesize_topic — 주제 종합. 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-synthesize",
-      name: "주제 종합 (synthesize)",
+      name: t.cmdSynthesize,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "주제 종합 (synthesize)",
-          submitLabel: "종합",
+          title: t.cmdSynthesize,
+          submitLabel: t.sbSubmitSynthesize,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.sbFieldTopic,
               type: "text",
-              placeholder: "종합할 주제/태그",
+              placeholder: t.sbPhSynthesizeTopic,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -558,17 +884,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // reconcile_topic — 모순 점검(비파괴). 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-reconcile",
-      name: "모순 점검 (reconcile)",
+      name: t.cmdReconcile,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "모순 점검 (reconcile)",
-          submitLabel: "점검",
+          title: t.cmdReconcile,
+          submitLabel: t.sbSubmitReconcile,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.sbFieldTopic,
               type: "text",
-              placeholder: "모순을 점검할 주제",
+              placeholder: t.sbPhReconcileTopic,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -581,17 +907,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // challenge — 주장 반박. 에디터 선택 텍스트를 기본값으로.
     this.addCommand({
       id: "second-brain-challenge",
-      name: "주장 반박 (challenge)",
+      name: t.cmdChallenge,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "주장 반박 (challenge)",
-          submitLabel: "반박",
+          title: t.cmdChallenge,
+          submitLabel: t.sbSubmitChallenge,
           fields: [
             {
               key: "claim",
-              label: "주장",
+              label: t.sbFieldClaim,
               type: "textarea",
-              placeholder: "검토(반박)할 주장",
+              placeholder: t.sbPhClaim,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -604,14 +930,14 @@ export default class GeminiAssistantPlugin extends Plugin {
     // connect — 두 주제 연결 (topicA, topicB).
     this.addCommand({
       id: "second-brain-connect",
-      name: "두 주제 연결 (connect)",
+      name: t.cmdConnect,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "두 주제 연결 (connect)",
-          submitLabel: "연결",
+          title: t.cmdConnect,
+          submitLabel: t.sbSubmitConnect,
           fields: [
-            { key: "topicA", label: "주제 A", type: "text", placeholder: "첫 번째 주제" },
-            { key: "topicB", label: "주제 B", type: "text", placeholder: "두 번째 주제" },
+            { key: "topicA", label: t.sbFieldTopicA, type: "text", placeholder: t.sbPhTopicA },
+            { key: "topicB", label: t.sbFieldTopicB, type: "text", placeholder: t.sbPhTopicB },
           ],
           onSubmit: (values) =>
             this.runSecondBrainTool("connect", {
@@ -625,15 +951,15 @@ export default class GeminiAssistantPlugin extends Plugin {
     // emerge — 최근 N일 패턴 발견 (days, 기본 7).
     this.addCommand({
       id: "second-brain-emerge",
-      name: "최근 패턴 발견 (emerge)",
+      name: t.cmdEmerge,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "최근 패턴 발견 (emerge)",
-          submitLabel: "발견",
+          title: t.cmdEmerge,
+          submitLabel: t.sbSubmitEmerge,
           fields: [
             {
               key: "days",
-              label: "최근 일수",
+              label: t.sbFieldDays,
               type: "number",
               placeholder: "7",
               defaultValue: "7",
@@ -652,17 +978,17 @@ export default class GeminiAssistantPlugin extends Plugin {
     // architect — 코드베이스 아키텍트. 경로 입력(미입력 시 볼트 전체).
     this.addCommand({
       id: "second-brain-architect",
-      name: "코드베이스 아키텍트 (architect)",
+      name: t.cmdArchitect,
       callback: () => {
         new SecondBrainInputModal(this.app, {
-          title: "코드베이스 아키텍트 (architect)",
-          submitLabel: "분석",
+          title: t.cmdArchitect,
+          submitLabel: t.sbSubmitArchitect,
           fields: [
             {
               key: "path",
-              label: "스캔 경로 (비우면 볼트 전체)",
+              label: t.sbFieldPath,
               type: "text",
-              placeholder: "예: src",
+              placeholder: t.sbPhPath,
             },
           ],
           onSubmit: (values) => {
@@ -679,10 +1005,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 스케줄러 파이프라인에도 같은 단계가 있지만, 주기를 기다리지 않고 즉시 보고 싶을 때 쓴다.
     this.addCommand({
       id: "second-brain-knowledge-gaps",
-      name: "지식 공백 리포트 갱신",
+      name: t.cmdKnowledgeGaps,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {
@@ -695,12 +1021,21 @@ export default class GeminiAssistantPlugin extends Plugin {
               | undefined)?.unresolvedLinks ?? {};
           const gaps = collectGaps(this.indexer.getEntries(), unresolved, wikiFolder);
           await ensureWikiFolders(this.app, wikiFolder);
+          const reportPath = normalizePath(`${wikiFolder}/${GAP_REPORT_FILE}`);
           await writeGapReport(this.app, wikiFolder, buildGapReport(gaps));
           new Notice(
             gaps.length === 0
               ? "구조적 공백이 발견되지 않았습니다."
-              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${wikiFolder}/${GAP_REPORT_FILE}`
+              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${reportPath}`
           );
+          // 리포트를 열어준다. Notice 는 몇 초 뒤 사라지고 본문은 이미 클릭 가능한
+          // 위키링크로 렌더돼 있는데, 그 화면까지 도달하는 마지막 한 걸음이 없었다.
+          // 공백이 0건이면 열지 않는다(볼 내용이 없다).
+          // 스케줄러 자동 실행 경로에는 넣지 않는다 — 백그라운드가 사용자 탭을 가로채면 안 된다.
+          const report = this.app.vault.getAbstractFileByPath(reportPath);
+          if (gaps.length > 0 && report instanceof TFile) {
+            await this.app.workspace.getLeaf(false).openFile(report);
+          }
         } catch (error) {
           new Notice(`지식 공백 리포트 실패: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -711,10 +1046,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
     this.addCommand({
       id: "second-brain-review-queue",
-      name: "복습 큐 (다시 볼 노트)",
+      name: t.cmdReviewQueue,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         const now = Date.now();
@@ -749,10 +1084,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     // (자동 트리거와 달리 수동 실행은 schedulerEnabled와 무관하게 사용자 명시 요청으로 동작)
     this.addCommand({
       id: "second-brain-run-scheduler",
-      name: "Second Brain 정리 실행 (스케줄러)",
+      name: t.cmdRunScheduler,
       callback: async () => {
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {
@@ -1143,6 +1478,16 @@ export default class GeminiAssistantPlugin extends Plugin {
       if (exists) {
         const data = await this.app.vault.adapter.read(INDEX_FILE);
         this.indexer.deserialize(data);
+        // 임베딩 구성이 바뀌면 벡터를 버리고 키워드 검색으로 폴백한다. 그런데 이 상태를
+        // 알리는 유일한 경로가 "채팅에서 검색 도구가 실제로 호출된 뒤 결과 문자열 끝에
+        // 붙는 경고"뿐이었다. 검색을 하지 않으면 Graph RAG 가 죽은 채 방치되고, 그 사이
+        // Second Brain 기능들이 품질 떨어진 근거로 노트를 만든다.
+        if (this.indexer.hasStaleEmbeddings) {
+          new Notice(
+            "⚠️ 임베딩 모델이 변경되어 검색 인덱스가 낡았습니다. 볼트를 다시 인덱싱해 주세요.",
+            10000
+          );
+        }
       }
     } catch {
       // 인덱스 파일 없으면 무시

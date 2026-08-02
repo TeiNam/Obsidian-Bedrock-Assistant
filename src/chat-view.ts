@@ -1,7 +1,7 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, getIconIds, MarkdownView, TFile, FuzzySuggestModal, Notice, normalizePath } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
-import { TOOLS } from "./obsidian-tools";
+import { getEnabledTools } from "./obsidian-tools";
 import { BRANDING } from "./branding";
 import { trimConversationHistory, CHARS_PER_TOKEN } from "./token-trimmer";
 import { isToolError } from "./tool-failure-tracker";
@@ -17,6 +17,18 @@ import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
 import { isRetrospectiveCommand } from "./retrospective-command";
 import { generateRetrospective } from "./retrospective-service";
+// 현재 노트 → 위키 노트 승격 (프롬프트 구성·출처 링크는 순수 함수로 분리)
+import {
+  buildNoteWikiPrompt,
+  appendSourceLink,
+  NOTE_WIKI_MAX_TOKENS,
+  NOTE_WIKI_MAX_INPUT_CHARS,
+} from "./second-brain/note-to-wiki";
+import { SECOND_BRAIN_SYSTEM_PROMPT } from "./second-brain/search-adapter";
+import { sanitizeTitleForFilename } from "./conversation-harvest";
+// 검색 근거 mermaid 그래프 — 부착 판단·문구 조립은 순수 함수로 분리되어 있다.
+import { buildSearchGraph } from "./graph-rag/mermaid-graph";
+import { composeGraphMessage, shouldAttachSearchGraph } from "./graph-rag/graph-message";
 
 export const VIEW_TYPE = BRANDING.viewType;
 
@@ -173,6 +185,14 @@ export class ChatView extends ItemView {
     const webClipBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.webClip } });
     setIcon(webClipBtn, "globe");
     this.registerDomEvent(webClipBtn, "click", () => this.openWebClipper());
+
+    // 위키 노트 생성 버튼 — 현재 노트를 LLM이 AI-first 위키 본문으로 다시 써서 저장한다.
+    // Second Brain이 꺼져 있어도 렌더한다(설정 토글 → 뷰 재구성 의존성을 만들지 않는다).
+    const wikiBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.wikiFromNote } });
+    // setIcon은 없는 id를 조용히 빈 div로 렌더한다(아이콘 없는 버튼이 된다).
+    // book-plus는 옵시디언 lucide 세트 버전에 따라 없을 수 있어 런타임에 폴백한다.
+    setIcon(wikiBtn, getIconIds().includes("book-plus") ? "book-plus" : "book-open");
+    this.registerDomEvent(wikiBtn, "click", () => this.createWikiFromActiveNote(wikiBtn));
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
 
@@ -443,6 +463,37 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * 외부(명령 팔레트)에서 만든 마크다운을 어시스턴트 메시지로 채팅에 붙인다.
+   *
+   * 명령 3종(유사도·공백·위키 그래프)은 질문 없이 볼트 전체를 훑으므로 대화 turn 이
+   * 없다. 그래도 결과를 채팅에 내보내는 이유는 사용자가 선택한 인라인 방침에 맞고,
+   * mermaid 렌더·위키링크 클릭 이동이 이미 이 경로에서 검증돼 있기 때문이다.
+   * 볼트에 노트로 저장하는 방식은 읽기 전용 계약을 깨고(그래프 조회가 파일을 만든다)
+   * 매 실행마다 노트가 쌓여 정리 부담을 남긴다.
+   *
+   * **this.messages 에는 넣지 않는다.** 그래프는 명령 결과 표시물이고 대화 turn 이
+   * 아니다. 히스토리에 넣으면 두 가지가 실제로 깨진다:
+   *  1. 빈 채팅에서 그래프를 띄운 뒤 첫 질문을 하면 messages 가 [assistant, user] 가
+   *     되는데, trimConversationHistory 의 선행 assistant 제거 루프는
+   *     `length > MIN_MESSAGES(2)` 조건이라 길이 2에서 동작하지 않는다(실측 확인).
+   *     그대로 Converse API 로 가서 "first message must use the user role" 로 실패하고,
+   *     persistHistory 가 깨진 배열을 볼트에 저장하므로 재시작해도 복구되지 않는다.
+   *  2. 그래프가 마지막 assistant 가 되어, 직전 답변의 재생성 버튼이 답변 대신
+   *     그래프를 지운다(prepareRegeneration 은 마지막 assistant 를 제거한다).
+   *
+   * 대가로 세션 복원 시 그래프는 사라진다. 명령을 다시 실행하면 되고, 그래프는 인덱스
+   * 상태의 스냅샷이라 오래된 것을 복원하는 편이 오히려 오해를 부른다.
+   */
+  async appendAssistantMarkdown(markdown: string): Promise<void> {
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+    await MarkdownRenderer.render(this.app, markdown, contentEl, "", this);
+
+    this.scrollToBottom();
+  }
+
+  /**
    * 채팅 기반 회고 처리.
    * 어시스턴트 메시지 컨테이너를 생성하고, 진행 상태를 표시하며,
    * RetrospectiveService를 호출하여 결과를 채팅에 렌더링한다.
@@ -579,7 +630,12 @@ export class ChatView extends ItemView {
       let fullText = "";
 
       // 옵시디언 내장 도구 + MCP 도구 합치기
-      const allTools = [...TOOLS, ...this.plugin.mcpManager.getAllTools()];
+      // Second Brain 이 꺼져 있으면 SB 도구 8개는 스키마 자체를 보내지 않는다
+      // (보내면 LLM 이 호출하고 거부 문자열만 돌아오므로 토큰만 낭비된다).
+      const allTools = [
+        ...getEnabledTools(this.plugin.settings.secondBrain?.enabled ?? false),
+        ...this.plugin.mcpManager.getAllTools(),
+      ];
 
       // ── 대화 히스토리 토큰 트리밍 (REQ-3) ──
       // 컨텍스트 윈도우 초과 방지를 위해 오래된 메시지부터 제거
@@ -854,6 +910,9 @@ export class ChatView extends ItemView {
               text: result.slice(0, 80).replace(/\n/g, " "),
             });
 
+            // 검색이었다면 근거 그래프를 이 도구 블록 아래에 붙인다.
+            await this.appendSearchGraph(toolEl);
+
             this.scrollToBottom();
             return result;
           } catch (error) {
@@ -870,8 +929,40 @@ export class ChatView extends ItemView {
           }
         }
 
+  /**
+   * 방금 실행된 검색의 근거 그래프를 접히는 블록으로 붙인다.
+   *
+   * `takeLastSearchResult()` 는 소비형이라 검색이 아닌 도구에서는 null 이 돌아오고
+   * 아무 일도 일어나지 않는다 — 도구 이름을 문자열로 비교하지 않는 이유다(MCP 도구가
+   * 같은 이름을 쓰거나 도구가 늘어나도 배선이 어긋나지 않는다).
+   *
+   * 그래프를 그리지 않는 경우에는 **아무것도 붙이지 않는다**. 빈 mermaid 블록은 실제
+   * 파스 에러이고, 시드만 있는 그래프는 바로 위 도구 결과 텍스트와 같은 정보라
+   * 노이즈다(shouldAttachSearchGraph 주석 참조).
+   *
+   * 기본 접힘: 그래프는 "왜 이 결과인가"를 확인하고 싶을 때 보는 보조 정보다. 매 검색마다
+   * 펼쳐져 있으면 답변 본문이 도형에 밀려 내려가므로 헤더만 두고 접어 둔다. 새 설정을
+   * 만들지 않은 이유도 이것 — 접힌 블록은 이미 "원할 때만 보는" 상태다.
+   */
+  private async appendSearchGraph(toolEl: HTMLElement): Promise<void> {
+    const searchResult = this.plugin.toolExecutor.takeLastSearchResult();
+    if (!searchResult) return;
+    if (!shouldAttachSearchGraph(searchResult)) return;
 
+    const graph = buildSearchGraph(searchResult);
+    const markdown = composeGraphMessage("", graph, {
+      truncated: this.t.graphTruncated,
+      truncatedEdges: this.t.graphTruncatedEdges,
+    });
+    // 순수 코어가 빈 문자열을 돌려주면(노드 0개) 여기서 중단한다 — 게이트와 이중 방어.
+    if (!markdown) return;
 
+    // <details> 는 접힘 상태를 브라우저가 관리하므로 토글 스크립트도 CSS 도 필요 없다.
+    const details = toolEl.createEl("details", { cls: "ba-tool-graph" });
+    details.createEl("summary", { text: this.t.graphSearchHeading.replace(/\*\*/g, "") });
+    const body = details.createDiv();
+    await MarkdownRenderer.render(this.app, markdown, body, "", this);
+  }
 
 
 
@@ -1312,6 +1403,93 @@ export class ChatView extends ItemView {
   // 오늘 날짜로 To-Do 노트 생성 (todo-manager.ts로 분리)
   private async handleCreateTodoNote(): Promise<void> {
     await createTodoNote(this.app, this.plugin, this.t);
+  }
+
+  /**
+   * 현재 노트(또는 선택 영역)를 LLM이 위키 본문으로 재구성해 위키 폴더에 저장한다.
+   *
+   * 쓰기는 create_wiki_note 도구에 위임한다 — 경로 가드, 기존 노트 덮어쓰기 거부,
+   * ensureWikiFolders, buildAiFirstNote 직렬화를 그대로 재사용한다.
+   *
+   * 검증 순서가 중요하다: Second Brain 비활성·위키 폴더 내부·활성 노트 없음은 모두
+   * LLM 호출 **전에** 걸러낸다. create_wiki_note 도 같은 조건을 거부하지만 그때는
+   * 이미 토큰을 태운 뒤다.
+   */
+  private async createWikiFromActiveNote(button: HTMLElement): Promise<void> {
+    // 재진입 방지 — 같은 노트로 두 번 호출하면 두 번째는 경로 충돌로 거부되며 토큰만 태운다.
+    if (button.hasClass("is-busy")) return;
+
+    const sb = this.plugin.settings.secondBrain;
+    if (!sb?.enabled) {
+      new Notice(this.t.wikiDisabled);
+      return;
+    }
+
+    // 현재 열린 마크다운 노트 찾기 — 사이드바 버튼을 누르면 activeLeaf가 이 뷰로 바뀌므로
+    // getActiveViewOfType이 아니라 activeTime이 가장 최근인 마크다운 leaf를 쓴다(generateTags와 동일).
+    const sorted = this.app.workspace
+      .getLeavesOfType("markdown")
+      .sort((a, b) => ((b as any).activeTime ?? 0) - ((a as any).activeTime ?? 0));
+    const view = sorted[0]?.view as MarkdownView | undefined;
+    if (!view?.file) {
+      new Notice(this.t.noOpenNote);
+      return;
+    }
+    const file = view.file;
+
+    // 이미 위키 폴더 안이면 중단. 그냥 넘기면 경로 충돌로 거부되기 전에 토큰만 소모한다.
+    const wikiFolder = normalizePath(sb.wikiFolder);
+    if (file.path === wikiFolder || file.path.startsWith(wikiFolder + "/")) {
+      new Notice(this.t.wikiAlreadyWiki);
+      return;
+    }
+
+    // 선택 영역이 있으면 그것만, 없으면 노트 전문. 상한을 넘으면 잘라 응답 토큰을 지킨다.
+    const selection = view.editor?.getSelection() ?? "";
+    const raw = selection.trim().length > 3 ? selection : await this.app.vault.cachedRead(file);
+    const body = raw.slice(0, NOTE_WIKI_MAX_INPUT_CHARS);
+
+    // 제목은 항상 basename을 쓴다. 선택 텍스트를 제목에 쓰면 `${title}.md` 경로에서
+    // "/"가 하위 폴더로 해석된다(ensureWithinFolder는 ".."·절대경로만 막는다).
+    const title = sanitizeTitleForFilename(file.basename);
+
+    button.addClass("is-busy");
+    const notice = new Notice(this.t.wikiGenerating, 0);
+    try {
+      const response = await this.plugin.aiClient.converseLight(
+        buildNoteWikiPrompt(title, body),
+        SECOND_BRAIN_SYSTEM_PROMPT,
+        NOTE_WIKI_MAX_TOKENS
+      );
+      const generated = (response.text ?? "").trim();
+      if (generated === "") {
+        new Notice(this.t.wikiEmptyResponse);
+        return;
+      }
+
+      // 출처 링크를 붙여 고아 노트가 되는 것을 막는다 — 없으면 이 플러그인이 만든 노트가
+      // 자기 지식 공백 리포트(findOrphanNotes)에 잡힌다.
+      const withSource = appendSourceLink(generated, file.basename);
+      const result = await this.plugin.toolExecutor.execute("create_wiki_note", {
+        title,
+        body: withSource,
+      });
+      new Notice(result, 10000);
+
+      // 생성된 노트를 열어준다. 결과를 보지 못하면 본문이 쓸 만한지 판단할 수 없다.
+      // 채팅 도구 루프에서는 열지 않는다(대화 중 에디터가 바뀌면 방해된다).
+      const created = this.app.vault.getAbstractFileByPath(
+        normalizePath(`${wikiFolder}/${title}.md`)
+      );
+      if (created instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(created);
+      }
+    } catch (error) {
+      new Notice(this.t.wikiFailed(error instanceof Error ? error.message : String(error)));
+    } finally {
+      notice.hide();
+      button.removeClass("is-busy");
+    }
   }
 
   // 현재 노트에 AI 기반 태그 자동 생성

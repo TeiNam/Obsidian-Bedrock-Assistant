@@ -52,9 +52,16 @@ export function trimConversationHistory(
     currentTokens = estimateTokens(messages);
   }
 
-  // Converse API 규약: 첫 메시지는 반드시 user 역할이어야 함
-  // 트리밍 후 첫 메시지가 assistant인 경우 제거
-  while (messages.length > MIN_MESSAGES && messages[0]?.role === "assistant") {
+  // Converse API 규약: 첫 메시지는 반드시 user 역할이어야 함.
+  //
+  // 여기서는 MIN_MESSAGES 하한을 적용하지 않는다. 위 토큰 트리밍의 하한과 목적이 다르다 —
+  // 그쪽은 "문맥을 너무 많이 버리지 않기" 위한 것이고, 이쪽은 API 규약이라 위반하면
+  // 요청 자체가 실패한다(Bedrock ValidationException, Gemini 400). 메시지가 줄어드는
+  // 것보다 전송 실패가 나쁘다.
+  //
+  // 과거 조건은 `length > MIN_MESSAGES(2)` 여서 길이가 **정확히 2**일 때 동작하지 않았고,
+  // [assistant, user] 배열이 그대로 API 로 전송됐다.
+  while (messages.length > 0 && messages[0]?.role === "assistant") {
     messages.shift();
   }
 }

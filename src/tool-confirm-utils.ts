@@ -19,6 +19,9 @@ export const DESTRUCTIVE_TOOLS = [
   'update_index',
   'synthesize_topic',
   'architect',
+  // reconcile_topic 은 리포트만 낸다고 오해하기 쉽지만, 정정안을 Sentinel_Block 으로
+  // 병합해 vault.modify 로 기존 노트를 실제로 덮어쓴다(second-brain/reconcile.ts:446).
+  'reconcile_topic',
 ];
 
 /**
