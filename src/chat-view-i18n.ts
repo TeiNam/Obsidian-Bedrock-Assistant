@@ -161,6 +161,27 @@ export const VIEW_I18N = {
     graphWikiEmpty: "No wiki notes yet. Create one first.",
     graphWikiIsolated: (isolated: number, total: number) =>
       `${isolated} of ${total} wiki notes have no links (dashed outline).`,
+    // ── 코어 그래프 색상 그룹 (PARA 분류) ──────────────────────────────────────
+    // mermaid 4종과 달리 이건 채팅에 그림을 내지 않고 Obsidian '기본' 그래프 뷰의 설정을
+    // 바꾼다. 그래서 문구가 결과를 어디서 봐야 하는지 반드시 말해야 한다 — 사용자가
+    // 채팅을 보고 있으면 "아무 일도 안 일어났다"고 판단한다.
+    //
+    // 로컬 그래프(Local Graph)는 graph.json 을 읽지 않고 워크스페이스에 자기 상태를
+    // 따로 저장하므로 색이 반영되지 않는다. 이 사실을 문구에 넣지 않으면 "안 먹는다"는
+    // 버그 리포트가 온다.
+    cmdColorGroups: "Graph: color by PARA folder",
+    cmdColorGroupsTags: "Graph: color by frequent tags",
+    cmdColorGroupsRemove: "Graph: remove colors added by this plugin",
+    colorGroupsApplied: (added: number) =>
+      `Added ${added} color group(s) to the core graph. Open the graph view to see them.`,
+    colorGroupsAppliedKept: (added: number, kept: number) =>
+      `Added ${added} color group(s); kept ${kept} you already had (your colors were not changed).`,
+    colorGroupsRemoved: "Removed the color groups this plugin added. Your own groups were kept.",
+    colorGroupsNothingToRemove:
+      "This plugin has not added any color groups, so nothing was removed.",
+    colorGroupsNoTags:
+      "No frequently used tags found. Index your vault first, or use more tags.",
+    colorGroupsFailed: (reason: string) => `Could not update graph colors: ${reason}`,
     // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
     // 모달은 title/submitLabel/field.label을 옵션으로 받으므로 모달 코드는 그대로 두고
     // 값만 이 테이블에서 주입한다. 모달 제목은 위 cmd* 키를 재사용해 팔레트 표기와 맞춘다.
@@ -343,6 +364,21 @@ ${content}`,
     graphWikiEmpty: "아직 위키 노트가 없습니다. 먼저 위키 노트를 만들어 주세요.",
     graphWikiIsolated: (isolated: number, total: number) =>
       `위키 노트 ${total}개 중 ${isolated}개가 아무 링크도 없습니다(점선 표시).`,
+    // ── 코어 그래프 색상 그룹 (PARA 분류) ──────────────────────────────────────
+    cmdColorGroups: "그래프: PARA 폴더별 색상 분류",
+    cmdColorGroupsTags: "그래프: 자주 쓰는 태그별 색상 분류",
+    cmdColorGroupsRemove: "그래프: 이 플러그인이 추가한 색상 제거",
+    colorGroupsApplied: (added: number) =>
+      `기본 그래프에 색상 그룹 ${added}개를 추가했습니다. 그래프 뷰를 열면 보입니다.`,
+    colorGroupsAppliedKept: (added: number, kept: number) =>
+      `색상 그룹 ${added}개를 추가했고, 이미 있던 ${kept}개는 그대로 뒀습니다(직접 지정한 색을 바꾸지 않았습니다).`,
+    colorGroupsRemoved:
+      "이 플러그인이 추가한 색상 그룹을 제거했습니다. 직접 만든 그룹은 그대로 있습니다.",
+    colorGroupsNothingToRemove:
+      "이 플러그인이 추가한 색상 그룹이 없어 아무것도 제거하지 않았습니다.",
+    colorGroupsNoTags:
+      "자주 쓰는 태그를 찾지 못했습니다. 볼트를 먼저 인덱싱하거나 태그를 더 사용해 주세요.",
+    colorGroupsFailed: (reason: string) => `그래프 색상을 변경하지 못했습니다: ${reason}`,
     // ── Second Brain 입력 모달 (SecondBrainInputModal 옵션) ──────────────────
     sbSubmitCreate: "생성",
     sbSubmitSynthesize: "종합",
@@ -522,6 +558,21 @@ ${content}`,
     graphWikiEmpty: "まだWikiノートがありません。先にWikiノートを作成してください。",
     graphWikiIsolated: (isolated: number, total: number) =>
       `Wikiノート${total}件のうち${isolated}件にリンクがありません(破線表示)。`,
+    // ── コアグラフのカラーグループ (PARA分類) ─────────────────────────────────
+    cmdColorGroups: "グラフ: PARAフォルダ別に色分け",
+    cmdColorGroupsTags: "グラフ: よく使うタグ別に色分け",
+    cmdColorGroupsRemove: "グラフ: このプラグインが追加した色を削除",
+    colorGroupsApplied: (added: number) =>
+      `標準グラフにカラーグループを${added}件追加しました。グラフビューを開くと反映されています。`,
+    colorGroupsAppliedKept: (added: number, kept: number) =>
+      `カラーグループを${added}件追加し、既存の${kept}件はそのままにしました（自分で指定した色は変更していません）。`,
+    colorGroupsRemoved:
+      "このプラグインが追加したカラーグループを削除しました。自作のグループはそのまま残っています。",
+    colorGroupsNothingToRemove:
+      "このプラグインが追加したカラーグループがないため、何も削除しませんでした。",
+    colorGroupsNoTags:
+      "よく使うタグが見つかりませんでした。まずボルトをインデックスするか、タグをもっと使ってください。",
+    colorGroupsFailed: (reason: string) => `グラフの色を変更できませんでした: ${reason}`,
     // ── Second Brain 入力モーダル (SecondBrainInputModal オプション) ─────────
     sbSubmitCreate: "作成",
     sbSubmitSynthesize: "統合",

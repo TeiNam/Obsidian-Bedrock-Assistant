@@ -53,6 +53,21 @@ import {
   type GraphCommandLabels,
   type GraphCommandOutput,
 } from "./graph-rag/graph-command";
+// 코어 그래프 색상 그룹(PARA 분류). mermaid 4종과 축이 달라 겹치지 않는다 — 그쪽은
+// 쿼리 범위 한정·계산된 지표 뷰이고 이건 볼트 전역 구조를 '기본' 그래프 뷰에 얹는다.
+import {
+  buildParaColorGroups,
+  buildTagColorGroups,
+  collectTagUsage,
+  addedQueriesOf,
+} from "./graph-rag/color-groups";
+import {
+  applyColorGroups,
+  removeColorGroups,
+  readExistingGroups,
+  expandColorGroupSection,
+  type GraphAppLike,
+} from "./graph-rag/apply-color-groups";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
@@ -610,11 +625,16 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   /**
-   * mermaid 그래프 3종을 명령 팔레트에 등록한다.
+   * 그래프 명령을 팔레트에 등록한다 — mermaid 3종 + 코어 그래프 색상 2종.
    *
    * 질문 없이 볼트 전체를 훑는 동작이라 대화 turn 에 붙일 게 없어 검색 근거 그래프
    * (채팅 인라인)와 달리 명령으로 낸다. id 접두사는 기존 `second-brain-*` 과 구분되게
-   * `graph-*` 를 쓴다 — 3종 중 2종은 Second Brain 기능이 아니다.
+   * `graph-*` 를 쓴다 — Second Brain 기능은 위키 구조 하나뿐이다.
+   *
+   * 두 부류는 출력 대상이 다르다:
+   *  - mermaid 3종: 채팅에 정적 그림. 읽기 전용이고 인덱스(임베딩)를 요구한다.
+   *  - 색상 2종: Obsidian '기본' 그래프 뷰의 설정을 바꾼다. path: 쿼리라 인덱스가
+   *    필요 없고, 사용자가 조율한 물리 파라미터는 read-modify-write 로 보존한다.
    */
   private registerGraphCommands(t: ViewLang): void {
     // 의미 유사도 — 현재 노트 기준. 계산이 가장 무거운 명령이다.
@@ -683,6 +703,108 @@ export default class GeminiAssistantPlugin extends Plugin {
           ),
         ),
     });
+
+    // ── 코어 그래프 색상 그룹 ────────────────────────────────────────────
+    // 위 3종과 달리 채팅에 그림을 내지 않고 Obsidian '기본' 그래프 뷰의 설정을 바꾼다.
+    // 그래서 runGraphCommand 를 쓰지 않는다 — 그쪽은 인덱스가 비면 즉시 중단하지만,
+    // PARA 색상 그룹은 path: 쿼리라 임베딩·인덱스가 전혀 필요 없다(인덱싱 전에도 동작).
+    //
+    // 소유 기록(settings.managedColorQueries)이 이 명령의 핵심이다. 볼트에 PARA 폴더가
+    // 실제로 있으므로 사용자가 같은 폴더를 손수 색칠해 뒀을 수 있고, 그 경우 query 가
+    // 우리 것과 한 글자도 다르지 않다. 문자열로 소유를 추측하면 되돌리기가 사용자
+    // 그룹을 지운다. 그래서 "적용 시점에 없던 쿼리"만 기록해 그것만 지운다.
+    this.addCommand({
+      id: "graph-color-para",
+      name: t.cmdColorGroups,
+      callback: () => this.applyGraphColors(t, "para"),
+    });
+
+    // 태그 축. PARA(폴더)와 함께 켜면 "어느 PARA 에 있는 무슨 주제"가 한눈에 보인다.
+    // 인덱스의 tags 를 집계하므로 볼트 재스캔은 없지만, tag: 쿼리 자체는 코어가 모든 md 를
+    // cachedRead 하게 만들어 무료가 아니다 — 그래서 상위 몇 개로만 제한한다.
+    this.addCommand({
+      id: "graph-color-tags",
+      name: t.cmdColorGroupsTags,
+      callback: () => this.applyGraphColors(t, "tags"),
+    });
+
+    // 되돌리기 — 색을 입혔는데 지울 방법이 없으면 사용자가 갇힌다. 기록된 쿼리만
+    // 제거하므로 사용자가 직접 만든 색상 그룹은 순서까지 그대로 남는다.
+    this.addCommand({
+      id: "graph-color-para-remove",
+      name: t.cmdColorGroupsRemove,
+      callback: async () => {
+        const managed = this.settings.managedColorQueries ?? [];
+        if (managed.length === 0) {
+          // 적용 이력이 없으면 지울 것이 없다. 여기서 managedQueriesOf() 같은 추측 목록을
+          // 쓰면 사용자가 손수 만든 동일 쿼리 그룹을 삭제한다.
+          new Notice(t.colorGroupsNothingToRemove, 8000);
+          return;
+        }
+        const result = await removeColorGroups(this.app as unknown as GraphAppLike, managed);
+        if (!result.ok) {
+          new Notice(t.colorGroupsFailed(result.reason ?? ""), 10000);
+          return;
+        }
+        this.settings.managedColorQueries = [];
+        await this.saveSettings();
+        new Notice(t.colorGroupsRemoved, 8000);
+      },
+    });
+  }
+
+  /**
+   * 색상 그룹 적용 공통 몸통 — PARA·태그 두 명령이 공유한다.
+   *
+   * 순서가 중요하다:
+   *  1. 현재 그룹을 읽어 **우리가 실제로 추가할 쿼리**만 계산한다(addedQueriesOf).
+   *     이미 있는 쿼리는 사용자 것이므로 색을 덮지 않고 기록에도 넣지 않는다.
+   *  2. 코어에 적용한다.
+   *  3. 성공했을 때만 기록을 누적 저장한다. 실패 시 기록하면 되돌리기가 존재하지 않는
+   *     그룹을 지우려 하거나, 더 나쁘게는 사용자 그룹을 우리 것으로 오인한다.
+   */
+  private async applyGraphColors(t: ViewLang, axis: "para" | "tags"): Promise<void> {
+    const app = this.app as unknown as GraphAppLike;
+
+    let ours: ReturnType<typeof buildParaColorGroups>;
+    if (axis === "para") {
+      ours = buildParaColorGroups();
+    } else {
+      ours = buildTagColorGroups(collectTagUsage(this.indexer.getEntries()));
+      if (ours.length === 0) {
+        // 인덱싱 전이거나 태그를 거의 쓰지 않는 볼트다. 빈 배열을 적용하면 아무 일도
+        // 일어나지 않는데 성공 문구가 떠서 "안 먹는다"로 읽힌다.
+        new Notice(t.colorGroupsNoTags, 8000);
+        return;
+      }
+    }
+
+    const existing = readExistingGroups(app);
+    const added = addedQueriesOf(existing, ours);
+    const result = await applyColorGroups(app, ours, this.settings.managedColorQueries ?? []);
+    if (!result.ok) {
+      new Notice(t.colorGroupsFailed(result.reason ?? ""), 10000);
+      return;
+    }
+
+    if (added.length > 0) {
+      // 중복 없이 누적한다 — PARA 와 태그를 각각 적용해도 되돌리기가 둘 다 지운다.
+      const merged = new Set([...(this.settings.managedColorQueries ?? []), ...added]);
+      this.settings.managedColorQueries = [...merged];
+    }
+    // 색상 그룹 섹션이 접혀 있으면 사용자가 결과를 보거나 편집할 수 없다. 펼쳐 준다.
+    expandColorGroupSection(app);
+    await this.saveSettings();
+
+    // 이미 있던 쿼리는 사용자 것을 존중해 건드리지 않았다는 사실을 알린다 — 알리지 않으면
+    // "왜 색이 내가 지정한 그대로인가"를 버그로 오해한다.
+    const kept = ours.length - added.length;
+    new Notice(
+      kept > 0
+        ? t.colorGroupsAppliedKept(added.length, kept)
+        : t.colorGroupsApplied(added.length),
+      8000,
+    );
   }
 
   /**

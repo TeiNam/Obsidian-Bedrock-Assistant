@@ -218,6 +218,19 @@ export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
   // === Second Brain Layer 설정 (옵트인) ===
   /** Second Brain Layer 설정 (기능 활성화·위키 폴더·스케줄러) (Req 1.7) */
   secondBrain: SecondBrainSettings;
+
+  /**
+   * 코어 그래프 색상 그룹 중 **우리가 실제로 추가한** 쿼리 목록.
+   *
+   * 되돌리기가 지울 대상의 유일한 근거다. 쿼리 문자열 형태로 소유를 추측하면 안 된다 —
+   * 볼트에 "01. Projects/" 같은 PARA 폴더가 실제로 있고, 사용자가 기본 그래프에서 같은
+   * 폴더를 손수 색칠해 뒀다면 query 가 우리 것과 한 글자도 다르지 않다. 그 경우 문자열
+   * 판정은 사용자가 만든 그룹을 우리 것으로 오인해 영구 삭제한다.
+   *
+   * graph.json 이 아니라 여기에 두는 이유: colorGroups 요소에는 query·color 뿐이라
+   * 소유 표식을 붙일 자리가 없다.
+   */
+  managedColorQueries: string[];
 }
 
 // AI 클라이언트 공통 인터페이스 (GeminiClient, BedrockClient가 구현)
@@ -336,6 +349,9 @@ export const DEFAULT_SETTINGS: GeminiAssistantSettings = {
   chunkOverlap: 200,
   // Second Brain Layer 기본값 (옵트인)
   secondBrain: DEFAULT_SECOND_BRAIN_SETTINGS,
+  // 적용 이력이 없으면 되돌리기가 아무것도 지우지 않는다 — 사용자가 손수 만든 그룹을
+  // 우리 것으로 오인하지 않기 위한 기본값이다.
+  managedColorQueries: [],
 };
 
 
