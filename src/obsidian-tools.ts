@@ -290,13 +290,13 @@ export const TOOLS: ToolDefinition[] = [
  * "설정에서 켜세요" 안내 경로는 사라지지만, LLM 이 처음부터 못 한다고 정직하게 답한다.
  */
 export const SECOND_BRAIN_TOOLS = [
-  // 쓰기 도구 — 위키 노트를 생성·갱신한다
+  // 쓰기 도구 — 위키 노트를 생성·갱신한다 (DESTRUCTIVE_TOOLS 와 일치해야 한다)
   "create_wiki_note",
   "update_index",
   "synthesize_topic",
   "architect",
-  // 읽기 전용 도구 — 리포트만 반환하고 노트를 수정하지 않는다
   "reconcile_topic",
+  // 읽기 전용 도구 — 리포트 문자열만 반환하고 볼트를 수정하지 않는다
   "challenge",
   "connect",
   "emerge",
