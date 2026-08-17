@@ -983,10 +983,9 @@ describe("provider-utils effortLevels / clampEffort", () => {
 		]);
 	});
 
-	it("gpt-5.6 이상은 xhigh/max까지 허용한다", () => {
-		// GPT-5.6은 reasoning_effort로 xhigh/max를 지원한다
+	it("gpt-5.6 이상은 xhigh/max까지 허용하고 minimal은 거부한다", () => {
+		// 모델이 minimal을 거부한다(unsupported_value). Bedrock 3종에서 확인.
 		expect(effortLevels("bedrock", "global.openai.gpt-5.6-sol")).toEqual([
-			"minimal",
 			"low",
 			"medium",
 			"high",
@@ -994,6 +993,8 @@ describe("provider-utils effortLevels / clampEffort", () => {
 			"max",
 		]);
 		expect(effortLevels("openai", "gpt-5.6")).toContain("max");
+		// 경량 호출이 요청하는 minimal은 low로 보정되어야 한다.
+		expect(clampEffort("bedrock", "global.openai.gpt-5.6-luna", "minimal")).toBe("low");
 	});
 
 	it("gpt-5.6 미만은 high까지만 허용한다", () => {
@@ -1057,13 +1058,24 @@ describe("provider-utils buildEffortParams", () => {
 		).toEqual({ output_config: { effort: "high" } });
 	});
 
-	it("OpenAI는 reasoning_effort를 평면으로 전달한다", () => {
+	it("OpenAI 직접 호출은 Chat Completions의 평면 reasoning_effort를 쓴다", () => {
 		expect(buildEffortParams("openai", "gpt-5.1", "medium")).toEqual({
 			reasoning_effort: "medium",
 		});
-		expect(buildEffortParams("bedrock", "global.openai.gpt-5.6-terra", "low")).toEqual({
-			reasoning_effort: "low",
-		});
+	});
+
+	it("Bedrock의 OpenAI 모델은 reasoning.effort로 중첩 전달한다", () => {
+		// Bedrock은 GPT-5 이상의 Converse 요청을 Responses 규격으로 전달하므로
+		// 평면 `reasoning_effort`는 unknown_parameter 오류가 된다.
+		for (const id of [
+			"global.openai.gpt-5.6-sol",
+			"global.openai.gpt-5.6-terra",
+			"global.openai.gpt-5.6-luna",
+		]) {
+			const params = buildEffortParams("bedrock", id, "low");
+			expect(params).toEqual({ reasoning: { effort: "low" } });
+			expect(params).not.toHaveProperty("reasoning_effort");
+		}
 	});
 
 	it("Gemini는 thinkingConfig.thinkingLevel로 전달한다", () => {

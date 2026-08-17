@@ -294,7 +294,7 @@ export class BedrockClient implements IAiClient {
         maxTokens: this.settings.maxTokens,
       },
       // 추론 강도는 벤더 고유 파라미터로 전달한다(Anthropic: output_config.effort,
-      // OpenAI: reasoning_effort). effort 미지원 모델에서는 빈 객체이므로 생략된다.
+      // OpenAI: reasoning.effort). effort 미지원 모델에서는 빈 객체이므로 생략된다.
       ...this.effortRequestFields(this.settings.effort),
     };
 
