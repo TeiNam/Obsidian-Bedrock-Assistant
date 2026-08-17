@@ -237,15 +237,17 @@ const EFFORT_RANK: readonly EffortLevel[] = [
 /** Anthropic Claude 계열이 허용하는 effort 값. */
 const ANTHROPIC_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 /**
- * OpenAI reasoning_effort 허용 값.
+ * OpenAI 추론 강도 허용 값.
  * 스펙상 전체 집합은 none~max지만 모델마다 지원 범위가 다르다.
- *  - gpt-5.6 이상: minimal~max (xhigh/max 지원)
+ *  - gpt-5.6 이상: low~max (xhigh/max 지원, minimal 미지원)
  *  - 그 이전 gpt-5.x: minimal~high
  *  - o 시리즈: low~high (minimal 미지원)
  * ("none"은 추론을 끄는 값으로, 이 플러그인은 노출하지 않는다.)
+ *
+ * gpt-5.6은 minimal을 거부한다("Supported values are: 'none', 'low', 'medium',
+ * 'high', 'xhigh', and 'max'"). Bedrock sol/terra/luna 3종에서 확인(2026-08-18).
  */
 const OPENAI_EFFORTS_FULL: readonly EffortLevel[] = [
-	"minimal",
 	"low",
 	"medium",
 	"high",
@@ -347,9 +349,9 @@ export function legacyTemperatureToEffort(temperature: number): EffortLevel {
  * 각 공급자의 원본 API 스펙을 그대로 따르며, effort 미지원 모델은 빈 객체를 반환해
  * 호출부가 파라미터를 생략하도록 한다.
  *
- *  - openai: `{ reasoning_effort }` (요청 본문 최상위)
+ *  - openai: `{ reasoning_effort }` (Chat Completions 요청 본문 최상위)
  *  - bedrock(Anthropic): `{ output_config: { effort } }` (additionalModelRequestFields)
- *  - bedrock(OpenAI): `{ reasoning_effort }` (additionalModelRequestFields)
+ *  - bedrock(OpenAI): `{ reasoning: { effort } }` (additionalModelRequestFields)
  *  - gemini: `{ thinkingConfig: { thinkingLevel } }` (generationConfig 내부)
  *  - ollama: 대상 없음 → 빈 객체
  */
@@ -368,9 +370,12 @@ export function buildEffortParams(
 			// Gemini는 thinkingConfig.thinkingLevel로 사고 깊이를 지정한다.
 			return { thinkingConfig: { thinkingLevel: level } };
 		case "bedrock":
-			// 평면 `effort`는 Anthropic API에서 validation 오류가 발생하므로 중첩한다.
+			// 두 벤더 모두 평면 키를 거부하므로 각자의 네이티브 형태로 중첩한다.
+			// Anthropic: 평면 `effort`는 validation 오류.
+			// OpenAI: Bedrock은 GPT-5 이상의 Converse 요청을 Responses 규격으로 전달하므로
+			// Chat Completions의 평면 `reasoning_effort`는 unknown_parameter 오류가 된다.
 			return /gpt-/.test(id)
-				? { reasoning_effort: level }
+				? { reasoning: { effort: level } }
 				: { output_config: { effort: level } };
 		default:
 			return {};
