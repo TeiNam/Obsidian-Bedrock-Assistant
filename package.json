@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-assistant",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Obsidian sidebar AI assistant with four backends (AWS Bedrock, Google Gemini, OpenAI, Ollama)",
   "main": "main.js",
   "scripts": {
