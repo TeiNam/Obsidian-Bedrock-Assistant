@@ -816,10 +816,6 @@ body.theme-light .ba-message-content pre {
   padding: 0;
 }
 
-.ba-mcp-modal h2 {
-  margin: 0 0 12px 0;
-}
-
 .ba-mcp-status {
   margin-bottom: 12px;
   font-size: 13px;
@@ -1388,7 +1384,7 @@ body.theme-light .ba-message-content pre {
   margin-bottom: 12px;
 }
 
-.ba-tool-confirm-header h3 {
+.ba-tool-confirm-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
@@ -1490,12 +1486,6 @@ body.theme-light .ba-message-content pre {
    ============================================ */
 .web-clipper-modal {
   max-width: 520px;
-}
-
-.web-clipper-title {
-  margin: 0 0 16px 0;
-  font-size: 1.2em;
-  font-weight: 600;
 }
 
 .web-clipper-input-wrapper {
@@ -1602,6 +1592,25 @@ body.theme-light .ba-message-content pre {
    ============================================ */
 .ba-sysprompt-modal {
   max-width: 640px;
+}
+
+/* 스킬 편집 모달의 이름/설명 입력 — 모달 폭을 채운다 */
+.ba-skill-input {
+  width: 100%;
+}
+
+/* "AI로 생성하기" 버튼 행 — 입력창과 내용 영역 사이를 위아래 여백으로 분리 */
+.ba-skill-gen-row {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+/* 내용(마크다운) 라벨 — 좌측 끝에 두되 살짝 안쪽으로 들여쓴다 */
+.ba-skill-content-label {
+  display: block;
+  padding-left: 4px;
+  margin-bottom: 6px;
 }
 
 .ba-sysprompt-textarea {

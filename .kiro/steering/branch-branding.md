@@ -46,7 +46,7 @@ curl -s https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/co
 
 ## 표시명과 아이콘
 
-`displayName`, `icon`, `settingsTitle`은 `aiBackend` 설정에 따라 런타임에
+`displayName`과 `icon`은 `aiBackend` 설정에 따라 런타임에
 전환된다. `pluginId`, `viewType`, `files`는 백엔드와 무관한 고정값이다.
 
 | aiBackend | displayName |

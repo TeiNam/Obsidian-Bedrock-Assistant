@@ -33,7 +33,6 @@ const TODO_FOLDER_DEFAULT = "ToDo";
 // (테스트에서 i18n 키 완전성 검증을 위해 export — 런타임 동작 변화 없음, 추가적 export일 뿐)
 export const I18N = {
   en: {
-    title: BRANDING.settingsTitle.en,
     pluginDesc: "An AI assistant sidebar to run your whole Obsidian vault. Pick your backend — AWS Bedrock, Google Gemini, OpenAI, or Ollama — then chat with AI, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools, all from within Obsidian.",
     readmeLabel: "📖 Documentation",
     readmeFile: "README.md",
@@ -228,7 +227,6 @@ export const I18N = {
     mcpJsonErrorAt: (line: number, col: number, msg: string) => `JSON error at line ${line}, column ${col}: ${msg}`,
   },
   ko: {
-    title: BRANDING.settingsTitle.ko,
     pluginDesc: "옵시디언 볼트 전반을 AI로 다루는 어시스턴트 사이드바입니다. 백엔드(AWS Bedrock, Google Gemini, OpenAI, Ollama)를 선택해 AI와 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 옵시디언 안에서 할 수 있습니다.",
     readmeLabel: "📖 사용 가이드",
     readmeFile: "README-KR.md",
@@ -423,7 +421,6 @@ export const I18N = {
     mcpJsonErrorAt: (line: number, col: number, msg: string) => `줄 ${line}, 열 ${col}에서 JSON 오류: ${msg}`,
   },
   ja: {
-    title: BRANDING.settingsTitle.ja,
     pluginDesc: "Obsidianボルト全体をAIで扱えるアシスタントサイドバーです。バックエンド（AWS Bedrock、Google Gemini、OpenAI、Ollama）を選んでAIと対話し、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で行えます。",
     readmeLabel: "📖 ドキュメント",
     readmeFile: "README-JA.md",
@@ -662,8 +659,9 @@ export class GeminiSettingTab extends PluginSettingTab {
       return typeof en === "string" ? en : "";
     };
 
-    // 설정 페이지 타이틀을 현재 브랜딩에서 동적으로 가져옴 (심사 기준: setHeading 사용)
-    new Setting(containerEl).setName(BRANDING.settingsTitle[lang] || BRANDING.settingsTitle.en).setHeading();
+    // 최상단 타이틀 헤딩은 두지 않는다. 옵시디언은 설정 탭을 이미 플러그인 이름
+    // 아래에 렌더하므로, 심사 기준이 헤딩에 플러그인 이름과 "Settings"를 넣는 것을
+    // 금지한다(첫 섹션이 하나뿐이면 헤딩 자체가 불필요하다).
 
     // 플러그인 설명 + README 링크 + 후원 배너 (하나의 박스)
     const aboutBox = containerEl.createDiv({ cls: "ba-about-box" });
@@ -1892,7 +1890,7 @@ class SystemPromptModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("ba-sysprompt-modal");
 
-    contentEl.createEl("h2", { text: this.t.systemPrompt });
+    this.setTitle(this.t.systemPrompt);
 
     const textarea = contentEl.createEl("textarea", {
       cls: "ba-sysprompt-textarea",
@@ -1952,42 +1950,34 @@ class SkillEditModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("ba-sysprompt-modal");
 
-    contentEl.createEl("h2", {
-      text: this.existing ? this.t.skillModalEdit : this.t.skillModalNew,
-    });
+    this.setTitle(this.existing ? this.t.skillModalEdit : this.t.skillModalNew);
 
     // 이름 입력
     contentEl.createEl("label", { text: this.t.skillNameLabel, cls: "ba-about-desc" });
     const nameInput = contentEl.createEl("input", {
+      cls: "ba-skill-input",
       attr: { type: "text", placeholder: this.t.skillNamePlaceholder },
     });
-    nameInput.style.width = "100%";
     nameInput.value = this.existing?.name ?? "";
 
     // 설명 입력 (어떤 일을 하는지) — 세로로 조금 넉넉하게
     contentEl.createEl("label", { text: this.t.skillDescLabel, cls: "ba-about-desc" });
     const descInput = contentEl.createEl("textarea", {
+      cls: "ba-skill-input",
       attr: { placeholder: this.t.skillDescPlaceholder },
     });
-    descInput.style.width = "100%";
     descInput.rows = 4;
     descInput.value = this.existing?.description ?? "";
 
     // "AI로 생성하기" 버튼 — 입력창과 내용 영역 사이에 위아래 여백을 두어 분리
-    const genRow = contentEl.createDiv();
-    genRow.style.display = "flex";
-    genRow.style.justifyContent = "center";
-    genRow.style.margin = "20px 0";
+    const genRow = contentEl.createDiv({ cls: "ba-skill-gen-row" });
     const genBtn = genRow.createEl("button", { text: this.t.skillGenerate });
 
     // 내용(마크다운) 라벨 — 좌측 끝에 두되 살짝 안쪽으로 들여쓰기
-    const contentLabel = contentEl.createEl("label", {
+    contentEl.createEl("label", {
       text: this.t.skillContentLabel,
-      cls: "ba-about-desc",
+      cls: "ba-about-desc ba-skill-content-label",
     });
-    contentLabel.style.display = "block";
-    contentLabel.style.paddingLeft = "4px";
-    contentLabel.style.marginBottom = "6px";
 
     const textarea = contentEl.createEl("textarea", {
       cls: "ba-sysprompt-textarea",
@@ -2112,7 +2102,7 @@ class McpConfigModal extends Modal {
     contentEl.addClass("ba-mcp-modal");
     const t = I18N[this.plugin.settings.language] || I18N.en;
 
-    contentEl.createEl("h2", { text: t.mcpModalTitle });
+    this.setTitle(t.mcpModalTitle);
 
     // 설명
     contentEl.createEl("p", {
@@ -2167,13 +2157,13 @@ class McpConfigModal extends Modal {
         // 빈 텍스트일 때 검증 건너뛰기: 오류 표시 숨김, 템플릿 버튼 표시
         if (text.trim() === "") {
           this.errorIndicatorEl.textContent = "";
-          this.errorIndicatorEl.style.display = "none";
+          this.errorIndicatorEl.hide();
           this.textArea.classList.remove("has-error");
-          this.templateBtn.style.display = "";
+          this.templateBtn.show();
           return;
         }
         // 텍스트가 비어있지 않으면 템플릿 버튼 숨김
-        this.templateBtn.style.display = "none";
+        this.templateBtn.hide();
         // JSON 검증 및 괄호 매칭 수행
         const jsonResult = validateJson(text);
         const bracketResult = matchBrackets(text);
@@ -2184,7 +2174,7 @@ class McpConfigModal extends Modal {
 
     // 오류 표시 영역 (textarea 하단, 초기에는 숨김)
     this.errorIndicatorEl = contentEl.createDiv({ cls: "ba-mcp-error-indicator" });
-    this.errorIndicatorEl.style.display = "none";
+    this.errorIndicatorEl.hide();
 
     // 연결 상태 표시 영역
     this.statusEl = contentEl.createDiv({ cls: "ba-mcp-status" });
@@ -2199,7 +2189,7 @@ class McpConfigModal extends Modal {
       cls: "ba-mcp-template-btn",
     });
     // 설정 텍스트가 비어있을 때만 표시
-    this.templateBtn.style.display = this.textArea.value.trim() === "" ? "" : "none";
+    this.templateBtn.toggle(this.textArea.value.trim() === "");
     this.templateBtn.addEventListener("click", () => {
       this.textArea.value = getDefaultTemplate();
       // 삽입 후 즉시 검증 수행
@@ -2207,7 +2197,7 @@ class McpConfigModal extends Modal {
       const bracketResult = matchBrackets(this.textArea.value);
       this.updateErrorIndicator(jsonResult, bracketResult);
       // 템플릿 삽입 후 버튼 숨김
-      this.templateBtn.style.display = "none";
+      this.templateBtn.hide();
     });
 
     // 포맷 버튼: 클릭 시 JSON을 2칸 들여쓰기로 정렬
@@ -2291,7 +2281,7 @@ class McpConfigModal extends Modal {
     if (!bracketResult.balanced && bracketResult.errors.length > 0) {
       const firstErr = bracketResult.errors[0];
       this.errorIndicatorEl.textContent = t.mcpBracketError(firstErr.char, firstErr.line, firstErr.column);
-      this.errorIndicatorEl.style.display = "";
+      this.errorIndicatorEl.show();
       this.textArea.classList.add("has-error");
       return;
     }
@@ -2300,14 +2290,14 @@ class McpConfigModal extends Modal {
     if (!jsonResult.valid && jsonResult.error) {
       const { line, column, message } = jsonResult.error;
       this.errorIndicatorEl.textContent = t.mcpJsonErrorAt(line, column, message);
-      this.errorIndicatorEl.style.display = "";
+      this.errorIndicatorEl.show();
       this.textArea.classList.add("has-error");
       return;
     }
 
     // 정상: 오류 영역 숨기고 오류 스타일 제거
     this.errorIndicatorEl.textContent = "";
-    this.errorIndicatorEl.style.display = "none";
+    this.errorIndicatorEl.hide();
     this.textArea.classList.remove("has-error");
   }
 

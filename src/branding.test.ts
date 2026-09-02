@@ -15,9 +15,6 @@ describe("getBranding", () => {
     expect(brand.displayName).toBe("Bedrock Assistant");
     expect(brand.icon.id).toBe("bedrock-assistant");
     expect(brand.icon.svg).toBeTruthy();
-    expect(brand.settingsTitle.en).toBe("Bedrock Assistant Settings");
-    expect(brand.settingsTitle.ko).toBe("Bedrock Assistant 설정");
-    expect(brand.settingsTitle.ja).toBe("Bedrock Assistant 設定");
   });
 
   it("'gemini' 전달 시 Gemini 브랜딩을 반환한다", () => {
@@ -26,9 +23,6 @@ describe("getBranding", () => {
     expect(brand.displayName).toBe("Gemini Assistant");
     expect(brand.icon.id).toBe("gemini-assistant");
     expect(brand.icon.svg).toBeTruthy();
-    expect(brand.settingsTitle.en).toBe("Gemini Assistant Settings");
-    expect(brand.settingsTitle.ko).toBe("Gemini Assistant 설정");
-    expect(brand.settingsTitle.ja).toBe("Gemini Assistant 設定");
   });
 });
 
@@ -83,8 +77,8 @@ describe("updateBranding", () => {
  * Property 6: BRANDING 구조 안정성 및 식별자 고정
  *
  * 임의의 유효한 aiBackend 값에 대해, updateBranding(aiBackend)를 호출한 후
- * BRANDING 객체는 pluginId, displayName, viewType, files, icon, settingsTitle
- * 필드를 모두 가져야 하며, pluginId와 viewType은 호출 전과 동일한 값이어야 한다.
+ * BRANDING 객체는 pluginId, displayName, viewType, files, icon 필드를 모두
+ * 가져야 하며, pluginId와 viewType은 호출 전과 동일한 값이어야 한다.
  *
  * Validates: Requirements 8.1, 9.1
  */
@@ -109,7 +103,6 @@ describe("Property 6: BRANDING 구조 안정성 및 식별자 고정", () => {
         expect(BRANDING).toHaveProperty("viewType");
         expect(BRANDING).toHaveProperty("files");
         expect(BRANDING).toHaveProperty("icon");
-        expect(BRANDING).toHaveProperty("settingsTitle");
 
         // 각 필드의 타입 검증
         expect(typeof BRANDING.pluginId).toBe("string");
@@ -117,7 +110,6 @@ describe("Property 6: BRANDING 구조 안정성 및 식별자 고정", () => {
         expect(typeof BRANDING.viewType).toBe("string");
         expect(typeof BRANDING.files).toBe("object");
         expect(typeof BRANDING.icon).toBe("object");
-        expect(typeof BRANDING.settingsTitle).toBe("object");
 
         // files 하위 필드 존재 확인
         expect(BRANDING.files).toHaveProperty("index");
@@ -128,11 +120,6 @@ describe("Property 6: BRANDING 구조 안정성 및 식별자 고정", () => {
         // icon 하위 필드 존재 확인
         expect(BRANDING.icon).toHaveProperty("id");
         expect(BRANDING.icon).toHaveProperty("svg");
-
-        // settingsTitle 하위 필드 존재 확인
-        expect(BRANDING.settingsTitle).toHaveProperty("en");
-        expect(BRANDING.settingsTitle).toHaveProperty("ko");
-        expect(BRANDING.settingsTitle).toHaveProperty("ja");
       }),
       { numRuns: 100 },
     );
@@ -185,7 +172,6 @@ describe("Property 6: BRANDING 구조 안정성 및 식별자 고정", () => {
         const expectedBrand = getBranding(aiBackend);
         expect(BRANDING.displayName).toBe(expectedBrand.displayName);
         expect(BRANDING.icon.id).toBe(expectedBrand.icon.id);
-        expect(BRANDING.settingsTitle).toEqual(expectedBrand.settingsTitle);
       }),
       { numRuns: 100 },
     );
@@ -200,8 +186,8 @@ describe("Property 6: BRANDING 구조 안정성 및 식별자 고정", () => {
  * Property 12: 브랜딩 전환 및 고정 필드 불변
  *
  * 임의의 aiBackend 값(4값: "bedrock"/"gemini"/"openai"/"ollama")에 대해,
- * getBranding은 비어 있지 않은 displayName/icon/settingsTitle(en/ko/ja 모두)을
- * 반환하고, updateBranding 호출 후에도 BRANDING의 고정 필드
+ * getBranding은 비어 있지 않은 displayName/icon을 반환하고,
+ * updateBranding 호출 후에도 BRANDING의 고정 필드
  * (pluginId, viewType, files)는 변경되지 않는다.
  *
  * Validates: Requirements 11.1, 11.2, 11.3
@@ -223,7 +209,7 @@ describe("Property 12: 브랜딩 전환 및 고정 필드 불변", () => {
     updateBranding("bedrock");
   });
 
-  it("4값 모든 aiBackend에 대해 getBranding은 비어 있지 않은 displayName/icon/settingsTitle(en/ko/ja)을 반환한다", () => {
+  it("4값 모든 aiBackend에 대해 getBranding은 비어 있지 않은 displayName/icon을 반환한다", () => {
     fc.assert(
       fc.property(aiBackend4Arb, (aiBackend) => {
         const brand = getBranding(aiBackend);
@@ -237,12 +223,6 @@ describe("Property 12: 브랜딩 전환 및 고정 필드 불변", () => {
         expect(brand.icon.id.length).toBeGreaterThan(0);
         expect(brand.icon.svg).toBeTruthy();
         expect((brand.icon.svg ?? "").length).toBeGreaterThan(0);
-
-        // settingsTitle: en/ko/ja 모두 비어 있지 않음
-        for (const lang of ["en", "ko", "ja"] as const) {
-          expect(typeof brand.settingsTitle[lang]).toBe("string");
-          expect(brand.settingsTitle[lang].length).toBeGreaterThan(0);
-        }
       }),
       { numRuns: 100 },
     );
@@ -293,68 +273,37 @@ describe("Property 12: 브랜딩 전환 및 고정 필드 불변", () => {
 });
 
 // ============================================
-// 단위 테스트(예시): OpenAI/Ollama settingsTitle i18n 키 완전성
+// 단위 테스트(예시): OpenAI/Ollama 브랜딩
 // ============================================
 
 /**
- * Task 7.3 — 브랜딩 i18n/불변 예시 단위 테스트
- *
- * OpenAI/Ollama 백엔드의 settingsTitle이 en/ko/ja 세 언어 키를 모두
- * 정의하고 각 값이 비어 있지 않은지 구체적인 예시로 검증한다.
- *
- * Validates: Requirements 11.2
+ * Property 12가 4값 전체를 커버하지만, 뒤늦게 추가된 두 백엔드는 기대값을
+ * 명시적으로 못박아 둔다. getBranding의 case 누락은 Gemini 폴백으로 조용히
+ * 흡수되므로 존재 검증만으로는 잡히지 않는다.
  */
-describe("OpenAI/Ollama settingsTitle i18n 키 완전성 (예시)", () => {
-  it("'openai' settingsTitle은 en/ko/ja 키를 모두 가지며 기대값과 일치한다", () => {
+describe("OpenAI/Ollama 브랜딩 (예시)", () => {
+  it("'openai'는 OpenAI 브랜딩을 반환한다", () => {
     const brand = getBranding("openai");
 
-    // 세 언어 키가 모두 존재하는지 확인
-    expect(brand.settingsTitle).toHaveProperty("en");
-    expect(brand.settingsTitle).toHaveProperty("ko");
-    expect(brand.settingsTitle).toHaveProperty("ja");
-
-    // 각 언어별 기대 문자열 검증
-    expect(brand.settingsTitle.en).toBe("OpenAI Assistant Settings");
-    expect(brand.settingsTitle.ko).toBe("OpenAI Assistant 설정");
-    expect(brand.settingsTitle.ja).toBe("OpenAI Assistant 設定");
+    expect(brand.displayName).toBe("OpenAI Assistant");
+    expect(brand.icon.id).toBe("openai-assistant");
+    expect(brand.icon.svg).toBeTruthy();
   });
 
-  it("'ollama' settingsTitle은 en/ko/ja 키를 모두 가지며 기대값과 일치한다", () => {
+  it("'ollama'는 Ollama 브랜딩을 반환한다", () => {
     const brand = getBranding("ollama");
 
-    // 세 언어 키가 모두 존재하는지 확인
-    expect(brand.settingsTitle).toHaveProperty("en");
-    expect(brand.settingsTitle).toHaveProperty("ko");
-    expect(brand.settingsTitle).toHaveProperty("ja");
-
-    // 각 언어별 기대 문자열 검증
-    expect(brand.settingsTitle.en).toBe("Ollama Assistant Settings");
-    expect(brand.settingsTitle.ko).toBe("Ollama Assistant 설정");
-    expect(brand.settingsTitle.ja).toBe("Ollama Assistant 設定");
+    expect(brand.displayName).toBe("Ollama Assistant");
+    expect(brand.icon.id).toBe("ollama-assistant");
+    expect(brand.icon.svg).toBeTruthy();
   });
 
-  it("'openai'/'ollama' settingsTitle의 모든 언어 값은 비어 있지 않다", () => {
-    // 두 백엔드 × 세 언어 조합에 대해 비어 있지 않은 문자열인지 단언
-    for (const backend of ["openai", "ollama"] as const) {
-      const { settingsTitle } = getBranding(backend);
-      for (const lang of ["en", "ko", "ja"] as const) {
-        expect(typeof settingsTitle[lang]).toBe("string");
-        expect(settingsTitle[lang].length).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it("updateBranding('openai'/'ollama') 후 BRANDING.settingsTitle도 en/ko/ja를 모두 가진다", () => {
+  it("updateBranding으로 두 백엔드 전환 후 BRANDING이 해당 브랜딩과 일치한다", () => {
     for (const backend of ["openai", "ollama"] as const) {
       updateBranding(backend);
 
-      // updateBranding 적용 후 BRANDING의 settingsTitle 키 완전성 확인
-      expect(BRANDING.settingsTitle).toHaveProperty("en");
-      expect(BRANDING.settingsTitle).toHaveProperty("ko");
-      expect(BRANDING.settingsTitle).toHaveProperty("ja");
-
-      // getBranding 결과와 동일해야 함
-      expect(BRANDING.settingsTitle).toEqual(getBranding(backend).settingsTitle);
+      expect(BRANDING.displayName).toBe(getBranding(backend).displayName);
+      expect(BRANDING.icon.id).toBe(getBranding(backend).icon.id);
     }
 
     // 후속 테스트에 영향을 주지 않도록 기본값(bedrock)으로 복원

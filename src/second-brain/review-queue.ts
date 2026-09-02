@@ -42,8 +42,17 @@ export interface ReviewItem {
   path: string;
   title: string;
   score: number;
-  /** 왜 이 노트가 뽑혔는지. 이유 없이 던지면 사용자가 볼 이유를 모른다. */
-  reason: string;
+  /**
+   * 왜 이 노트가 뽑혔는지 판단할 원자료. 이유 없이 던지면 사용자가 볼 이유를
+   * 모르지만, 문구를 여기서 만들면 순수 함수가 로케일을 알아야 한다.
+   * 표시 문구 조립은 뷰(review-queue-modal)가 담당한다.
+   */
+  /** elapsedDays의 기준: 접근 기록이 있으면 마지막 열람, 없으면 파일 수정 시각. */
+  basis: "opened" | "modified";
+  /** basis 시각으로부터 지난 일수. */
+  elapsedDays: number;
+  /** 백링크 + 아웃링크 총합. */
+  links: number;
 }
 
 /** 경로가 생성물(위키 폴더 하위)인지 판별한다. */
@@ -111,11 +120,17 @@ export function scoreForReview(
 }
 
 /** 선정 이유 문구를 만든다. */
-function buildReason(entry: VaultIndexEntry, log: AccessLog, now: number): string {
-  const elapsedDays = Math.floor(Math.max(0, (now - lastSeenAt(entry, log)) / DAY));
-  const links = (entry.backlinks?.length ?? 0) + (entry.outlinks?.length ?? 0);
-  const seen = log[entry.path] !== undefined ? "열지 않음" : "수정 없음";
-  return `${elapsedDays}일간 ${seen}, 링크 ${links}개`;
+function buildReviewFacts(
+  entry: VaultIndexEntry,
+  log: AccessLog,
+  now: number
+): Pick<ReviewItem, "basis" | "elapsedDays" | "links"> {
+  return {
+    // 접근 기록이 있으면 lastSeenAt이 마지막 열람 시각을, 없으면 파일 수정 시각을 준다.
+    basis: log[entry.path] !== undefined ? "opened" : "modified",
+    elapsedDays: Math.floor(Math.max(0, (now - lastSeenAt(entry, log)) / DAY)),
+    links: (entry.backlinks?.length ?? 0) + (entry.outlinks?.length ?? 0),
+  };
 }
 
 /**
@@ -141,7 +156,7 @@ export function selectReviewQueue(
       path: entry.path,
       title: entry.title,
       score,
-      reason: buildReason(entry, log, now),
+      ...buildReviewFacts(entry, log, now),
     });
   }
 

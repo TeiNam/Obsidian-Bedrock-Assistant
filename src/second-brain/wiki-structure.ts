@@ -202,9 +202,14 @@ export async function appendActivityLog(
 
   if (existing instanceof TFile) {
     // 기존 로그를 읽어 끝에 새 줄만 덧붙인다(기존 항목 불변, Req 4.5).
-    const current = await app.vault.read(existing);
-    const separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
-    await app.vault.modify(existing, `${current}${separator}${line}\n`);
+    //
+    // read → modify 왕복이 아니라 process를 쓴다. 이 함수는 스케줄러와 사용자 동작
+    // 양쪽에서 호출되므로, 두 append가 겹치면 나중 쓰기가 먼저 읽은 내용을 기준으로
+    // 덮어써 앞 줄이 사라진다. process는 읽기-수정-쓰기를 원자적으로 처리한다.
+    await app.vault.process(existing, (current) => {
+      const separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+      return `${current}${separator}${line}\n`;
+    });
     return;
   }
 

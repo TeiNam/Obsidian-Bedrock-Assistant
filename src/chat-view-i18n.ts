@@ -36,6 +36,12 @@ export const VIEW_I18N = {
     totalIndexedShort: (n: number) => `${n} total indexed`,
     failHeader: (n: number) => `⚠️ ${n} files failed to index`,
     createTodo: "Create To-Do",
+    reviewQueueTitle: "Notes to revisit",
+    reviewQueueDesc: "Notes you haven't touched in a while but that are well connected. Click one to open it.",
+    reviewQueueNotOpened: (days: number, links: number) =>
+      `Not opened for ${days} days · ${links} links`,
+    reviewQueueNotModified: (days: number, links: number) =>
+      `Not modified for ${days} days · ${links} links`,
     chatHistory: "Chat history",
     noSessions: "No saved sessions.",
     deleteSession: "Delete",
@@ -139,6 +145,12 @@ ${content}`,
     totalIndexedShort: (n: number) => `총 ${n}개 인덱싱됨`,
     failHeader: (n: number) => `⚠️ ${n}개 파일 인덱싱 실패`,
     createTodo: "To-Do 생성",
+    reviewQueueTitle: "다시 볼 노트",
+    reviewQueueDesc: "오래 열지 않았지만 연결이 많은 노트입니다. 클릭하면 열립니다.",
+    reviewQueueNotOpened: (days: number, links: number) =>
+      `${days}일간 열지 않음 · 링크 ${links}개`,
+    reviewQueueNotModified: (days: number, links: number) =>
+      `${days}일간 수정 없음 · 링크 ${links}개`,
     chatHistory: "지난 대화",
     noSessions: "저장된 대화가 없습니다.",
     deleteSession: "삭제",
@@ -242,6 +254,12 @@ ${content}`,
     totalIndexedShort: (n: number) => `合計${n}件インデックス済み`,
     failHeader: (n: number) => `⚠️ ${n}件のファイルのインデックスに失敗`,
     createTodo: "To-Do作成",
+    reviewQueueTitle: "再訪するノート",
+    reviewQueueDesc: "長く開いていないものの、リンクが多いノートです。クリックすると開きます。",
+    reviewQueueNotOpened: (days: number, links: number) =>
+      `${days}日間開いていません · リンク${links}件`,
+    reviewQueueNotModified: (days: number, links: number) =>
+      `${days}日間更新されていません · リンク${links}件`,
     chatHistory: "チャット履歴",
     noSessions: "保存されたセッションがありません。",
     deleteSession: "削除",

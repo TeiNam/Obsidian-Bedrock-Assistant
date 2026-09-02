@@ -154,12 +154,22 @@ describe("selectReviewQueue: 큐 선정", () => {
     expect(queue.map((q) => q.path)).toEqual(["a.md", "b.md"]);
   });
 
-  it("선정 이유를 함께 반환한다", () => {
+  it("선정 이유의 원자료를 함께 반환한다", () => {
     // 이유 없이 노트만 던지면 사용자가 왜 봐야 하는지 모른다.
+    // 문구가 아니라 원자료를 싣는다 — 표시는 로케일을 아는 뷰가 조립한다.
     const entries = [entry({ path: "n.md", backlinks: ["a.md", "b.md"] })];
     const queue = selectReviewQueue(entries, {}, NOW);
-    expect(queue[0].reason).toBeTruthy();
-    expect(queue[0].reason).toContain("2");
+    expect(queue[0].links).toBe(2);
+    expect(queue[0].elapsedDays).toBeGreaterThanOrEqual(0);
+    // 접근 기록을 빈 객체로 넘겼으므로 파일 수정 시각이 기준이다.
+    expect(queue[0].basis).toBe("modified");
+  });
+
+  it("접근 기록이 있으면 기준이 마지막 열람이 된다", () => {
+    const entries = [entry({ path: "n.md", backlinks: ["a.md"] })];
+    const queue = selectReviewQueue(entries, { "n.md": NOW - 40 * 24 * 60 * 60 * 1000 }, NOW);
+    expect(queue[0].basis).toBe("opened");
+    expect(queue[0].elapsedDays).toBe(40);
   });
 
   it("빈 인덱스는 빈 큐를 반환한다", () => {

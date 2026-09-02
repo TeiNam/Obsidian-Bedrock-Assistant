@@ -93,7 +93,7 @@ function makeFolder(path: string): any {
   return { path, name, children: [] };
 }
 
-/** 가짜 Vault: getAbstractFileByPath/createFolder/create/read/modify를 spy로 제공한다. */
+/** 가짜 Vault: getAbstractFileByPath/createFolder/create/read/modify/process를 spy로 제공한다. */
 function makeVault(initial: any[] = []) {
   const map = new Map<string, any>();
   for (const e of initial) map.set(e.path, e);
@@ -113,6 +113,13 @@ function makeVault(initial: any[] = []) {
     read: vi.fn(async (f: any) => f.content ?? ""),
     modify: vi.fn(async (f: any, content: string) => {
       f.content = content;
+    }),
+    // 실제 process는 원자적이지만, 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 그대로 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: any, fn: (data: string) => string) => {
+      const next = fn(f.content ?? "");
+      f.content = next;
+      return next;
     }),
     _map: map,
   };
@@ -223,13 +230,27 @@ describe("appendActivityLog — 로그 append(기존 로그 불변) (Req 4.5)", 
     await appendActivityLog(makeApp(vault), "Second Brain", "새 동작");
 
     expect(vault.create).not.toHaveBeenCalled();
-    expect(vault.modify).toHaveBeenCalledTimes(1);
-    const written = vault.modify.mock.calls[0][1] as string;
+    // read→modify 왕복이 아니라 원자적 process를 써야 한다. 겹친 append가 서로를
+    // 덮어쓰는 것을 막는 유일한 장치이므로, 어느 API를 썼는지까지 못박는다.
+    expect(vault.process).toHaveBeenCalledTimes(1);
+    expect(vault.modify).not.toHaveBeenCalled();
+    const written = logFile.content as string;
 
     // 기존 로그 라인은 그대로 포함되고, 새 라인이 그 뒤에 추가된다
     expect(written.startsWith(prior)).toBe(true);
     expect(written).toContain("새 동작");
     // 기존 메시지가 손상되지 않았다
     expect(written).toContain("이전 동작");
+  });
+
+  it("줄바꿈으로 끝나지 않는 기존 로그에도 줄을 분리해 덧붙인다", async () => {
+    // 구분자 계산이 process 콜백 안으로 옮겨졌으므로 경계 조건을 남겨둔다.
+    const logFile = makeFile("Second Brain/log.md", "- 개행 없는 마지막 줄");
+    const vault = makeVault([logFile]);
+
+    await appendActivityLog(makeApp(vault), "Second Brain", "새 동작");
+
+    expect(logFile.content).toContain("- 개행 없는 마지막 줄\n");
+    expect(logFile.content).toContain("새 동작");
   });
 });
