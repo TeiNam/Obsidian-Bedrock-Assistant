@@ -134,21 +134,30 @@ export function getBranding(aiBackend: GeminiAssistantSettings["aiBackend"]): Sw
 // → 기존 import 코드가 깨지지 않음
 
 export let BRANDING: BrandingConfig = {
-  /** 플러그인 ID (폴더명, MCP clientInfo 등) — 고정값 */
-  pluginId: "ai-assistant",
+  /**
+   * 플러그인 ID (폴더명, MCP clientInfo 등) — 고정값.
+   * 플러그인 매니페스트의 `id`와 반드시 같아야 한다. 이 값으로 플러그인 폴더
+   * 경로(`{configDir}/plugins/{pluginId}/`)를 계산하기 때문이다.
+   */
+  pluginId: "agent-llms",
 
   /** UI에 표시되는 플러그인 이름 (백엔드에 따라 updateBranding으로 전환됨) */
   displayName: "Bedrock Assistant",
 
   /** 옵시디언 뷰 타입 식별자 — 고정값 */
-  viewType: "ai-assistant-view",
+  viewType: "agent-llms-view",
 
-  /** 볼트 내 데이터 파일 경로 — 고정값 */
+  /**
+   * 볼트 내 데이터 파일 경로 — 고정값.
+   * `.{pluginId}{접미사}` 규칙을 지켜야 한다. migration.ts의
+   * legacyDataFileNames가 같은 규칙으로 마이그레이션 대상 경로를 만들기 때문에,
+   * 여기서 규칙을 깨면 레거시 데이터가 엉뚱한 곳으로 복사된다.
+   */
   files: {
-    index: ".ai-assistant-index.json",
-    chatHistory: ".ai-assistant-chat.json",
-    sessions: ".ai-assistant-sessions.json",
-    sessionsBackup: ".ai-assistant-sessions.json.bak",
+    index: ".agent-llms-index.json",
+    chatHistory: ".agent-llms-chat.json",
+    sessions: ".agent-llms-sessions.json",
+    sessionsBackup: ".agent-llms-sessions.json.bak",
   },
 
   /** 아이콘 설정 */

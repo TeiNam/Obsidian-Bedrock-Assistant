@@ -58,11 +58,15 @@ const CHAT_SESSIONS_BACKUP_FILE = BRANDING.files.sessionsBackup;
 const MCP_CONFIG_FILE = "mcp.json";
 
 /**
- * 구 플러그인 ID 목록. pluginId가 ai-assistant로 바뀌기 전의 값들이다.
- * 배열 순서가 우선순위다 — 같은 대상 파일에 둘 다 후보로 걸리면 앞선 것을 택한다.
- * bedrock-assistant가 main 계보의 정본이므로 앞에 둔다.
+ * 구 플러그인 ID 목록. pluginId가 agent-llms로 바뀌기 전의 값들이다.
+ * 배열 순서가 우선순위다 — 같은 대상 파일에 둘 이상 후보로 걸리면 앞선 것을 택한다.
+ * 최근 계보가 가장 최신 데이터를 갖고 있으므로 시간 역순으로 둔다.
+ *
+ * ai-assistant는 0.4.0에서 폐기했다. 커뮤니티 플러그인 레지스트리에
+ * 같은 ID(qgrail/obsidian-ai-assistant)가 이미 등록돼 있어, 옵시디언 업데이터가
+ * 이 플러그인 폴더를 그쪽 릴리스로 덮어써버렸다.
  */
-const LEGACY_PLUGIN_IDS = ["bedrock-assistant", "assistant-kiro"] as const;
+const LEGACY_PLUGIN_IDS = ["ai-assistant", "bedrock-assistant", "assistant-kiro"] as const;
 
 // 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa + time).
 // 설정 파일이 없을 때 편집창에 미리 채워주는 용도이며, 저장 전까지는 자동 연결되지 않는다.

@@ -1,6 +1,6 @@
 # Bedrock API Key Setup Guide
 
-The AI Assistant's Bedrock backend authenticates with a single **Bedrock API key (bearer token)**. Enter it once per device, and you are done — no re-login.
+The Agent LLMs's Bedrock backend authenticates with a single **Bedrock API key (bearer token)**. Enter it once per device, and you are done — no re-login.
 
 ## Why API Keys Only
 
@@ -67,7 +67,7 @@ Keys are shown only once, immediately after issuance. Copy it then.
 
 ## 3. Configure the Plugin
 
-1. Open Settings → **AI Assistant**
+1. Open Settings → **Agent LLMs**
 2. Set **AI Backend** to `Bedrock`
 3. Paste the issued key into **Bedrock API Key** (the eye icon reveals the value)
 4. Enter the region where you enabled model access in **AWS Region** (e.g., `ap-northeast-2`)
@@ -95,7 +95,7 @@ You can use the same key on multiple devices, or issue a separate key per device
 
 ### The Vault Index Is Shared Across Devices
 
-When you sync your vault, `.ai-assistant-index.json` moves with it. It contains embedding vectors and can reach tens of MB.
+When you sync your vault, `.agent-llms-index.json` moves with it. It contains embedding vectors and can reach tens of MB.
 
 **If the embedding model is the same,** search works immediately on a new device without re-indexing. The plugin decides using an embedding signature of the form `{provider}:{model ID}` (e.g., `bedrock:amazon.titan-embed-text-v2:0`).
 

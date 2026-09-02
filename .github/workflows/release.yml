@@ -57,7 +57,7 @@ jobs:
         id: edition
         run: |
           BRANCH="${{ steps.branch.outputs.ref }}"
-          PREFIX="ai-assistant"
+          PREFIX="agent-llms"
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "에디션: $PREFIX (브랜치: $BRANCH)"

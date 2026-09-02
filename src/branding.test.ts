@@ -429,3 +429,44 @@ describe("아이콘 SVG의 id 속성", () => {
     }
   });
 });
+
+// ============================================
+// 플러그인 ID 결합 검증
+// ============================================
+/**
+ * pluginId는 세 곳에 물려 있고, 어긋나면 조용히 깨진다.
+ *
+ *  1. 매니페스트의 `id` — 옵시디언이 만드는 플러그인 폴더명이다. 어긋나면
+ *     main.ts의 MCP 설정 경로와 settings-tab.ts의 README 경로가 없는 폴더를
+ *     가리킨다.
+ *  2. `files` 4종 — migration.ts의 legacyDataFileNames가 `.{id}{접미사}` 규칙으로
+ *     마이그레이션 대상 경로를 만든다. 규칙이 깨지면 구 버전 데이터가 앱이
+ *     읽지 않는 경로로 복사된다.
+ *  3. safe-storage.ts의 자격증명 파일명 — planCredentialMigration이
+ *     `{id}-credentials.json` 규칙으로 대상 파일명을 만든다. 어긋나면
+ *     사용자가 API 키를 다시 입력해야 한다.
+ *
+ * ID를 바꿀 때 세 곳을 함께 고치지 않으면 여기서 걸린다.
+ */
+describe("pluginId 결합 검증", () => {
+  it("pluginId가 플러그인 매니페스트의 id와 같다", () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(__dirname, "..", "manifest.json"), "utf-8")
+    );
+
+    expect(BRANDING.pluginId).toBe(manifest.id);
+  });
+
+  it("볼트 데이터 파일명이 `.{pluginId}` 접두어 규칙을 따른다", () => {
+    for (const path of Object.values(BRANDING.files)) {
+      expect(path.startsWith(`.${BRANDING.pluginId}`)).toBe(true);
+    }
+  });
+
+  it("자격증명 파일명이 `{pluginId}-credentials.json` 규칙을 따른다", () => {
+    // safe-storage.ts는 CREDENTIALS_FILE을 내보내지 않으므로 소스로 확인한다.
+    const source = readFileSync(resolve(__dirname, "safe-storage.ts"), "utf-8");
+
+    expect(source).toContain(`"${BRANDING.pluginId}-credentials.json"`);
+  });
+});

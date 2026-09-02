@@ -1,4 +1,4 @@
-# AI Assistant
+# Agent LLMs
 
 [English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
@@ -51,24 +51,24 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 ### BRAT (권장)
 
 1. [BRAT](https://github.com/TfTHacker/obsidian42-brat) 플러그인 설치
-2. BRAT 설정에서 레포지토리 URL 추가: `https://github.com/teinam/obsidian-ai-assistant`
+2. BRAT 설정에서 레포지토리 URL 추가: `https://github.com/teinam/obsidian-agent-llms`
 3. 플러그인 활성화
 
 ### 수동 설치
 
 1. 최신 [Release](../../releases)에서 `main.js`, `styles.css`, `manifest.json` 다운로드
-2. 볼트의 `.obsidian/plugins/ai-assistant/` 폴더에 복사
+2. 볼트의 `.obsidian/plugins/agent-llms/` 폴더에 복사
 3. 설정 → 커뮤니티 플러그인에서 활성화
 
-### 0.2.x에서 업그레이드
+### 이전 버전에서 업그레이드
 
-0.3.0에서 플러그인 ID가 `bedrock-assistant`에서 `ai-assistant`로 바뀌었습니다.
+0.4.0에서 플러그인 ID가 `ai-assistant`에서 `agent-llms`로 바뀌었습니다. 구 ID는 옵시디언 커뮤니티 플러그인 목록에 등록된 다른 플러그인(`qgrail/obsidian-ai-assistant`)이 이미 쓰고 있어서, 옵시디언 업데이터가 이 플러그인 폴더를 그쪽으로 착각해 덮어써버렸습니다. 새 ID는 등록된 곳이 없습니다.
 
 - **새 플러그인을 켜기 전에 기존 플러그인을 먼저 비활성화하세요.** 둘이 동시에 켜져 있으면 기존 플러그인이 인덱스를 저장하는 도중 새 플러그인이 같은 파일을 읽어 불완전한 복사가 생길 수 있습니다(재인덱싱으로 복구되지만 시간이 걸립니다).
-- **플러그인 폴더가 달라지므로 재설치가 필요합니다.** BRAT을 쓰신다면 기존 항목을 제거하고 다시 추가하세요.
+- **플러그인 폴더가 달라지므로 재설치가 필요합니다.** BRAT을 쓰신다면 기존 항목을 제거하고 다시 추가하세요. 마이그레이션 알림이 뜨기 전까지는 구 폴더를 지우지 마세요 — 설정을 그 폴더에서 복사해 옵니다.
 - **설정(`data.json`)**, 볼트 인덱스, 채팅 기록, 세션, MCP 설정, 자격증명은 **첫 실행 시 자동으로 복사됩니다**. 백엔드 선택, 모델, 리전, Second Brain 설정, 커스텀 스킬이 모두 그대로 유지됩니다. 구 파일은 지우지 않고 남겨두므로 이전 버전으로 되돌려도 그대로 동작합니다.
 - **사이드바를 한 번 다시 열어야 합니다.** 옵시디언이 워크스페이스 레이아웃에 뷰 식별자를 기록하는데, 이 값은 플러그인이 대신 옮길 수 없습니다.
-- 복사가 끝나면 알림이 뜹니다. 구 데이터 파일(`.bedrock-assistant-*.json`)은 더 이상 쓰이지 않으니 볼트 용량이 신경 쓰이면 수동으로 지워도 됩니다. 인덱스 파일은 임베딩 때문에 수십 MB일 수 있습니다.
+- 복사가 끝나면 알림이 뜹니다. **그 뒤에 `.obsidian/plugins/ai-assistant/` 폴더를 삭제하세요** — 덮어쓰기 업데이트가 이미 실행됐다면 그 폴더에는 이 플러그인이 아니라 남의 플러그인 코드가 들어 있습니다. 구 데이터 파일(`.ai-assistant-*.json`, `.bedrock-assistant-*.json`)도 더 이상 쓰이지 않으니 볼트 용량이 신경 쓰이면 수동으로 지워도 됩니다. 인덱스 파일은 임베딩 때문에 수십 MB일 수 있습니다.
 
 `kiro-edition`(Assistant Kiro)을 쓰셨다면 같은 절차가 적용됩니다. 이 에디션은 0.3.0에서 main으로 통합되었고, `.assistant-kiro-*.json` 데이터도 자동으로 복사됩니다.
 
@@ -76,7 +76,7 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 
 ### 1. AI 백엔드 선택
 
-설정 → AI Assistant → **AI 백엔드**:
+설정 → Agent LLMs → **AI 백엔드**:
 
 - **Bedrock** — AWS Bedrock(Claude 등 Bedrock 호스팅 모델)
 - **Gemini** — Google Gemini. [Google AI Studio](https://aistudio.google.com/)에서 API 키 필요
@@ -131,7 +131,7 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 
 ### 추론 강도
 
-설정 → AI Assistant → **생성 설정** → **추론 강도**에서 모델의 추론 깊이를 설정합니다.
+설정 → Agent LLMs → **생성 설정** → **추론 강도**에서 모델의 추론 깊이를 설정합니다.
 
 허용 값은 선택한 프로바이더와 모델에 따라 다릅니다(예: Bedrock의 Anthropic 모델은 `xhigh`와 `max` 허용, Gemini Pro 모델은 `low`와 `high`만 허용). 설정은 추론 강도를 지원하는 모델에만 표시되며, 지원하지 않는 모델로 요청 시 프로바이더의 기본 샘플링 동작으로 폴백합니다. 저장된 값이 허용되지 않는 모델로 전환하면 가장 가까운 허용 레벨로 클램프됩니다.
 
@@ -167,7 +167,7 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 
 ### P.A.R.A 정리
 
-1. 설정 → AI Assistant → **볼트 관리** 섹션으로 이동
+1. 설정 → Agent LLMs → **볼트 관리** 섹션으로 이동
 2. 템플릿 폴더 설정 바로 아래의 **P.A.R.A 설정** 버튼 클릭
 3. 플러그인이 네 개 루트 폴더 생성: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
 4. 기존 노트가 있으면 현재 설정된 AI 모델이 각 노트를 적절한 폴더로 분류
