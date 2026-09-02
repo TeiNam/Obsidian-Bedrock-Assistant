@@ -1,5 +1,6 @@
 import type { GeminiAssistantSettings } from "./types";
 import { buildSkillsPrompt } from "./skills";
+import { buildDateStr } from "./planner-paths";
 
 /**
  * 항상 사용되는 내장 기본 시스템 프롬프트 (Obsidian PKM 보정본).
@@ -22,12 +23,53 @@ export const LEGACY_DEFAULT_SYSTEM_PROMPTS: string[] = [
 ];
 
 /**
+ * 현재 시각을 알려주는 블록을 만든다.
+ *
+ * 모델은 자기가 언제 실행되는지 모른다. 학습 시점을 "오늘"로 착각해 "어제 노트",
+ * "이번 주 금요일" 같은 상대 표현을 엉뚱한 날짜로 풀어버린다. time MCP 서버를
+ * 붙이는 것이 흔한 해법이지만, 이 플러그인은 사용자 기기에서 도니 로컬 시계가
+ * 곧 사용자의 시계다 — 외부 프로세스가 필요 없다.
+ *
+ * 요일과 타임존까지 넣는 이유는 날짜만으로는 상대 표현을 풀 수 없기 때문이다.
+ * 날짜 포맷은 planner-paths의 buildDateStr을 그대로 쓴다 — To-Do·회고 노트 경로가
+ * 같은 YYYY-MM-DD를 쓰므로, 모델이 경로 포맷을 추측하지 않게 된다.
+ *
+ * 로케일을 "en-US"로 고정하고 toTimeString을 쓰는 것은 의도된 선택이다. 사용자가
+ * 읽을 문구가 아니라 모델이 파싱할 문구이므로, 기기 로케일에 따라 표기가 흔들리지
+ * 않는 쪽이 낫다.
+ */
+function buildDateTimeContext(now: Date): string {
+  const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
+  // toTimeString() → "08:45:12 GMT+0900 (...)". 앞 5자가 HH:MM이다.
+  const time = now.toTimeString().slice(0, 5);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  return [
+    "\n\n## Current date and time",
+    `${buildDateStr(now)} (${weekday}) ${time} — ${timeZone}`,
+    "This is the user's local time, refreshed on every message. Resolve relative dates" +
+      ' ("today", "yesterday", "this Friday", "last month") against it instead of guessing.' +
+      " To-do and retrospective note paths use the same YYYY-MM-DD format shown above.",
+  ].join("\n");
+}
+
+/**
  * 최종 시스템 프롬프트를 구성한다.
  *  - 내장 기본 프롬프트(BASE_SYSTEM_PROMPT)는 항상 포함된다.
  *  - 설정의 systemPrompt 값이 비어 있지 않으면 "추가 지침"으로 뒤에 덧붙인다.
- *  - 활성화된 Obsidian 스킬 지식(buildSkillsPrompt)을 마지막에 덧붙인다(기존 동작 유지).
+ *  - 활성화된 Obsidian 스킬 지식(buildSkillsPrompt)을 덧붙인다(기존 동작 유지).
+ *  - 현재 시각 블록을 맨 끝에 덧붙인다.
+ *
+ * 시각 블록이 맨 끝인 이유: 앞의 세 조각은 설정이 바뀔 때만 변하는데 시각은 매
+ * 요청마다 변한다. 앞에 두면 프롬프트 캐싱의 안정 접두어가 매번 깨진다.
+ *
+ * @param now 현재 시각. 테스트에서 고정하기 위한 파라미터이며, 실제 호출은 생략한다.
+ *   기본값을 호출 시점에 평가하므로 세션이 자정을 넘겨도 값이 굳지 않는다.
  */
-export function buildSystemPrompt(settings: GeminiAssistantSettings): string {
+export function buildSystemPrompt(
+  settings: GeminiAssistantSettings,
+  now: Date = new Date()
+): string {
   const custom = (settings.systemPrompt ?? "").trim();
   const skills = buildSkillsPrompt(settings.enabledSkills || [], settings.customSkills || []);
 
@@ -38,5 +80,6 @@ export function buildSystemPrompt(settings: GeminiAssistantSettings): string {
   }
   // buildSkillsPrompt는 활성 스킬이 없으면 ""를 반환하므로 그대로 이어붙인다.
   prompt += skills;
+  prompt += buildDateTimeContext(now);
   return prompt;
 }
