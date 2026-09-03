@@ -17,7 +17,11 @@ import {
   attachmentKindOf,
   backendsSupportingFormat,
 } from "./provider-utils";
-import { extractCitations, findUnresolvedCitations } from "./citation-check";
+import {
+  extractCitations,
+  findUnresolvedCitations,
+  buildHeadingIndex,
+} from "./citation-check";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
@@ -1816,16 +1820,30 @@ export class ChatView extends ItemView {
       const citations = extractCitations(text);
       if (citations.length === 0) return;
 
-      const paths = this.plugin.indexer.getEntries().map((e) => e.path);
-      const unresolved = findUnresolvedCitations(citations, paths);
+      const entries = this.plugin.indexer.getEntries();
+      const paths = entries.map((e) => e.path);
+
+      // 스키마 v2 청크의 헤딩으로 앵커까지 검증한다. v1 인덱스로 색인된 노트는 헤딩
+      // 집합이 비어 판정 불가가 되고, 그런 노트의 앵커는 경고하지 않는다.
+      const headings = buildHeadingIndex(
+        entries.map((e) => [
+          e.path,
+          (e.chunks ?? [])
+            .map((c) => c.heading)
+            .filter((h): h is string => typeof h === "string"),
+        ])
+      );
+
+      const unresolved = findUnresolvedCitations(citations, paths, headings);
       if (unresolved.length === 0) return;
 
       const box = container.createDiv({ cls: "ba-citation-warning" });
       const icon = box.createDiv({ cls: "ba-citation-warning-icon" });
       setIcon(icon, "alert-triangle");
-      box.createSpan({
-        text: this.t.citationsUnresolved(unresolved.map((c) => c.target).join(", ")),
-      });
+      // 앵커가 있으면 함께 보여준다 — "노트는 있는데 그 절이 없다"를 구분해야
+      // 사용자가 무엇을 확인할지 안다.
+      const labels = unresolved.map((c) => (c.anchor ? `${c.target}#${c.anchor}` : c.target));
+      box.createSpan({ text: this.t.citationsUnresolved(labels.join(", ")) });
     } catch (e) {
       console.error("인용 검증 실패:", e);
     }

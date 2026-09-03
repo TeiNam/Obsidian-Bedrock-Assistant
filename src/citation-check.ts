@@ -14,6 +14,13 @@ export interface Citation {
   raw: string;
   /** 대조에 쓰는 대상 — 헤딩(#)과 별칭(|)을 떼어낸 경로 또는 노트 이름. */
   target: string;
+  /**
+   * 인용에 붙은 헤딩 앵커(`[[노트#헤딩]]`의 헤딩). 없으면 생략된다.
+   *
+   * 인덱스에 헤딩 정보가 있으면 이것까지 검증한다 — 존재하는 노트의 존재하지 않는
+   * 절을 인용하는 것도 사용자를 헛걸음시키는 실패다.
+   */
+  anchor?: string;
 }
 
 /**
@@ -51,12 +58,24 @@ export function stripCode(markdown: string): string {
   return lines.join("\n").replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, blank);
 }
 
-/** `[[target|alias]]`, `[[target#heading]]` → target. 앞뒤 공백 제거. */
-function cleanTarget(inner: string): string {
-  // 별칭(|)이 먼저, 그 다음 헤딩(#)/블록(^) 앵커를 떼어낸다.
+/**
+ * `[[target|alias]]`, `[[target#heading]]` → { target, anchor }.
+ *
+ * 블록 참조(`^blockId`)는 앵커로 보지 않는다 — 블록 ID는 인덱스에 없어 검증할 수 없고,
+ * 검증할 수 없는 것을 경고하면 거짓 경고가 된다.
+ */
+function splitTarget(inner: string): { target: string; anchor?: string } {
+  // 별칭(|)을 먼저 떼어낸다.
   const noAlias = inner.split("|")[0];
-  const noAnchor = noAlias.split("#")[0].split("^")[0];
-  return noAnchor.trim();
+  // 블록 참조가 있으면 그 앞까지만 본다.
+  const noBlock = noAlias.split("^")[0];
+
+  const hashAt = noBlock.indexOf("#");
+  if (hashAt === -1) return { target: noBlock.trim() };
+
+  const target = noBlock.slice(0, hashAt).trim();
+  const anchor = noBlock.slice(hashAt + 1).trim();
+  return anchor === "" ? { target } : { target, anchor };
 }
 
 /** URL로 보이는 대상인지. 외부 링크는 볼트 인용이 아니다. */
@@ -84,22 +103,24 @@ export function extractCitations(markdown: string): Citation[] {
   const seen = new Set<string>();
   const out: Citation[] = [];
 
-  const add = (raw: string, target: string): void => {
+  const add = (raw: string, parsed: { target: string; anchor?: string }): void => {
+    const { target, anchor } = parsed;
     if (target === "" || looksLikeUrl(target)) return;
-    const key = target.toLowerCase();
+    // 앵커가 다르면 다른 인용으로 센다 — 같은 노트의 다른 절을 각각 검증해야 한다.
+    const key = `${target.toLowerCase()}#${(anchor ?? "").toLowerCase()}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ raw, target });
+    out.push({ raw, target, ...(anchor !== undefined ? { anchor } : {}) });
   };
 
   // 1) 위키링크
   for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
-    add(m[0], cleanTarget(m[1]));
+    add(m[0], splitTarget(m[1]));
   }
 
   // 2) 마크다운 링크 중 .md 대상
   for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s]+\.md)(?:\s[^)]*)?\)/gi)) {
-    add(m[0], cleanTarget(decodeURIComponent(m[1])));
+    add(m[0], splitTarget(decodeURIComponent(m[1])));
   }
 
   return out;
@@ -136,22 +157,90 @@ export function buildCitationIndex(knownPaths: Iterable<string>): {
 }
 
 /**
+ * 인용 대상이 실재하는 노트를 가리키는지 판정한다.
+ * 전체 경로 / 확장자 뗀 경로 / basename 세 가지로 찾아본다.
+ */
+function resolvesToNote(
+  target: string,
+  index: { paths: Set<string>; basenames: Set<string> }
+): boolean {
+  if (index.paths.has(target.toLowerCase())) return true;
+  return index.basenames.has(basenameNoExt(target).toLowerCase());
+}
+
+/**
+ * 인용의 헤딩 앵커가 그 노트에 실재하는지 판정한다.
+ *
+ * 헤딩 정보가 없는 노트(스키마 v1 인덱스, 헤딩 없는 노트)는 통과시킨다 — 확인할 수
+ * 없는 것을 "없다"고 경고하면 거짓 경고가 되고, 거짓이 섞이면 진짜 경고까지 무시된다.
+ */
+function resolvesAnchor(
+  citation: Citation,
+  headingsByNote: Map<string, Set<string>>
+): boolean {
+  if (citation.anchor === undefined) return true;
+  if (headingsByNote.size === 0) return true;
+
+  // 인용 대상을 전체 경로와 basename 두 가지로 찾아본다.
+  const keys = [citation.target.toLowerCase(), basenameNoExt(citation.target).toLowerCase()];
+  for (const key of keys) {
+    const headings = headingsByNote.get(key);
+    if (headings === undefined) continue;
+    // 헤딩을 하나도 모르는 노트는 판정 불가 → 통과.
+    if (headings.size === 0) return true;
+    if (headings.has(citation.anchor.toLowerCase())) return true;
+    return false;
+  }
+  // 헤딩 정보가 없는 노트다 → 판정 불가 → 통과.
+  return true;
+}
+
+/**
+ * 노트별 헤딩 집합 조회표를 만든다. 전체 경로와 basename 두 키로 모두 찾을 수 있다.
+ *
+ * @param entries `[노트 경로, 그 노트의 헤딩 목록]` 쌍. 스키마 v2 인덱스의 청크에서 모은다.
+ */
+export function buildHeadingIndex(
+  entries: Iterable<[string, Iterable<string>]>
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+
+  for (const [path, headings] of entries) {
+    const set = new Set<string>();
+    for (const h of headings) {
+      const normalized = h.trim().toLowerCase();
+      if (normalized !== "") set.add(normalized);
+    }
+    for (const key of [path.toLowerCase(), basenameNoExt(path).toLowerCase()]) {
+      const existing = out.get(key);
+      if (existing) for (const h of set) existing.add(h);
+      else out.set(key, new Set(set));
+    }
+  }
+
+  return out;
+}
+
+/**
  * 볼트에서 찾을 수 없는 인용만 골라낸다.
  *
  * 인덱스가 비어 있으면(인덱싱 전) 빈 배열을 반환한다. 아직 색인하지 않은 것을
  * "없는 노트"라고 경고하면 전부 거짓 경고가 된다.
+ *
+ * @param headingsByNote 노트별 헤딩 집합(buildHeadingIndex 결과). 주면 `[[노트#헤딩]]`의
+ *   앵커까지 검증한다 — 존재하는 노트의 존재하지 않는 절을 인용하는 것도 사용자를
+ *   헛걸음시키는 실패다. 생략하면 노트 존재만 본다.
  */
 export function findUnresolvedCitations(
   citations: Citation[],
-  knownPaths: Iterable<string>
+  knownPaths: Iterable<string>,
+  headingsByNote: Map<string, Set<string>> = new Map()
 ): Citation[] {
   const index = buildCitationIndex(knownPaths);
   if (index.paths.size === 0) return [];
 
   return citations.filter((c) => {
-    const t = c.target.toLowerCase();
-    if (index.paths.has(t)) return false;
-    if (index.basenames.has(basenameNoExt(c.target).toLowerCase())) return false;
-    return true;
+    if (!resolvesToNote(c.target, index)) return true;
+    return !resolvesAnchor(c, headingsByNote);
   });
 }

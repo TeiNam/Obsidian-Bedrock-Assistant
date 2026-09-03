@@ -1,7 +1,11 @@
 import { App, TFile, Notice } from "obsidian";
 import type { IAiClient, VaultIndexEntry, IndexResult, IndexFailure, IndexChunk, SerializedIndex } from "./types";
 import { CURRENT_INDEX_SCHEMA_VERSION } from "./types";
-import { splitIntoChunks, normalizeChunkConfig, type ChunkConfig } from "./graph-rag/chunker";
+import {
+  splitIntoChunkSlices,
+  normalizeChunkConfig,
+  type ChunkConfig,
+} from "./graph-rag/chunker";
 import {
   extractMetadata,
   stripFrontmatter,
@@ -42,6 +46,13 @@ export interface GraphRagSearchItem {
   seedPath: string | null;
   /** 연결된 시드의 제목. 이웃 결과의 표현용으로 인덱스 조회로 채운다 (Req 7.4) */
   seedTitle?: string | null;
+  /**
+   * 질의와 가장 잘 맞은 청크가 속한 헤딩. 스키마 v1 인덱스나 도입부 청크는 null이다.
+   *
+   * 모델이 `[[노트#헤딩]]`으로 인용할 수 있게 하려고 싣는다. 노트 단위 인용은 긴
+   * 노트에서 "어딘가에 있다"까지만 말해주므로 사용자가 근거를 다시 찾아야 한다.
+   */
+  heading?: string | null;
 }
 
 /** Graph_RAG_Search 반환 결과. */
@@ -347,12 +358,12 @@ export class VaultIndexer {
       const excerpt = body.slice(0, EXCERPT_MAX_CHARS).trim();
 
       // 본문을 청크로 분할 (무손실 커버리지 보장, Req 3.7)
-      const chunkTexts = splitIntoChunks(body, this.chunkConfig);
+      const slices = splitIntoChunkSlices(body, this.chunkConfig);
 
       // 4) 청크별 임베딩 생성. 단일 청크 임베딩 실패는 격리한다 (Req 3.6)
       const chunks: IndexChunk[] = [];
-      for (let i = 0; i < chunkTexts.length; i++) {
-        const text = chunkTexts[i];
+      for (let i = 0; i < slices.length; i++) {
+        const { text, charStart, heading } = slices[i];
         let embedding: number[] = [];
         let embedFailed = false;
         if (this.useEmbeddings) {
@@ -368,7 +379,9 @@ export class VaultIndexer {
             );
           }
         }
-        const chunk: IndexChunk = { index: i, text, embedding };
+        const chunk: IndexChunk = { index: i, text, embedding, charStart };
+        // 헤딩이 없는 청크(문서 도입부)는 필드를 생략해 직렬화 크기를 늘리지 않는다.
+        if (heading !== null) chunk.heading = heading;
         if (embedFailed) chunk.embedFailed = true;
         chunks.push(chunk);
       }
@@ -656,6 +669,8 @@ export class VaultIndexer {
         seedPath: d?.seedPath ?? null,
         // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
         seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
+        // 반환할 항목에 대해서만 최적 청크를 다시 찾아 헤딩을 붙인다.
+        heading: this.bestChunkMatch(queryEmbedding, f.path)?.heading ?? null,
       };
     });
 
@@ -672,16 +687,35 @@ export class VaultIndexer {
    * 그래프 이웃의 관련성을 결합 점수에 반영하기 위해 사용한다.
    */
   private bestChunkSimilarity(queryEmbedding: number[], path: string): number | null {
+    return this.bestChunkMatch(queryEmbedding, path)?.score ?? null;
+  }
+
+  /**
+   * 질의와 가장 잘 맞는 청크의 유사도와 소속 헤딩을 함께 찾는다.
+   *
+   * 반환 대상은 limit개(최대 100)뿐이라 이 재계산은 인덱스 전체 스캔이 아니다 —
+   * NoteVectorScore에 청크 인덱스를 추가해 검색 경로 전체를 바꾸는 것보다 좁은 변경이다.
+   */
+  private bestChunkMatch(
+    queryEmbedding: number[],
+    path: string
+  ): { score: number; heading: string | null } | null {
     const entry = this.index.get(path);
     if (!entry) return null;
 
-    let best: number | null = null;
+    let best: { score: number; heading: string | null } | null = null;
     for (const chunk of entry.chunks ?? []) {
       const sim = compareVectors(queryEmbedding, chunk.embedding);
-      if (sim !== null && (best === null || sim > best)) best = sim;
+      if (sim === null) continue;
+      if (best === null || sim > best.score) {
+        best = { score: sim, heading: chunk.heading ?? null };
+      }
     }
-    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다.
-    if (best === null) best = compareVectors(queryEmbedding, entry.embedding);
+    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다(헤딩 정보는 없다).
+    if (best === null) {
+      const legacy = compareVectors(queryEmbedding, entry.embedding);
+      if (legacy !== null) best = { score: legacy, heading: null };
+    }
     return best;
   }
 

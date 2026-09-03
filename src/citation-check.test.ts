@@ -4,6 +4,7 @@ import {
   extractCitations,
   buildCitationIndex,
   findUnresolvedCitations,
+  buildHeadingIndex,
 } from "./citation-check";
 
 const VAULT = ["Meetings/2026-09-01 회의록.md", "Projects/Agent LLMs.md", "daily/2026-09-03.md"];
@@ -78,8 +79,24 @@ describe("extractCitations", () => {
     expect(targets("[문서](https://example.com/a.md) 와 [[https://x.com]]")).toEqual([]);
   });
 
-  it("같은 대상은 한 번만 반환한다", () => {
-    expect(targets("[[노트A]] 그리고 [[노트A|별칭]] 그리고 [[노트A#섹션]]")).toEqual(["노트A"]);
+  it("같은 대상·같은 앵커는 한 번만 반환한다", () => {
+    expect(targets("[[노트A]] 그리고 [[노트A|별칭]] 그리고 [[노트A]]")).toEqual(["노트A"]);
+  });
+
+  it("앵커가 다르면 별개 인용으로 센다", () => {
+    // 같은 노트의 다른 절을 각각 검증해야 하므로 합쳐서는 안 된다.
+    const cites = extractCitations("[[노트A#가]] 와 [[노트A#나]] 와 [[노트A]]");
+
+    expect(cites).toHaveLength(3);
+    expect(cites.map((c) => c.anchor)).toEqual(["가", "나", undefined]);
+  });
+
+  it("블록 참조(^id)는 앵커로 보지 않는다", () => {
+    // 블록 ID는 인덱스에 없어 검증할 수 없다. 검증 불가한 것을 경고하면 거짓 경고다.
+    const cites = extractCitations("[[노트A^block123]]");
+
+    expect(cites[0].target).toBe("노트A");
+    expect(cites[0].anchor).toBeUndefined();
   });
 
   it("코드블록 안의 인용은 제외된다", () => {
@@ -141,5 +158,83 @@ describe("findUnresolvedCitations", () => {
     // 인덱싱 전에는 모든 인용이 미해결로 보인다 — 전부 거짓 경고가 된다.
     const cites = extractCitations("[[무엇이든]]");
     expect(findUnresolvedCitations(cites, [])).toEqual([]);
+  });
+});
+
+// ============================================
+// 헤딩 앵커 검증 (스키마 v2)
+// ============================================
+/**
+ * 존재하는 노트의 존재하지 않는 절을 인용하는 것도 사용자를 헛걸음시키는 실패다.
+ * 다만 확인할 수 없는 것을 "없다"고 경고하면 거짓 경고가 되고, 거짓이 섞이면 진짜
+ * 경고까지 무시된다 — 그래서 헤딩 정보가 없을 때는 통과시킨다.
+ */
+describe("헤딩 앵커 검증", () => {
+  const HEADINGS = buildHeadingIndex([
+    ["Projects/Agent LLMs.md", ["개요", "설계 결정"]],
+    ["Meetings/2026-09-01 회의록.md", []],
+  ]);
+
+  it("실재하는 헤딩 앵커는 통과한다", () => {
+    const cites = extractCitations("[[Agent LLMs#설계 결정]] 참고");
+    expect(findUnresolvedCitations(cites, VAULT, HEADINGS)).toEqual([]);
+  });
+
+  it("없는 헤딩 앵커를 잡아낸다", () => {
+    const cites = extractCitations("[[Agent LLMs#지어낸 절]] 에 나옵니다");
+
+    const unresolved = findUnresolvedCitations(cites, VAULT, HEADINGS);
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0].anchor).toBe("지어낸 절");
+  });
+
+  it("헤딩 대소문자를 무시한다", () => {
+    const cites = extractCitations("[[Agent LLMs#설계 결정]]");
+    expect(findUnresolvedCitations(cites, VAULT, HEADINGS)).toEqual([]);
+
+    const upper = extractCitations("[[Agent LLMs#설계 결정]]".toUpperCase());
+    // 대상 노트 이름도 대문자가 되므로 노트 해석 자체는 통과해야 한다.
+    expect(findUnresolvedCitations(upper, VAULT, HEADINGS)).toEqual([]);
+  });
+
+  it("헤딩을 하나도 모르는 노트는 앵커를 검증하지 않는다", () => {
+    // v1 인덱스로 색인된 노트이거나 헤딩이 없는 노트다 — 판정 불가는 통과다.
+    const cites = extractCitations("[[2026-09-01 회의록#무슨 절이든]]");
+    expect(findUnresolvedCitations(cites, VAULT, HEADINGS)).toEqual([]);
+  });
+
+  it("헤딩 인덱스를 주지 않으면 노트 존재만 본다", () => {
+    const cites = extractCitations("[[Agent LLMs#지어낸 절]]");
+    expect(findUnresolvedCitations(cites, VAULT)).toEqual([]);
+  });
+
+  it("노트 자체가 없으면 앵커와 무관하게 잡아낸다", () => {
+    const cites = extractCitations("[[없는노트#어떤절]]");
+    expect(findUnresolvedCitations(cites, VAULT, HEADINGS)).toHaveLength(1);
+  });
+});
+
+describe("buildHeadingIndex", () => {
+  it("전체 경로와 basename 두 키로 찾을 수 있다", () => {
+    const idx = buildHeadingIndex([["Notes/Deep/Topic.md", ["절 하나"]]]);
+
+    expect(idx.get("notes/deep/topic.md")?.has("절 하나")).toBe(true);
+    expect(idx.get("topic")?.has("절 하나")).toBe(true);
+  });
+
+  it("빈 헤딩과 공백은 버린다", () => {
+    const idx = buildHeadingIndex([["a.md", ["", "   ", "실제"]]]);
+    expect(idx.get("a.md")).toEqual(new Set(["실제"]));
+  });
+
+  it("basename이 같은 노트들의 헤딩을 합친다", () => {
+    // 같은 이름의 노트가 여러 폴더에 있으면 위키링크로는 구분할 수 없다.
+    // 합집합으로 판정해야 거짓 경고가 생기지 않는다.
+    const idx = buildHeadingIndex([
+      ["A/Topic.md", ["가"]],
+      ["B/Topic.md", ["나"]],
+    ]);
+
+    expect(idx.get("topic")).toEqual(new Set(["가", "나"]));
   });
 });

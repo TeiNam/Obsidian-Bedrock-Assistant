@@ -485,9 +485,15 @@ export class ToolExecutor {
       label = `[Neighbor ← "${seedRef}" / ${item.hop} hop]`;
     }
 
+    // 맞은 청크의 헤딩이 있으면 인용 앵커로 쓰도록 알려준다. 노트 단위 인용은 긴
+    // 노트에서 "어딘가에 있다"까지만 말해줘서 사용자가 근거를 다시 찾아야 한다.
+    const anchor = item.heading
+      ? `\n   인용: [[${item.title}#${item.heading}]] (맞은 구간: "${item.heading}")`
+      : "";
+
     return (
       `${label} ${rank}. **${item.title}** (${item.path})\n` +
-      `   통합 점수: ${scorePercent}%\n` +
+      `   통합 점수: ${scorePercent}%${anchor}\n` +
       `   발췌: ${excerpt}`
     );
   }
