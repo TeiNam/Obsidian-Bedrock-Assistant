@@ -19,11 +19,11 @@ Search combines vector similarity with the link graph instead of ranking whole n
 - **Dimension mismatch** — Notes whose vectors have a different dimension are treated as "not comparable" instead of being scored, so they cannot tie with everything else.
 - **Incremental indexing** — File create, modify, rename, and delete events update the index with a 2-second debounce, processed through a serial queue (concurrency 1) to avoid hammering the embedding API.
 
-The embedding model is chosen from a dropdown under Settings → AI Assistant → **Model Settings**. On the Bedrock backend it has no default, so pick one before indexing.
+The embedding model is chosen from a dropdown under Settings → Agent LLMs → **Model Settings**. On the Bedrock backend it has no default, so pick one before indexing.
 
 The embedding signature follows the format `{provider}:{model ID}`. Examples: `bedrock:amazon.titan-embed-text-v2:0`, `openai:text-embedding-3-large`, `ollama:nomic-embed-text`, `gemini:text-embedding-004`
 
-Settings → AI Assistant → **Graph RAG Search**:
+Settings → Agent LLMs → **Graph RAG Search**:
 
 | Setting | Default | Range |
 |---------|---------|-------|
@@ -39,7 +39,7 @@ The Second Brain Layer adds an active write layer on top of Graph RAG's read lay
 
 **It is opt-in and off by default.** While **Enable Second Brain** is off, no note is created, modified, or deleted automatically, and every Second Brain command refuses to run.
 
-Settings → AI Assistant → **Second Brain**:
+Settings → Agent LLMs → **Second Brain**:
 
 | Setting | Default | Notes |
 |---------|---------|-------|

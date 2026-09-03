@@ -43,8 +43,13 @@ export function setIcon(_el: unknown, _icon: string): void {
 export class Modal {
   app: unknown;
   contentEl: unknown = {};
+  title = "";
   constructor(app?: unknown) {
     this.app = app;
+  }
+  setTitle(title: string): this {
+    this.title = title;
+    return this;
   }
   open(): void {
     // 무시

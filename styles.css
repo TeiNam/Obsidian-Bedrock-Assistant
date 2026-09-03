@@ -1,4 +1,4 @@
-/* Bedrock Assistant - Claudian 스타일 기반 */
+/* Agent LLMs - Claudian 스타일 기반 */
 
 /* ============================================
    변수 및 컨테이너
@@ -338,12 +338,6 @@ body.theme-light .ba-message-content pre {
   animation: ba-pulse 1.5s ease-in-out infinite;
 }
 
-.ba-thinking-hint {
-  color: var(--text-muted);
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ============================================
    입력 영역
    ============================================ */
@@ -380,10 +374,6 @@ body.theme-light .ba-message-content pre {
 .ba-action-btn svg {
   width: 14px;
   height: 14px;
-}
-
-.ba-action-btn-label {
-  white-space: nowrap;
 }
 
 .ba-input-wrapper {
@@ -816,10 +806,6 @@ body.theme-light .ba-message-content pre {
   padding: 0;
 }
 
-.ba-mcp-modal h2 {
-  margin: 0 0 12px 0;
-}
-
 .ba-mcp-status {
   margin-bottom: 12px;
   font-size: 13px;
@@ -951,22 +937,6 @@ body.theme-light .ba-message-content pre {
 .ba-model-chevron svg {
   width: 12px;
   height: 12px;
-}
-
-/* 모델 선택 모달 - 현재 선택 표시 */
-.ba-model-check {
-  color: var(--interactive-accent);
-  font-weight: 600;
-}
-
-.ba-model-manual-input {
-  padding: 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-family: var(--font-monospace);
-  font-size: 13px;
 }
 
 /* ============================================
@@ -1388,7 +1358,7 @@ body.theme-light .ba-message-content pre {
   margin-bottom: 12px;
 }
 
-.ba-tool-confirm-header h3 {
+.ba-tool-confirm-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
@@ -1490,12 +1460,6 @@ body.theme-light .ba-message-content pre {
    ============================================ */
 .web-clipper-modal {
   max-width: 520px;
-}
-
-.web-clipper-title {
-  margin: 0 0 16px 0;
-  font-size: 1.2em;
-  font-weight: 600;
 }
 
 .web-clipper-input-wrapper {
@@ -1604,6 +1568,25 @@ body.theme-light .ba-message-content pre {
   max-width: 640px;
 }
 
+/* 스킬 편집 모달의 이름/설명 입력 — 모달 폭을 채운다 */
+.ba-skill-input {
+  width: 100%;
+}
+
+/* "AI로 생성하기" 버튼 행 — 입력창과 내용 영역 사이를 위아래 여백으로 분리 */
+.ba-skill-gen-row {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+/* 내용(마크다운) 라벨 — 좌측 끝에 두되 살짝 안쪽으로 들여쓴다 */
+.ba-skill-content-label {
+  display: block;
+  padding-left: 4px;
+  margin-bottom: 6px;
+}
+
 .ba-sysprompt-textarea {
   width: 100%;
   min-height: 320px;
@@ -1687,72 +1670,6 @@ body.theme-light .ba-message-content pre {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-/* ============================================
-   회고 모달
-   ============================================ */
-.ba-retro-modal.modal {
-  width: 300px;
-  max-width: 300px;
-  padding: 16px;
-}
-
-.ba-retro-modal h2 {
-  margin: 0 0 10px;
-  text-align: center;
-  font-size: 15px;
-}
-
-.ba-retro-message {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-normal);
-  margin: 0 0 14px;
-  text-align: center;
-}
-
-.ba-retro-warning {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-muted);
-  margin: 0 0 14px;
-  text-align: center;
-  padding: 8px 12px;
-  background: var(--background-modifier-error-hover);
-  border-radius: 6px;
-}
-
-.ba-retro-btn-row {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-}
-
-.ba-retro-btn-row button {
-  min-width: 64px;
-  padding: 4px 14px;
-  font-size: 13px;
-  border: 1px solid var(--background-modifier-border) !important;
-  border-radius: 4px !important;
-  background: var(--background-primary) !important;
-  color: var(--text-normal) !important;
-  cursor: pointer;
-}
-
-.ba-retro-btn-row button:hover {
-  background: var(--background-modifier-hover) !important;
-}
-
-.ba-retro-btn-row button.mod-cta {
-  background: var(--interactive-accent) !important;
-  color: var(--text-on-accent) !important;
-  border-color: var(--interactive-accent) !important;
-}
-
-.ba-retro-btn-row button.mod-cta:hover {
-  background: var(--interactive-accent-hover) !important;
-  border-color: var(--interactive-accent-hover) !important;
 }
 
 /* ============================================

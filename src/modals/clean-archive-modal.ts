@@ -23,7 +23,7 @@ export class CleanArchiveModal extends Modal {
   async onOpen(): Promise<void> {
     const { contentEl } = this;
     contentEl.addClass("ba-clean-archive-modal");
-    contentEl.createEl("h2", { text: this.t.cleanArchiveTitle });
+    this.setTitle(this.t.cleanArchiveTitle);
 
     const archiveFolder = normalizePath(this.plugin.settings.todoArchiveFolder);
     const archiveDays = this.plugin.settings.archiveCleanDays;

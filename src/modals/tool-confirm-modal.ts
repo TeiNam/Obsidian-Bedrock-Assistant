@@ -41,7 +41,7 @@ export class ToolConfirmModal extends Modal {
     const header = contentEl.createDiv({ cls: "ba-tool-confirm-header" });
     const headerIcon = header.createDiv({ cls: "ba-tool-confirm-header-icon" });
     setIcon(headerIcon, "alert-triangle");
-    header.createEl("h3", { text: this.t.toolConfirmTitle });
+    header.createDiv({ text: this.t.toolConfirmTitle, cls: "ba-tool-confirm-title" });
 
     // 도구 이름 안내 메시지
     contentEl.createEl("p", {

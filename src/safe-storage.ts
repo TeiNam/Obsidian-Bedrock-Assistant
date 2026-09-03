@@ -25,8 +25,10 @@ import { planCredentialMigration } from "./migration";
 // 암호화된 값 식별 접두사
 const ENCRYPTED_PREFIX = "enc:";
 
-// 로컬 전용 자격증명 파일명
-const CREDENTIALS_FILE = "ai-assistant-credentials.json";
+// 로컬 전용 자격증명 파일명.
+// `{pluginId}-credentials.json` 규칙을 지켜야 한다 — planCredentialMigration이
+// 같은 규칙으로 마이그레이션 대상 파일명을 만든다.
+const CREDENTIALS_FILE = "agent-llms-credentials.json";
 
 // Node.js 모듈 (Obsidian/Electron 런타임에서 사용 가능)
 const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();

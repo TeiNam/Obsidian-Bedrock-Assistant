@@ -109,8 +109,7 @@ export class WebClipperModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("web-clipper-modal");
 
-    // 타이틀
-    contentEl.createEl("h2", { text: this.t.title, cls: "web-clipper-title" });
+    this.setTitle(this.t.title);
 
     // URL 입력
     const inputWrapper = contentEl.createDiv({ cls: "web-clipper-input-wrapper" });

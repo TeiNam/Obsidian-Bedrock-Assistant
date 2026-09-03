@@ -63,7 +63,7 @@ export class SecondBrainInputModal extends Modal {
     contentEl.empty();
     contentEl.addClass("ba-second-brain-modal");
 
-    contentEl.createEl("h3", { text: this.opts.title });
+    this.setTitle(this.opts.title);
 
     // 필드 렌더 — 첫 입력에 포커스를 준다.
     let firstControl: HTMLInputElement | HTMLTextAreaElement | null = null;

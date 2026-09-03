@@ -7,7 +7,7 @@ node_modules/
 # 옵시디언 플러그인 데이터
 data.json
 
-# 인덱스/히스토리 파일 (모든 플러그인 ID: ai-assistant, 레거시 bedrock-assistant/assistant-kiro)
+# 인덱스/히스토리 파일 (현행 agent-llms + 레거시 ai-assistant/bedrock-assistant/assistant-kiro)
 .*-index.json
 .*-chat.json
 .*-sessions.json

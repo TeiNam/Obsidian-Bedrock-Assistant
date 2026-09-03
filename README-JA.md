@@ -1,4 +1,4 @@
-# AI Assistant
+# Agent LLMs
 
 [English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
@@ -51,24 +51,24 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 ### BRAT（推奨）
 
 1. [BRAT](https://github.com/TfTHacker/obsidian42-brat)プラグインをインストール
-2. BRAT設定でリポジトリURLを追加: `https://github.com/teinam/obsidian-ai-assistant`
+2. BRAT設定でリポジトリURLを追加: `https://github.com/teinam/obsidian-agent-llms`
 3. プラグインを有効化
 
 ### 手動インストール
 
 1. 最新の[Release](../../releases)から`main.js`、`styles.css`、`manifest.json`をダウンロード
-2. ボルトの`.obsidian/plugins/ai-assistant/`フォルダにコピー
+2. ボルトの`.obsidian/plugins/agent-llms/`フォルダにコピー
 3. 設定 → コミュニティプラグインで有効化
 
-### 0.2.xからのアップグレード
+### 以前のバージョンからのアップグレード
 
-バージョン0.3.0でプラグインIDが`bedrock-assistant`から`ai-assistant`に変更されました。
+バージョン0.4.0でプラグインIDが`ai-assistant`から`agent-llms`に変更されました。旧IDはObsidianのコミュニティプラグイン一覧に登録済みの別プラグイン(`qgrail/obsidian-ai-assistant`)がすでに使用しており、Obsidianのアップデータがこのプラグインのフォルダをそちらと同一視して上書きしていました。新しいIDは誰も登録していません。
 
 - **新しいプラグインを有効にする前に、既存のプラグインを先に無効化してください。** 両方が同時に有効になっていると、既存のプラグインがインデックスを保存している途中で新しいプラグインが同じファイルを読み取り、不完全なコピーが生成される可能性があります(再インデックスで復旧しますが時間がかかります)。
-- **プラグインフォルダが変わるため、再インストールが必要です。** BRATを使用している場合は、既存のエントリを削除してから再度追加してください。
+- **プラグインフォルダが変わるため、再インストールが必要です。** BRATを使用している場合は、既存のエントリを削除してから再度追加してください。移行完了の通知が表示されるまで旧フォルダは削除しないでください — 設定はそのフォルダからコピーされます。
 - **設定(`data.json`)**、ボルトインデックス、チャット履歴、セッション、MCP設定、認証情報は**初回起動時に自動的にコピーされます**。バックエンド選択、モデル、リージョン、Second Brain設定、カスタムスキルはすべて保持されます。旧ファイルは削除されずに残るため、以前のバージョンにロールバックしてもシームレスに動作します。
 - **サイドバーを一度開き直す必要があります。** Obsidianはワークスペースレイアウトにビュー識別子を記録しており、プラグインはそれを代わりに書き換えることができません。
-- 移行が完了すると通知が表示されます。旧データファイル(`.bedrock-assistant-*.json`)は使用されなくなるため、ボルトサイズが気になる場合は手動で削除できます。インデックスファイルは埋め込みのため数十MBになる可能性があります。
+- 移行が完了すると通知が表示されます。**その後`.obsidian/plugins/ai-assistant/`フォルダを削除してください** — 上書きアップデートがすでに実行されていた場合、そのフォルダにはこのプラグインではなく別のプラグインのコードが入っています。旧データファイル(`.ai-assistant-*.json`、`.bedrock-assistant-*.json`)も使用されなくなるため、ボルトサイズが気になる場合は手動で削除できます。インデックスファイルは埋め込みのため数十MBになる可能性があります。
 
 `kiro-edition`(Assistant Kiro)を使用していた場合も同じ移行が適用されます。このエディションは0.3.0でmainにマージされ、`.assistant-kiro-*.json`データも自動的に移行されます。
 
@@ -76,7 +76,7 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 
 ### 1. AIバックエンドを選択
 
-設定 → AI Assistant → **AIバックエンド**:
+設定 → Agent LLMs → **AIバックエンド**:
 
 - **Bedrock** — AWS Bedrock (ClaudeおよびBedrock-hostedモデル)
 - **Gemini** — Google Gemini。[Google AI Studio](https://aistudio.google.com/)からのAPIキーが必要
@@ -131,7 +131,7 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 
 ### 推論強度
 
-設定 → AI Assistant → **生成設定** → **推論強度**で、モデルの推論の深さを設定します。
+設定 → Agent LLMs → **生成設定** → **推論強度**で、モデルの推論の深さを設定します。
 
 許可される値は、選択したプロバイダーとモデルによって異なります(例: BedrockのAnthropicモデルは`xhigh`と`max`を許可し、Gemini Proモデルは`low`と`high`のみを許可)。設定は推論強度をサポートするモデルにのみ表示され、サポートしないモデルへのリクエストはプロバイダーのデフォルトサンプリング動作にフォールバックします。保存された値が許可されていないモデルに切り替えた場合、最も近い許可レベルにクランプされます。
 
@@ -167,7 +167,7 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 
 ### P.A.R.A オーガナイザー
 
-1. 設定 → AI Assistant → **ボルト管理**セクションを開きます。
+1. 設定 → Agent LLMs → **ボルト管理**セクションを開きます。
 2. テンプレートフォルダ設定のすぐ下にある**P.A.R.A設定**ボタンをクリック
 3. プラグインが4つのルートフォルダを作成: `01. Projects`、`02. Areas`、`03. Resources`、`04. Archives`
 4. 既存のノートが見つかった場合、現在設定されているAIモデルが各ノートを適切なフォルダに分類

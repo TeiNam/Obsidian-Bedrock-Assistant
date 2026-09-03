@@ -34,7 +34,7 @@ export class ParaModal extends Modal {
   async onOpen(): Promise<void> {
     const { contentEl } = this;
     contentEl.addClass("ba-para-modal");
-    contentEl.createEl("h2", { text: this.t.paraModalTitle });
+    this.setTitle(this.t.paraModalTitle);
 
     // 진행 상태 영역
     const statusEl = contentEl.createDiv({ cls: "ba-para-status" });

@@ -1,4 +1,4 @@
-# AI Assistant
+# Agent LLMs
 
 [English](README.md) | [한국어](README-KR.md) | [日本語](README-JA.md)
 
@@ -51,24 +51,24 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 ### BRAT (Recommended)
 
 1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin
-2. Add this repository URL in BRAT settings: `https://github.com/teinam/obsidian-ai-assistant`
+2. Add this repository URL in BRAT settings: `https://github.com/teinam/obsidian-agent-llms`
 3. Enable the plugin
 
 ### Manual
 
 1. Download `main.js`, `styles.css`, `manifest.json` from the latest [Release](../../releases)
-2. Copy to `.obsidian/plugins/ai-assistant/`
+2. Copy to `.obsidian/plugins/agent-llms/`
 3. Enable in Settings → Community Plugins
 
-### Upgrading from 0.2.x
+### Upgrading from an earlier version
 
-Version 0.3.0 changes the plugin ID from `bedrock-assistant` to `ai-assistant`.
+Version 0.4.0 changes the plugin ID from `ai-assistant` to `agent-llms`. The old ID was already claimed by an unrelated plugin in Obsidian's community plugin registry (`qgrail/obsidian-ai-assistant`), so Obsidian's updater treated this plugin's folder as that one and overwrote it. Nobody else has registered the new ID.
 
 - **Disable the old plugin before enabling the new one.** If both are enabled simultaneously, the old plugin's index save can interleave with the new plugin's migration read, resulting in a torn copy (this self-heals through re-indexing but takes time).
-- **The plugin folder changes, so reinstallation is required.** If you use BRAT, remove the old entry and add it again.
+- **The plugin folder changes, so reinstallation is required.** If you use BRAT, remove the old entry and add it again. Leave the old folder in place until the migration notice appears — that is where your settings are copied from.
 - **Settings (`data.json`)**, vault index, chat history, sessions, MCP config, and credentials **are automatically copied on first launch**. Your backend choice, models, region, Second Brain settings, and custom skills are all preserved. The old files remain in place, so rolling back to a previous version works seamlessly.
 - **You must reopen the sidebar once.** Obsidian records view identifiers in the workspace layout, and the plugin cannot rewrite that for you.
-- A notice appears once the migration completes. The old data files (`.bedrock-assistant-*.json`) are no longer used — you may delete them manually if vault size is a concern. The index file can be tens of MB due to embeddings.
+- A notice appears once the migration completes. **Then delete `.obsidian/plugins/ai-assistant/`** — if the overwriting update already ran, that folder holds an unrelated plugin's code rather than this one. The old data files (`.ai-assistant-*.json`, `.bedrock-assistant-*.json`) are no longer used either; you may delete them manually if vault size is a concern. The index file can be tens of MB due to embeddings.
 
 If you were using the `kiro-edition` (Assistant Kiro), the same migration applies. That edition was merged into main in 0.3.0, and `.assistant-kiro-*.json` data is also migrated automatically.
 
@@ -76,7 +76,7 @@ If you were using the `kiro-edition` (Assistant Kiro), the same migration applie
 
 ### 1. Choose AI Backend
 
-Settings → AI Assistant → **AI Backend**:
+Settings → Agent LLMs → **AI Backend**:
 
 - **Bedrock** — AWS Bedrock (Claude and other Bedrock-hosted models)
 - **Gemini** — Google Gemini. Requires an API key from [Google AI Studio](https://aistudio.google.com/).
@@ -131,7 +131,7 @@ The web search toggle (globe icon) in the input toolbar only turns on if a searc
 
 ### Reasoning Effort
 
-Settings → AI Assistant → **Generation Settings** → **Reasoning Effort** sets how much reasoning the model does.
+Settings → Agent LLMs → **Generation Settings** → **Reasoning Effort** sets how much reasoning the model does.
 
 Allowed values depend on the selected provider and model (for example, Anthropic models on Bedrock accept `xhigh` and `max`; Gemini Pro models accept only `low` and `high`). The setting is only shown for models that support reasoning effort, and requests to models that do not support it fall back to the provider's default sampling behavior. If you switch to a model that does not allow your saved value, it is clamped to the nearest allowed level.
 
@@ -169,7 +169,7 @@ The generated frontmatter has four fields: `source` (the URL), `created` (the da
 
 ### P.A.R.A Organizer
 
-1. Open Settings → AI Assistant and scroll to the **Vault** section
+1. Open Settings → Agent LLMs and scroll to the **Vault** section
 2. Click the **Set Up P.A.R.A** button, directly below the Template Folder setting
 3. The plugin creates four root folders: `01. Projects`, `02. Areas`, `03. Resources`, `04. Archives`
 4. If existing notes are found, the currently configured AI model classifies each note into the appropriate folder

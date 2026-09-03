@@ -35,7 +35,7 @@ export class SessionListModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: this.t.chatHistory });
+    this.setTitle(this.t.chatHistory);
 
     // 검색 입력 필드 추가
     const searchContainer = contentEl.createDiv({ cls: "ba-session-search" });

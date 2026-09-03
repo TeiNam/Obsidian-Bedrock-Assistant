@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-ai-assistant",
-  "version": "0.3.3",
-  "description": "Obsidian sidebar AI assistant with four backends (AWS Bedrock, Google Gemini, OpenAI, Ollama)",
+  "name": "obsidian-agent-llms",
+  "version": "0.4.0",
+  "description": "Obsidian sidebar agentic LLM assistant with four backends (AWS Bedrock, Google Gemini, OpenAI, Ollama)",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

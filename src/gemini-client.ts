@@ -235,6 +235,9 @@ export class GeminiClient {
   ): Promise<ConverseResult> {
     const url = `${GEMINI_BASE}/models/${model}:streamGenerateContent?alt=sse&key=${this.settings.geminiApiKey}`;
 
+    // requestUrl 대신 fetch를 쓰는 이유: streamGenerateContent(alt=sse)는 SSE
+    // 스트림이고 아래에서 body.getReader()로 점진적으로 읽는다. requestUrl은 응답을
+    // 전부 버퍼링하므로 스트리밍이 불가능하다.
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

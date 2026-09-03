@@ -7,6 +7,41 @@
 > **에디션 안내**: 이 프로젝트는 **AWS Bedrock · Google Gemini · OpenAI · Ollama** 멀티프로바이더 백엔드를 지원합니다.
 > 과거 `kiro-edition` 브랜치(Assistant Kiro)는 0.3.0에서 main으로 통합되었습니다.
 
+## [0.4.0] - 2026-09-03
+
+### Breaking
+
+- **플러그인 ID를 `ai-assistant` → `agent-llms`로, 표시 이름을 `AI Assistant` → `Agent LLMs`로 변경.** 구 ID는 옵시디언 커뮤니티 플러그인 레지스트리에 `qgrail/obsidian-ai-assistant`가 이미 선점한 값이었다. 옵시디언 업데이터는 설치된 플러그인 폴더명을 레지스트리 ID와 대조하므로, 이 플러그인 폴더를 그쪽 릴리스로 덮어써버렸다. 폴더가 바뀌므로 재설치가 필요하고(BRAT은 항목 제거 후 재추가), 사이드바를 한 번 다시 열어야 한다.
+- `viewType`이 `ai-assistant-view` → `agent-llms-view`로 바뀌었다. 워크스페이스 레이아웃에 남은 구 뷰는 빈 탭이 되므로 닫고 다시 열면 된다.
+- GitHub 레포와 npm 패키지 이름을 `obsidian-ai-assistant` → `obsidian-agent-llms`로 변경. 릴리스 태그 접두어도 `agent-llms-`로 바뀐다.
+- `minAppVersion`을 1.4.0 → 1.5.8로 올렸다. 모달 타이틀을 `Modal.setTitle()`로 옮기면서 필요해졌다.
+- 설정 탭 최상단의 "(백엔드) Assistant 설정" 헤딩을 제거했다. 옵시디언이 설정 탭을 이미 플러그인 이름 아래에 렌더하므로 심사 기준이 이 헤딩을 금지한다.
+
+### Added
+
+- **모델이 현재 날짜·시각을 안다.** 시스템 프롬프트 끝에 사용자 로컬 기준 날짜·요일·시각·타임존을 매 요청마다 붙인다. "어제 노트", "이번 주 금요일" 같은 상대 표현을 학습 시점 기준으로 잘못 푸는 문제가 사라진다. `time` MCP 서버가 필요 없고, 네 백엔드(Bedrock·Gemini·OpenAI·Ollama) 모두에 적용된다. 날짜 포맷은 To-Do·회고 노트 경로와 같은 `YYYY-MM-DD`이므로 모델이 경로를 추측하지 않는다.
+- `ai-assistant`를 `LEGACY_PLUGIN_IDS`에 추가해 0.3.x의 설정(`data.json`), 볼트 데이터, MCP 설정, 자격증명을 첫 실행 시 자동 복사. 원본은 보존하므로 이전 버전으로 되돌려도 동작한다.
+- `pluginId`가 매니페스트 `id`·볼트 데이터 파일명·자격증명 파일명과 어긋나는지 검증하는 테스트(`branding.test.ts`의 "pluginId 결합 검증"). 세 곳 중 하나만 바꾸면 마이그레이션이 조용히 엉뚱한 경로로 복사하던 위험을 막는다.
+- 복습 큐 모달이 언어 설정을 따른다. 제목·설명·선정 이유가 en/ko/ja로 나온다(이전에는 한국어 고정).
+
+### Fixed
+
+- **Activity_Log append가 겹치면 줄이 사라지던 문제.** `appendActivityLog`가 read→modify 왕복이라, 스케줄러와 사용자 동작이 동시에 append하면 나중 쓰기가 먼저 읽은 내용을 덮어썼다. 원자적 `vault.process()`로 교체했다.
+
+### Changed
+
+- 커뮤니티 심사 기준 대응: 모달 타이틀 9곳을 `Modal.setTitle()`로, 정적 인라인 스타일 8곳을 CSS 클래스로, `display` 토글 9곳을 `hide()`/`show()`/`toggle()`로 옮겼다. 스트리밍 때문에 `requestUrl` 대신 `fetch`를 쓰는 3곳에는 사유 주석을 달았다.
+- `ReviewItem`이 완성된 문구(`reason`) 대신 원자료(`basis`/`elapsedDays`/`links`)를 싣는다. 점수 계산 순수 함수가 로케일을 알 필요가 없어졌고, 문구 조립은 뷰가 담당한다.
+
+### Removed
+
+- **기본 MCP 설정 템플릿에서 `time` 서버를 뺐다.** 시스템 프롬프트가 매 요청마다 로컬 날짜·시각을 실어주므로, 같은 정보를 얻으려고 컨테이너를 띄우고 도구 호출 왕복을 더할 이유가 없다. 이미 저장한 설정은 그대로 유지되며, 직접 지우면 된다.
+- 참조되지 않는 CSS 92줄 삭제 — 회고 모달(`.ba-retro-*` 9개 규칙)과 `.ba-thinking-hint`, `.ba-action-btn-label`, `.ba-model-check`, `.ba-model-manual-input`. 클래스 168개 중 미참조는 옵시디언 내장(`svg-icon`, `theme-light`)만 남았다.
+
+### Migration
+
+마이그레이션 완료 알림이 뜬 뒤 `.obsidian/plugins/ai-assistant/` 폴더를 삭제할 것. 덮어쓰기 업데이트가 이미 실행됐다면 그 폴더에는 이 플러그인이 아니라 다른 플러그인의 코드가 들어 있다.
+
 ## [0.3.0] - 2026-08-01
 
 ### Breaking
