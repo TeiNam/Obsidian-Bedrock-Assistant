@@ -1912,3 +1912,60 @@ body.theme-light .ba-message-content pre {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* 중복 후보 검토 모달 */
+.ba-canonical-modal {
+  max-width: 720px;
+}
+
+.ba-canonical-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-canonical-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ba-canonical-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ba-canonical-path {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.ba-canonical-evidence {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.ba-canonical-body {
+  margin-top: 8px;
+  padding-inline-start: 24px;
+}
+
+.ba-canonical-list-items {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+  font-family: var(--font-monospace);
+  line-height: 1.6;
+  word-break: break-all;
+}

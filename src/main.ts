@@ -47,6 +47,13 @@ import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
 import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
+import { CanonicalizeModal } from "./modals/canonicalize-modal";
+import {
+  findDuplicateClusters,
+  buildCanonicalBlock,
+  mergeAliases,
+  CANONICAL_BLOCK_KEY,
+} from "./second-brain/canonicalize";
 import {
   suggestLinks,
   buildRelatedLinksBlock,
@@ -502,6 +509,61 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   /**
+   * 같은 대상을 다루는 중복 노트 군집을 찾아 승인 화면을 띄운다.
+   *
+   * LLM 호출이 없다. 제목 버킷으로 후보를 좁히고 인덱스의 임베딩으로 확증한다.
+   * 승인해도 노트를 지우거나 합치지 않는다 — 정본에 별칭과 후보 목록을 기록할 뿐이다.
+   */
+  private async openCanonicalize(): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const wikiFolder = this.settings.secondBrain.wikiFolder;
+    const clusters = findDuplicateClusters(this.indexer.getEntries(), { wikiFolder });
+
+    if (clusters.length === 0) {
+      new Notice(t.canonicalNone, 8000);
+      return;
+    }
+
+    new CanonicalizeModal(this.app, this, clusters, async (approved) => {
+      let notes = 0;
+      let aliases = 0;
+
+      for (const cluster of approved) {
+        const file = this.app.vault.getAbstractFileByPath(cluster.canonical.path);
+        if (!(file instanceof TFile)) continue;
+
+        // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
+        // 형식이 뭉개진다.
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          const merged = mergeAliases(fm.aliases, cluster);
+          if (merged.length > 0) {
+            fm.aliases = merged;
+            aliases += merged.length;
+          }
+        });
+
+        // 후보 목록은 Sentinel_Block으로 병합한다 — 사용자 텍스트 보존 + 재실행 멱등.
+        await this.app.vault.process(file, (content) =>
+          upsertGeneratedBlock(content, CANONICAL_BLOCK_KEY, buildCanonicalBlock(cluster))
+        );
+        notes++;
+      }
+
+      for (const cluster of approved) {
+        const file = this.app.vault.getAbstractFileByPath(cluster.canonical.path);
+        if (file instanceof TFile) await this.indexer.indexFile(file);
+      }
+
+      return { notes, aliases };
+    }).open();
+  }
+
+  /**
    * 고아·스텁 노트에 붙일 링크 후보를 계산해 승인 화면을 띄운다.
    *
    * LLM 호출이 없다 — 인덱스에 이미 있는 임베딩으로 답할 수 있는 질문이다.
@@ -883,6 +945,12 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-canonicalize",
+      name: "중복 후보 검토 (정본·별칭 정리)",
+      callback: () => void this.openCanonicalize(),
+    });
+
     this.addCommand({
       id: "second-brain-link-suggestions",
       name: "링크 제안 (고아·스텁 노트 연결)",
