@@ -122,7 +122,17 @@ export function reserveSlots(
   const missing = reserved.filter((path) => !inHead.has(path));
   if (missing.length === 0) return head;
 
-  // 예약분이 limit보다 많으면 예약분만 남는다(그럴 만큼 예약하지 않는 것이 호출부 책임).
+  // 자리를 비울 때 **예약 항목은 건드리지 않는다.** 앞에서부터 자르면 이미 head에 든
+  // 예약 항목이 밀려나 보장이 깨진다(limit=3, head=[d1,d2,lex1], 예약=[lex1,lex2] →
+  // [d1,d2,lex2]가 되어 lex1을 잃는다). 뒤에서부터 비예약 항목만 뺀다.
+  const reservedSet = new Set(reserved);
   const take = missing.slice(0, limit);
-  return [...head.slice(0, limit - take.length), ...take];
+  const keep = [...head];
+  for (let i = keep.length - 1; i >= 0 && keep.length + take.length > limit; i--) {
+    if (!reservedSet.has(keep[i])) keep.splice(i, 1);
+  }
+
+  // 예약 항목만으로 limit을 넘기면 앞에서부터 자른다(그럴 만큼 예약하지 않는 것이
+  // 호출부 책임이다).
+  return [...keep, ...take].slice(0, limit);
 }

@@ -282,3 +282,41 @@ describe("reserveSlots — 작은 limit", () => {
     expect(reserve(Math.max(0, Math.min(2, 3 - 1)), 3)).toEqual(["d1", "lex1", "lex2"]);
   });
 });
+
+describe("reserveSlots — 이미 포함된 예약 항목", () => {
+  it("head에 든 예약 항목을 밀어내지 않는다", () => {
+    // 앞에서부터 자르면 lex1이 밀려나 두 개의 예약 보장이 깨진다.
+    expect(reserveSlots(["d1", "d2", "lex1", "d3", "lex2"], ["lex1", "lex2"], 3)).toEqual([
+      "d1",
+      "lex1",
+      "lex2",
+    ]);
+  });
+
+  it("예약 항목이 전부 head에 있으면 그대로 둔다", () => {
+    expect(reserveSlots(["d1", "lex1", "lex2"], ["lex1", "lex2"], 3)).toEqual([
+      "d1",
+      "lex1",
+      "lex2",
+    ]);
+  });
+
+  it("예약 항목만으로 limit을 넘기면 앞에서부터 자른다", () => {
+    expect(reserveSlots(["d1", "lex1", "d2", "lex2", "lex3"], ["lex1", "lex2", "lex3"], 2))
+      .toHaveLength(2);
+  });
+
+  it("결과에 중복이 없다", () => {
+    const out = reserveSlots(["d1", "d2", "lex1", "d3", "lex2"], ["lex1", "lex2"], 4);
+    expect(new Set(out).size).toBe(out.length);
+  });
+
+  it("예약 항목은 항상 결과에 있다(limit이 예약 수 이상일 때)", () => {
+    for (let limit = 2; limit <= 5; limit++) {
+      const out = reserveSlots(["d1", "d2", "lex1", "d3", "lex2"], ["lex1", "lex2"], limit);
+      expect(out).toContain("lex1");
+      expect(out).toContain("lex2");
+      expect(out.length).toBeLessThanOrEqual(limit);
+    }
+  });
+});

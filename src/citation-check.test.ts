@@ -660,3 +660,24 @@ describe("findUnresolvedCitations — 접미사 경로의 앵커", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("extractCitations — 외부 스킴", () => {
+  it("열거되지 않은 스킴도 외부로 본다", () => {
+    // 스킴을 열거하면 목록에 없는 것이 `.md`로 끝날 때 볼트 인용으로 오인된다.
+    for (const url of [
+      "ftp://server/readme.md",
+      "custom-app://open/a.md",
+      "//cdn.example.com/a.md",
+    ]) {
+      expect(extractCitations(`[docs](${url})`)).toEqual([]);
+    }
+  });
+
+  it("같은 노트 내 앵커는 인용이 아니다", () => {
+    expect(extractCitations("[절로](#결론)")).toEqual([]);
+  });
+
+  it("볼트 경로는 여전히 인용이다", () => {
+    expect(extractCitations("[문서](Notes/a.md)")[0].target).toBe("Notes/a.md");
+  });
+});

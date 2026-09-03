@@ -73,6 +73,10 @@ function splitTarget(inner: string): { target: string; anchor?: string } {
   // 별칭(|)을 먼저 떼어낸다.
   const noAlias = inner.split("|")[0];
   // 블록 참조가 있으면 그 앞까지만 본다.
+  //
+  // 캐럿 위치를 가리지 않는 이유: 옵시디언은 **파일명에 `^`를 금지한다.** 그래서
+  // `[[노트^id]]`는 파일명의 일부가 아니라 (구분자 `#`를 빠뜨린) 블록 참조다. 그 링크는
+  // 옵시디언에서도 열리지 않으므로 `노트`를 대상으로 보고 판정하는 것이 맞다.
   const noBlock = noAlias.split("^")[0];
 
   const hashAt = noBlock.indexOf("#");
@@ -83,9 +87,15 @@ function splitTarget(inner: string): { target: string; anchor?: string } {
   return anchor === "" ? { target } : { target, anchor };
 }
 
-/** URL로 보이는 대상인지. 외부 링크는 볼트 인용이 아니다. */
+/**
+ * URL로 보이는 대상인지. 외부 링크는 볼트 인용이 아니다.
+ *
+ * 스킴을 열거하지 않는다 — `ftp:`나 사용자 정의 스킴처럼 목록에 없는 것이 `.md`로 끝나면
+ * 볼트 인용으로 오인되어 거짓 경고가 된다. 일반 URI 스킴 패턴과 프로토콜 상대 URL(`//host`),
+ * 그리고 같은 노트 내 앵커(`#절`)를 함께 본다. 볼트 경로는 스킴을 가질 수 없다.
+ */
 function looksLikeUrl(target: string): boolean {
-  return /^(https?:|obsidian:|file:|mailto:|#)/i.test(target);
+  return /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//") || target.startsWith("#");
 }
 
 /**

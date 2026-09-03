@@ -1204,10 +1204,20 @@ export default class GeminiAssistantPlugin extends Plugin {
       if (reindexDone) refreshAll();
     });
 
+    // 재색인을 **기존 직렬 큐**에 넣는다. 직접 실행하면 create/modify 이벤트로 예약된
+    // 디바운스 작업과 겹쳐 같은 파일을 두 번 임베딩하고(비용), 그 사이 사용자가 다시
+    // 편집하면 앞 작업이 나중에 끝나 낡은 내용으로 인덱스를 덮어쓴다.
     for (const path of changedPaths) {
       const file = this.app.vault.getAbstractFileByPath(path);
-      if (file instanceof TFile) await this.indexer.indexFile(file);
+      if (!(file instanceof TFile)) continue;
+      this.indexQueue = this.indexQueue
+        .then(() => this.indexer.indexFile(file))
+        .catch((error) => {
+          console.error(`인덱스 갱신 실패: ${file.path}`, error);
+        });
     }
+    // 큐가 이 작업까지 끝낸 뒤에 수렴 갱신을 해야 커밋에 덮어써지지 않는다.
+    await this.indexQueue;
     reindexDone = true;
 
     const changedSet = new Set(changedPaths);
