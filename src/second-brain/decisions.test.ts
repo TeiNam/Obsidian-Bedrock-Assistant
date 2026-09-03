@@ -718,3 +718,73 @@ describe("parseLedgerDetailed — 보존", () => {
     expect(formatLedger([], [raw])).toContain("손으로 쓴 결정");
   });
 });
+
+// ============================================
+// Property: 원장 왕복 불변식
+// ============================================
+/**
+ * 보존 행을 도입하면서 왕복이 깨지기 쉬워졌다. 항목 수와 보존 행 수가 왕복마다
+ * 달라지면 사용자가 쓴 것이 사라지거나 중복된다.
+ */
+/** 임의 결정 항목. */
+const entryArb = fc.record({
+  decision: fc.stringMatching(/^[가-힣A-Za-z0-9 ]{1,20}$/),
+  rationale: fc.constantFrom("", "이유", "파이프|포함"),
+  sources: fc.array(fc.constantFrom("a.md", "폴더/b.md"), { minLength: 1, maxLength: 2 }),
+  decidedOn: fc.constant(""),
+  owner: fc.constantFrom("", "김"),
+  due: fc.constantFrom("", "2026-01-01"),
+  status: fc.constantFrom("open" as const, "done" as const, "superseded" as const),
+  supersededBy: fc.constant(""),
+});
+
+/** 해석 불가 행(사용자 수동 편집). */
+const rawArb = fc.constantFrom(
+  "| 손으로 쓴 결정 | 이유 | 김 | — | — | 회의에서 들음 |",
+  "| 다른 수동 행 | | | | | 그냥 텍스트 |"
+);
+
+describe("원장 왕복 불변식", () => {
+  it("왕복을 반복해도 항목·보존 행이 늘거나 줄지 않는다", () => {
+    fc.assert(
+      fc.property(
+        fc.array(entryArb, { minLength: 1, maxLength: 4 }),
+        fc.array(rawArb, { maxLength: 2 }),
+        (entries, raws) => {
+          const unique = [...new Set(raws)];
+          let block = formatLedger(mergeLedger([], entries as DecisionEntry[]), unique);
+          const first = parseLedgerDetailed(block);
+
+          for (let i = 0; i < 3; i++) {
+            const p = parseLedgerDetailed(block);
+            block = formatLedger(mergeLedger(p.entries, []), p.unparsed);
+          }
+
+          const last = parseLedgerDetailed(block);
+          expect(last.entries.length).toBe(first.entries.length);
+          expect(last.unparsed.length).toBe(first.unparsed.length);
+        }
+      ),
+      { numRuns: 300 }
+    );
+  });
+
+  it("두 번째 왕복부터 블록이 고정된다", () => {
+    fc.assert(
+      fc.property(
+        fc.array(entryArb, { minLength: 1, maxLength: 4 }),
+        fc.array(rawArb, { maxLength: 2 }),
+        (entries, raws) => {
+          const unique = [...new Set(raws)];
+          let block = formatLedger(mergeLedger([], entries as DecisionEntry[]), unique);
+          const p1 = parseLedgerDetailed(block);
+          const b2 = formatLedger(mergeLedger(p1.entries, []), p1.unparsed);
+          const p2 = parseLedgerDetailed(b2);
+          const b3 = formatLedger(mergeLedger(p2.entries, []), p2.unparsed);
+          expect(b3).toBe(b2);
+        }
+      ),
+      { numRuns: 300 }
+    );
+  });
+});
