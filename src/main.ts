@@ -68,9 +68,12 @@ const MCP_CONFIG_FILE = "mcp.json";
  */
 const LEGACY_PLUGIN_IDS = ["ai-assistant", "bedrock-assistant", "assistant-kiro"] as const;
 
-// 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa + time).
+// 신규 사용자를 위한 기본 MCP 설정 템플릿 (웹서치 fetch/brave/exa).
 // 설정 파일이 없을 때 편집창에 미리 채워주는 용도이며, 저장 전까지는 자동 연결되지 않는다.
 // API 키가 필요한 서버는 "your api key" 플레이스홀더를 실제 키로 교체해야 한다.
+//
+// time 서버는 빼두었다. buildSystemPrompt가 매 요청마다 로컬 날짜·시각을 프롬프트에
+// 실어주므로, 같은 정보를 위해 컨테이너를 띄우고 도구 호출 왕복을 더할 이유가 없다.
 const DEFAULT_MCP_CONFIG = {
   mcpServers: {
     fetch: {
@@ -87,10 +90,6 @@ const DEFAULT_MCP_CONFIG = {
       command: "docker",
       args: ["run", "-i", "--rm", "-e", "EXA_API_KEY", "mcp/exa"],
       env: { EXA_API_KEY: "your api key" },
-    },
-    time: {
-      command: "docker",
-      args: ["run", "-i", "--rm", "mcp/time"],
     },
   },
 };

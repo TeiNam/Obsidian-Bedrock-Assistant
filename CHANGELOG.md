@@ -33,6 +33,11 @@
 - 커뮤니티 심사 기준 대응: 모달 타이틀 9곳을 `Modal.setTitle()`로, 정적 인라인 스타일 8곳을 CSS 클래스로, `display` 토글 9곳을 `hide()`/`show()`/`toggle()`로 옮겼다. 스트리밍 때문에 `requestUrl` 대신 `fetch`를 쓰는 3곳에는 사유 주석을 달았다.
 - `ReviewItem`이 완성된 문구(`reason`) 대신 원자료(`basis`/`elapsedDays`/`links`)를 싣는다. 점수 계산 순수 함수가 로케일을 알 필요가 없어졌고, 문구 조립은 뷰가 담당한다.
 
+### Removed
+
+- **기본 MCP 설정 템플릿에서 `time` 서버를 뺐다.** 시스템 프롬프트가 매 요청마다 로컬 날짜·시각을 실어주므로, 같은 정보를 얻으려고 컨테이너를 띄우고 도구 호출 왕복을 더할 이유가 없다. 이미 저장한 설정은 그대로 유지되며, 직접 지우면 된다.
+- 참조되지 않는 CSS 92줄 삭제 — 회고 모달(`.ba-retro-*` 9개 규칙)과 `.ba-thinking-hint`, `.ba-action-btn-label`, `.ba-model-check`, `.ba-model-manual-input`. 클래스 168개 중 미참조는 옵시디언 내장(`svg-icon`, `theme-light`)만 남았다.
+
 ### Migration
 
 마이그레이션 완료 알림이 뜬 뒤 `.obsidian/plugins/ai-assistant/` 폴더를 삭제할 것. 덮어쓰기 업데이트가 이미 실행됐다면 그 폴더에는 이 플러그인이 아니라 다른 플러그인의 코드가 들어 있다.
