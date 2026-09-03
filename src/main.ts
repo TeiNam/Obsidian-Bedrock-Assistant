@@ -682,6 +682,8 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 이번 배치에서 만들어질 경로도 충돌 검사에 포함한다. 두 노트에 같은 제목을
         // 제안하면 뒤엣것이 앞엣것을 덮어쓸 수 있다.
         const taken = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+        /** 반영이 끝난 뒤의 최종 경로. 이름이 바뀌었으면 새 경로다. */
+        const finalPaths = new Set<string>();
 
         for (const plan of approved) {
           const file = this.app.vault.getAbstractFileByPath(plan.path);
@@ -730,8 +732,13 @@ export default class GeminiAssistantPlugin extends Plugin {
                 tagsAdded = true;
               }
             });
-            if (tagsAdded) tagged++;
+            if (tagsAdded) {
+              tagged++;
+              finalPaths.add(plan.path);
+            }
           }
+
+          if (destination !== null) finalPaths.add(plan.path);
 
           if (destination === null) {
             // 대상이 이미 있거나 바뀌는 것이 없다 — 덮어쓰지 않고 넘어간다.
@@ -745,8 +752,16 @@ export default class GeminiAssistantPlugin extends Plugin {
           await this.app.fileManager.renameFile(file, destination);
           taken.add(destination);
           taken.delete(plan.path);
+          finalPaths.add(destination);
+          finalPaths.delete(plan.path);
           moved++;
         }
+
+        // 이름 변경·태그가 인덱스에 반영되게 한다. 디바운스만 믿으면 2초 안에 옵시디언을
+        // 닫거나 플러그인을 내렸을 때 예약이 취소된다 — 이름 변경은 구 경로를 즉시
+        // 제거하므로 이동된 노트가 재시작 후에도 검색에서 빠지고, 태그만 바뀐 노트는
+        // 낡은 태그로 남는다.
+        await this.syncIndexAfterApply(finalPaths);
 
         return { moved, tagged, skipped };
       }).open();

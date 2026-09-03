@@ -803,13 +803,12 @@ describe("decisionKey — 기호", () => {
     expect(decisionKey("F#로 간다")).not.toBe(decisionKey("F로 간다"));
   });
 
-  it("하이픈·슬래시 차이는 여전히 합친다", () => {
-    // 지울 문자를 열거하는 대신 남길 것만 두는 이유: 열거하면 빠뜨린 문자가 생기고
-    // 그때 같은 결함이 다시 난다. 대신 이전 병합 동작이 그대로 유지된다.
-    expect(decisionKey("모놀리식-마이크로서비스 전환")).toBe(
-      decisionKey("모놀리식 마이크로서비스 전환")
-    );
-    expect(decisionKey("A/B 테스트를 한다")).toBe(decisionKey("A B 테스트를 한다"));
+  it("연산자로 쓰이는 기호는 전부 남긴다", () => {
+    // 지울 목록 방식은 빠뜨린 문자가 "남는" 쪽으로 실패한다 — 같은 결정이 두 항목이
+    // 되는 것(중복 행)은 서로 다른 결정이 하나로 합쳐지는 것(항목 손실)보다 낫다.
+    expect(decisionKey("A > B를 쓴다")).not.toBe(decisionKey("A >= B를 쓴다"));
+    expect(decisionKey("A/B 테스트를 한다")).not.toBe(decisionKey("A B 테스트를 한다"));
+    expect(decisionKey("모놀리식-마이크로서비스")).not.toBe(decisionKey("모놀리식 마이크로서비스"));
   });
 
   it("장식용 문장부호 차이는 여전히 합친다", () => {
@@ -879,5 +878,26 @@ describe("parseLedger — 근거 링크", () => {
     const out = parseLedgerDetailed(ledgerWith("[[|회의]]"));
     expect(out.entries).toEqual([]);
     expect(out.unparsed).toHaveLength(1);
+  });
+});
+
+describe("decisionKey — 등호", () => {
+  it("비교 연산자의 등호를 보존한다", () => {
+    // 허용 목록 방식에서 빠뜨렸던 문자다. 두 결정이 함께 추출되면 mergeLedger가 하나로
+    // 합쳐 문구 하나를 잃고 상태·근거까지 섞는다.
+    expect(decisionKey("A > B를 사용")).not.toBe(decisionKey("A >= B를 사용"));
+    expect(decisionKey("x = 1로 둔다")).not.toBe(decisionKey("x == 1로 둔다"));
+  });
+
+  it("서로 다른 결정이 병합되지 않는다", () => {
+    const out = mergeLedger(
+      [],
+      [
+        decision({ decision: "A > B를 사용", sources: ["a.md"] }),
+        decision({ decision: "A >= B를 사용", sources: ["b.md"] }),
+      ]
+    );
+
+    expect(out).toHaveLength(2);
   });
 });

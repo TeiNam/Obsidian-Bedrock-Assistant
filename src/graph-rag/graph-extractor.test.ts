@@ -7,6 +7,7 @@ import * as fc from "fast-check";
 
 import {
   extractMetadata,
+  stripFrontmatter,
   MetadataSource,
 } from "./graph-extractor";
 
@@ -307,5 +308,64 @@ describe("graph-extractor: extractMetadata 추출 오류 격리", () => {
 
     expect(result).toEqual(EMPTY_RESULT);
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+// ============================================
+// 프론트매터 경계는 원문에서 계산한다
+// ============================================
+/**
+ * 캐시의 `frontmatterEndOffset`을 쓰면 프론트매터를 방금 고친 직후(processFrontMatter로
+ * aliases 추가 등) 낡은 오프셋으로 잘라 YAML이 본문 청크와 발췌에 들어간다. 그 상태가
+ * 최신 mtime과 함께 굳으면 디바운스 재색인도 건너뛰어 영구히 남는다.
+ */
+describe("stripFrontmatter — 원문 기반 경계", () => {
+  /** 낡은(또는 없는) 오프셋을 돌려주는 캐시. */
+  function staleSource(offset?: number): MetadataSource {
+    return {
+      resolvedLinks: {},
+      getBacklinks: () => [],
+      getFileCache: () => (offset === undefined ? null : { frontmatterEndOffset: offset }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  it("캐시 오프셋이 낡아도 YAML을 본문에 남기지 않는다", () => {
+    const content = "---\naliases:\n  - 새 별칭\nlearned_at: 2026-09-03\n---\n\n# 노트\n본문\n";
+    // 캐시는 aliases 추가 이전의 짧은 오프셋을 갖고 있다.
+    const body = stripFrontmatter(content, staleSource(20), "a.md");
+
+    expect(body).not.toContain("aliases");
+    expect(body).not.toContain("learned_at");
+    expect(body).toContain("# 노트");
+  });
+
+  it("프론트매터가 없으면 원문 전체가 본문이다", () => {
+    const content = "# 노트\n본문\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("닫는 구분자가 없으면(손상된 YAML) 원문 전체를 본문으로 본다", () => {
+    const content = "---\naliases: x\n# 노트\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("본문에 나오는 --- 는 경계로 보지 않는다", () => {
+    // 여는 줄이 문서 첫 줄이 아니면 프론트매터가 아니다.
+    const content = "# 노트\n\n---\n\n구분선 아래 본문\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("CRLF 줄바꿈도 처리한다", () => {
+    const content = "---\r\ntitle: x\r\n---\r\n\r\n# 노트\r\n";
+    const body = stripFrontmatter(content, staleSource(), "a.md");
+    expect(body).not.toContain("title: x");
+    expect(body).toContain("# 노트");
+  });
+
+  it("빈 프론트매터도 벗긴다", () => {
+    const content = "---\n---\n\n# 노트\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toContain("# 노트");
+    expect(stripFrontmatter(content, staleSource(), "a.md").startsWith("---")).toBe(false);
   });
 });
