@@ -53,6 +53,7 @@ import {
   hasPath,
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
+import { processIfChanged } from "./second-brain/vault-write";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
 import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
@@ -84,12 +85,13 @@ import {
 import {
   suggestLinks,
   mergeRelatedLinksBlock,
+  parseRelatedLinksBlock,
   groupBySource,
   RELATED_LINKS_BLOCK_KEY,
 } from "./second-brain/link-suggestions";
 import { upsertGeneratedBlock, getGeneratedBlock } from "./second-brain/sentinel-blocks";
 import { VIEW_I18N } from "./chat-view-i18n";
-import { runReconcileDetailed, applyReconciliation } from "./second-brain/reconcile";
+import { runReconcileDetailed, applyReconciliations } from "./second-brain/reconcile";
 import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 
@@ -103,6 +105,13 @@ const INDEX_DEBOUNCE_MS = 2000;
  * 주기가 됐는지 얼마나 자주 확인하는가"이며, 확인 자체는 설정 비교 몇 번이라 싸다.
  * 30분이면 예정 시각에서 최대 30분 늦게 실행된다.
  */
+/**
+ * Inbox 검토에 넘길 노트 발췌의 최대 길이.
+ *
+ * 인덱서의 발췌 길이와 같게 둔다 — LLM이 보는 양이 경로에 따라 달라질 이유가 없다.
+ */
+const TRIAGE_EXCERPT_CHARS = 500;
+
 const SCHEDULER_TICK_MS = 30 * 60 * 1000;
 
 /** 접근 이력 저장 디바운스 지연(ms). 노트를 열 때마다 디스크에 쓰지 않기 위함이다. */
@@ -598,14 +607,29 @@ export default class GeminiAssistantPlugin extends Plugin {
         .slice(0, 30)
         .map(([tag]) => tag);
 
-      const prompt = buildTriagePrompt(
-        inboxFiles.map((f) => ({
-          path: f.path,
-          excerpt: byPath.get(f.path)?.excerpt ?? "",
-        })),
-        folders,
-        commonTags
+      // 발췌는 인덱스가 아니라 **파일에서 직접** 읽는다. 방금 만들거나 고친 노트는
+      // 디바운스·임베딩 큐를 아직 통과하지 않았고, 플러그인이 꺼져 있는 동안 만든 노트는
+      // 인덱스에 아예 없다. 그러면 빈 문자열이나 이전 내용으로 이름 변경·이동을
+      // 제안하게 되는데, 그건 사용자가 검토를 맡긴 그 노트에 대한 제안이 아니다.
+      //
+      // 최대 MAX_TRIAGE_NOTES(12)개라 읽기 비용은 무시할 수 있다.
+      const excerpts = await Promise.all(
+        inboxFiles.map(async (f) => {
+          try {
+            const content = await this.app.vault.cachedRead(f);
+            // 프론트매터를 빼야 YAML이 발췌를 채워 LLM이 본문을 못 보는 일을 막는다.
+            const end = this.app.metadataCache.getFileCache(f)?.frontmatterPosition?.end?.offset;
+            const body = typeof end === "number" && end >= 0 ? content.slice(end) : content;
+            return { path: f.path, excerpt: body.slice(0, TRIAGE_EXCERPT_CHARS).trim() };
+          } catch (error) {
+            // 읽기 실패는 인덱스 발췌로 폴백한다 — 한 파일 때문에 검토 전체를 막지 않는다.
+            console.error(`[Inbox 검토] 노트 읽기 실패 (${f.path}):`, error);
+            return { path: f.path, excerpt: byPath.get(f.path)?.excerpt ?? "" };
+          }
+        })
       );
+
+      const prompt = buildTriagePrompt(excerpts, folders, commonTags);
 
       const response = await this.aiClient.converseLight(
         prompt,
@@ -825,6 +849,8 @@ export default class GeminiAssistantPlugin extends Plugin {
     new CanonicalizeModal(this.app, this, clusters, async (approved) => {
       let notes = 0;
       let aliases = 0;
+      /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
+      const touched = new Set<string>();
 
       for (const cluster of approved) {
         const file = this.app.vault.getAbstractFileByPath(cluster.canonical.path);
@@ -832,6 +858,7 @@ export default class GeminiAssistantPlugin extends Plugin {
 
         // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
         // 형식이 뭉개진다.
+        let addedAliases = 0;
         await this.app.fileManager.processFrontMatter(file, (fm) => {
           // 원시 배열 길이가 아니라 **정규화 후** 개수와 비교한다. `[1, null, "old"]`처럼
           // 잡음이 섞이면 정규화 후가 원시 길이보다 짧아, 별칭이 실제로 늘었는데도
@@ -842,19 +869,26 @@ export default class GeminiAssistantPlugin extends Plugin {
             fm.aliases = merged;
             // 전체 목록 길이가 아니라 실제로 늘어난 개수를 센다. 재실행 시 0개
             // 추가인데 "N개 추가"라고 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
-            aliases += merged.length - before;
+            addedAliases = merged.length - before;
           }
         });
+        aliases += addedAliases;
 
         // 후보 목록은 Sentinel_Block으로 병합한다 — 사용자 텍스트 보존 + 재실행 멱등.
-        await this.app.vault.process(file, (content) =>
+        // 내용이 그대로면 쓰지 않는다. 같은 군집을 다시 승인할 때 같은 바이트를 써서
+        // mtime만 바뀌면 인덱서가 그 노트를 다시 임베딩한다(API 비용).
+        const blockChanged = await processIfChanged(this.app, file, (content) =>
           upsertGeneratedBlock(content, CANONICAL_BLOCK_KEY, buildCanonicalBlock(cluster))
         );
-        notes++;
+        // 실제로 바뀐 노트만 센다.
+        if (blockChanged || addedAliases > 0) {
+          notes++;
+          touched.add(cluster.canonical.path);
+        }
       }
 
-      for (const cluster of approved) {
-        const file = this.app.vault.getAbstractFileByPath(cluster.canonical.path);
+      for (const path of touched) {
+        const file = this.app.vault.getAbstractFileByPath(path);
         if (file instanceof TFile) await this.indexer.indexFile(file);
       }
 
@@ -896,29 +930,36 @@ export default class GeminiAssistantPlugin extends Plugin {
     new LinkSuggestionModal(this.app, this, suggestions, async (approved) => {
       const grouped = groupBySource(approved);
       let links = 0;
+      /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
+      const touched = new Set<string>();
 
       for (const [sourcePath, group] of grouped) {
         const file = this.app.vault.getAbstractFileByPath(sourcePath);
         if (!(file instanceof TFile)) continue;
 
-        // process로 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있고,
-        // 기존 블록의 링크를 읽어 합집합으로 써야 한다 — 새 승인분만으로 블록을 만들면
-        // 이전에 승인한 링크가 사라진다.
-        await this.app.vault.process(file, (content) =>
-          upsertGeneratedBlock(
-            content,
-            RELATED_LINKS_BLOCK_KEY,
-            mergeRelatedLinksBlock(
-              getGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY),
-              group
-            )
-          )
-        );
-        links += group.length;
+        // 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있고, 기존 블록의
+        // 링크를 읽어 합집합으로 써야 한다 — 새 승인분만으로 블록을 만들면 이전에
+        // 승인한 링크가 사라진다. 내용이 그대로면 쓰지 않아 불필요한 재임베딩을 막는다.
+        //
+        // added 대입은 transform이 두 번 불려도 안전하다(같은 값을 두 번 넣는다).
+        // 실제로 쓰인 것은 마지막 호출의 결과이므로 그 값이 남는 것이 맞다.
+        let added = 0;
+        const wrote = await processIfChanged(this.app, file, (content) => {
+          const existing = getGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY);
+          const merged = mergeRelatedLinksBlock(existing, group);
+          // 이미 붙어 있던 링크를 다시 세면 "N건 추가"가 사실과 달라진다.
+          added =
+            parseRelatedLinksBlock(merged).length - parseRelatedLinksBlock(existing).length;
+          return upsertGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY, merged);
+        });
+
+        if (!wrote) continue;
+        links += added;
+        touched.add(sourcePath);
       }
 
       // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
-      for (const sourcePath of grouped.keys()) {
+      for (const sourcePath of touched) {
         const file = this.app.vault.getAbstractFileByPath(sourcePath);
         if (file instanceof TFile) await this.indexer.indexFile(file);
       }
@@ -959,16 +1000,13 @@ export default class GeminiAssistantPlugin extends Plugin {
       this,
       outcome.contradictions,
       async (approved) => {
-        // applyReconciliation은 한 건씩 받는다. learned_at에 쓸 날짜는 한 번만 계산해
-        // 같은 배치에 같은 시점이 기록되게 한다.
-        const today = buildDateStr(new Date());
-        const summaries: string[] = [];
-        for (const item of approved) {
-          summaries.push(
-            await applyReconciliation(this.buildSecondBrainContext(), item, today)
-          );
-        }
-        return summaries.join("\n\n");
+        // 항목별로 따로 반영하면 두 항목이 같은 노트를 가리킬 때 뒤엣것이 앞엣것을
+        // 덮어쓴다(둘 다 같은 Sentinel_Block 키를 쓴다). 노트 단위로 합쳐 한 번씩 쓴다.
+        return applyReconciliations(
+          this.buildSecondBrainContext(),
+          approved,
+          buildDateStr(new Date())
+        );
       }
     ).open();
   }
@@ -1096,7 +1134,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       },
     });
 
-    // 모순 검토·반영 — reconcile 2단계(applyReconciliation)의 유일한 진입점.
+    // 모순 검토·반영 — reconcile 2단계(applyReconciliations)의 유일한 진입점.
     //
     // 기존 "모순 점검"은 비파괴 리포트만 낸다(Req 8.2). 반영은 명시적 승인을 요구하도록
     // 처음부터 별 함수로 분리돼 있었지만(Req 8.4) 승인 화면이 없어 도달할 수 없었다.

@@ -19,6 +19,7 @@ import {
   runReconcile,
   runReconcileDetailed,
   applyReconciliation,
+  applyReconciliations,
   type Contradiction,
 } from "./reconcile";
 import { buildAiFirstNote, parseAiFirstNote } from "./ai-first-format";
@@ -628,5 +629,195 @@ describe("runReconcileDetailed — 후보가 전부 무효인 경우", () => {
     const outcome = await runReconcileDetailed(ctx, "주제 X");
 
     expect(outcome.report).toContain("발견된 모순이 없습니다");
+  });
+});
+
+// ============================================
+// 프론트매터 손실 방지
+// ============================================
+/**
+ * 과거에는 `parseAiFirstNote`가 성공하면 `buildAiFirstNote`로 재직렬화했다. 그 판정은
+ * "프론트매터가 닫혀 있다"뿐이라 모든 일반 노트가 통과했고, 재직렬화가 아는 키만 남기고
+ * 나머지를 지웠다. 모순 반영 대상은 검색에 걸린 사용자 노트이므로 실제 데이터 손실이다.
+ */
+describe("applyReconciliation — 프론트매터 보존", () => {
+  const ORIGINAL = [
+    "---",
+    "aliases:",
+    "  - 별칭 하나",
+    "  - 별칭 둘",
+    "cssclasses: [wide]",
+    "내가만든키: 값",
+    "# YAML 주석",
+    "tags:",
+    "  - work",
+    "learned_at: 2020-01-01",
+    "---",
+    "",
+    "# 내 노트",
+    "",
+    "직접 쓴 본문.",
+  ].join("\n");
+
+  it("모르는 키·목록형 값·주석을 지우지 않는다", async () => {
+    const file = new TFile();
+    file.path = "Notes/내 노트.md";
+
+    let written = "";
+    const ctx = {
+      app: {
+        vault: {
+          read: async () => ORIGINAL,
+          process: async (_f: TFile, fn: (c: string) => string) => {
+            written = fn(ORIGINAL);
+            return written;
+          },
+          getAbstractFileByPath: () => file,
+        },
+      },
+    } as unknown as Parameters<typeof applyReconciliation>[0];
+
+    await applyReconciliation(
+      ctx,
+      { notePaths: ["Notes/내 노트.md"], statements: [], suggestion: "정정안 본문" },
+      "2026-09-03"
+    );
+
+    // 프론트매터의 모든 키가 남아야 한다.
+    expect(written).toContain("aliases:");
+    expect(written).toContain("별칭 하나");
+    expect(written).toContain("cssclasses: [wide]");
+    expect(written).toContain("내가만든키: 값");
+    expect(written).toContain("# YAML 주석");
+    expect(written).toContain("- work");
+    // learned_at만 갱신된다.
+    expect(written).toContain("learned_at: 2026-09-03");
+    expect(written).not.toContain("learned_at: 2020-01-01");
+    // 사용자 본문과 정정안이 함께 있다.
+    expect(written).toContain("직접 쓴 본문.");
+    expect(written).toContain("정정안 본문");
+  });
+});
+
+// ============================================
+// 같은 노트를 가리키는 여러 승인
+// ============================================
+/**
+ * 정정안은 대상 노트마다 고정 키 `reconcile` Sentinel_Block에 upsert된다. 항목별로 따로
+ * 반영하면 두 항목이 같은 노트를 가리킬 때 뒤엣것이 앞엣것을 교체한다 — 요약은 둘 다
+ * 반영했다고 말하지만 노트에는 마지막 것만 남는다.
+ */
+describe("applyReconciliations — 노트 단위 병합", () => {
+  /** 쓰기를 누적 반영하는 모킹 Vault. */
+  function makeAccumulatingCtx(initial: string) {
+    const file = new TFile();
+    file.path = "A.md";
+    let content = initial;
+
+    const ctx = {
+      app: {
+        vault: {
+          read: async () => content,
+          process: async (_f: TFile, fn: (c: string) => string) => {
+            content = fn(content);
+            return content;
+          },
+          getAbstractFileByPath: (p: string) => (p === "A.md" ? file : null),
+        },
+      },
+    } as unknown as Parameters<typeof applyReconciliations>[0];
+
+    return { ctx, read: () => content };
+  }
+
+  it("같은 노트의 두 정정안이 모두 남는다", async () => {
+    const { ctx, read } = makeAccumulatingCtx("# 노트\n\n본문.\n");
+
+    await applyReconciliations(
+      ctx,
+      [
+        { notePaths: ["A.md"], statements: [], suggestion: "첫 번째 정정" },
+        { notePaths: ["A.md"], statements: [], suggestion: "두 번째 정정" },
+      ],
+      "2026-09-03"
+    );
+
+    const out = read();
+    expect(out).toContain("첫 번째 정정");
+    expect(out).toContain("두 번째 정정");
+    // 여러 건이면 번호를 붙인다.
+    expect(out).toContain("1. 첫 번째 정정");
+    expect(out).toContain("2. 두 번째 정정");
+    // 사용자 본문은 보존된다.
+    expect(out).toContain("본문.");
+  });
+
+  it("노트당 한 번만 쓴다", async () => {
+    const file = new TFile();
+    file.path = "A.md";
+    let content = "# 노트\n";
+    const process = vi.fn(async (_f: TFile, fn: (c: string) => string) => {
+      content = fn(content);
+      return content;
+    });
+    const ctx = {
+      app: {
+        vault: {
+          read: async () => content,
+          process,
+          getAbstractFileByPath: () => file,
+        },
+      },
+    } as unknown as Parameters<typeof applyReconciliations>[0];
+
+    await applyReconciliations(
+      ctx,
+      [
+        { notePaths: ["A.md"], statements: [], suggestion: "가" },
+        { notePaths: ["A.md"], statements: [], suggestion: "나" },
+      ],
+      "2026-09-03"
+    );
+
+    expect(process).toHaveBeenCalledTimes(1);
+  });
+
+  it("같은 문구가 두 항목에 있으면 한 번만 넣는다", async () => {
+    const { ctx, read } = makeAccumulatingCtx("# 노트\n");
+
+    await applyReconciliations(
+      ctx,
+      [
+        { notePaths: ["A.md"], statements: [], suggestion: "같은 정정" },
+        { notePaths: ["A.md"], statements: [], suggestion: "같은 정정" },
+      ],
+      "2026-09-03"
+    );
+
+    const out = read();
+    expect(out.match(/같은 정정/g)).toHaveLength(1);
+    // 한 건이므로 번호를 붙이지 않는다.
+    expect(out).not.toContain("1. 같은 정정");
+  });
+
+  it("한 건만 승인하면 기존 동작과 같다", async () => {
+    const { ctx, read } = makeAccumulatingCtx("# 노트\n");
+
+    const summary = await applyReconciliations(
+      ctx,
+      [{ notePaths: ["A.md"], statements: [], suggestion: "하나뿐" }],
+      "2026-09-03"
+    );
+
+    expect(read()).toContain("하나뿐");
+    expect(read()).not.toContain("1. 하나뿐");
+    expect(summary).toContain("갱신: 1건");
+  });
+
+  it("대상 경로가 없으면 안내만 한다", async () => {
+    const { ctx } = makeAccumulatingCtx("# 노트\n");
+
+    const summary = await applyReconciliations(ctx, [], "2026-09-03");
+    expect(summary).toContain("반영할 대상 노트가 없습니다");
   });
 });

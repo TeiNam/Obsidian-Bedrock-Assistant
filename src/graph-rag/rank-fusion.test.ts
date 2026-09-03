@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { fuseRanks, RRF_K, type RankedList } from "./rank-fusion";
+import { fuseRanks, RRF_K, type RankedList, reserveSlots } from "./rank-fusion";
 import { recallAt, meanOf, runEval, type EvalCase } from "./retrieval-metrics";
 
 /** 경로만 뽑는다. */
@@ -198,5 +198,68 @@ describe("하이브리드 융합 이득 계측", () => {
 
     expect(before).toBeCloseTo(1 / 3);
     expect(after).toBe(1);
+  });
+});
+
+// ============================================
+// 한 목록 전용 후보의 자리 보장
+// ============================================
+/**
+ * RRF의 K=60은 상위 순위 간 점수 차를 매우 작게 만든다. 가중치 0.5를 곱한 어휘 1위는
+ * dense 10위보다도 낮아서, limit으로 자르는 단계에서 항상 사라진다 — 하이브리드 검색을
+ * 넣은 이유가 바로 그 경우다.
+ */
+describe("reserveSlots", () => {
+  const ranked = ["a", "b", "c", "d", "e"];
+
+  it("이미 상위권에 있으면 아무것도 바꾸지 않는다", () => {
+    expect(reserveSlots(ranked, ["b"], 3)).toEqual(["a", "b", "c"]);
+  });
+
+  it("잘려나간 예약분을 목록 끝 자리에 넣는다", () => {
+    // dense 상위권(a, b)은 그대로 두고 마지막 자리만 내준다.
+    expect(reserveSlots(ranked, ["e"], 3)).toEqual(["a", "b", "e"]);
+  });
+
+  it("예약분이 여러 개면 그만큼의 끝자리를 쓴다", () => {
+    expect(reserveSlots(ranked, ["d", "e"], 3)).toEqual(["a", "d", "e"]);
+  });
+
+  it("limit을 넘기지 않는다", () => {
+    expect(reserveSlots(ranked, ["d", "e"], 2)).toEqual(["d", "e"]);
+    expect(reserveSlots(ranked, ["d", "e"], 1)).toEqual(["d"]);
+  });
+
+  it("limit이 0 이하면 빈 목록이다", () => {
+    expect(reserveSlots(ranked, ["a"], 0)).toEqual([]);
+  });
+
+  it("예약이 없으면 단순히 자른다", () => {
+    expect(reserveSlots(ranked, [], 2)).toEqual(["a", "b"]);
+  });
+
+  it("결과에 중복이 없다", () => {
+    const out = reserveSlots(ranked, ["a", "e"], 3);
+    expect(new Set(out).size).toBe(out.length);
+  });
+});
+
+// ============================================
+// 실제 산수: 어휘 1위가 dense 10위에 밀린다
+// ============================================
+describe("RRF 가중치의 한계 (reserveSlots가 필요한 이유)", () => {
+  it("가중치를 곱한 어휘 1위는 dense 10위보다 낮다", () => {
+    const fused = fuseRanks([
+      { name: "dense", paths: Array.from({ length: 10 }, (_, i) => `d${i}`) },
+      { name: "lexical", paths: ["정확일치.md"], weight: 0.5 },
+    ]);
+
+    // limit=10으로 자르면 정확 일치가 사라진다.
+    const paths = fused.map((f) => f.path);
+    expect(paths.indexOf("정확일치.md")).toBe(10);
+    expect(paths.slice(0, 10)).not.toContain("정확일치.md");
+
+    // 자리를 예약하면 남는다.
+    expect(reserveSlots(paths, ["정확일치.md"], 10)).toContain("정확일치.md");
   });
 });

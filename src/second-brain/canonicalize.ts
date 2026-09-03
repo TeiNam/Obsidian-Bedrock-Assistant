@@ -367,8 +367,12 @@ export function mergeAliases(
 
   for (const alias of normalizeAliases(existing)) add(alias);
 
-  // 정본 자신의 제목·파일명은 별칭이 아니다.
-  seen.add(cluster.canonical.title.trim().toLowerCase());
+  // 정본 **파일명**만 제외한다. 옵시디언이 이미 파일명으로 링크를 풀기 때문에 같은 값을
+  // 별칭에 넣어도 하는 일이 없다.
+  //
+  // 정본의 H1은 제외하지 않는다. 정본 `People/john-profile.md`의 H1이 "John"이고 중복
+  // 노트가 `Inbox/John.md`인 경우, H1으로 막으면 별칭이 하나도 안 남아 중복 노트를 지운
+  // 뒤 기존 `[[John]]` 링크가 정본으로 해석되지 않는다 — 별칭의 존재 이유가 바로 그것이다.
   seen.add(basename(cluster.canonical.path).trim().toLowerCase());
 
   // 제목과 파일명을 **둘 다** 넣는다. 옵시디언은 `[[이름]]`을 파일명으로 먼저 풀기

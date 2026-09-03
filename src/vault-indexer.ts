@@ -20,7 +20,7 @@ import {
 import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { combineAndRank } from "./graph-rag/score-combiner";
 import { filterIndex, isFilterEmpty, type SearchFilter } from "./graph-rag/entry-filter";
-import { fuseRanks } from "./graph-rag/rank-fusion";
+import { fuseRanks, reserveSlots } from "./graph-rag/rank-fusion";
 
 // === Graph_RAG_Search 결과 타입 (task 8.4) ===
 // 기존 search()의 반환 타입 Array<{path,title,excerpt,score}>을 대체하는 신규 API 시그니처.
@@ -84,6 +84,14 @@ export interface GraphRagResult {
  * 31위 이후가 어휘 신호를 아예 받지 못한다).
  */
 const LEXICAL_POOL_SIZE = 30;
+
+/**
+ * 어휘 목록에만 있는 후보에게 보장할 결과 자리 수.
+ *
+ * 2로 둔 이유: 정확 문자열 질의의 정답은 보통 한두 개다. 더 늘리면 어휘 상위권이 dense
+ * 결과를 밀어내기 시작하고, dense가 이 플러그인의 주 신호다.
+ */
+const LEXICAL_RESERVED_SLOTS = 2;
 
 /**
  * 융합에서 어휘 목록에 주는 가중치. dense가 이 플러그인의 주 신호이므로 보조로 둔다.
@@ -650,6 +658,17 @@ export class VaultIndexer {
       { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
     ]);
 
+    // 8-1) 어휘 전용 상위 후보의 자리를 보장한다.
+    //
+    //      가중치를 곱한 어휘 1위(0.5/61)는 dense 10위(1/70)보다도 낮다. 두 목록에 다
+    //      있는 노트는 합산되어 올라가지만, 어휘에만 있는 노트는 limit으로 자를 때 항상
+    //      사라진다 — 하이브리드를 넣은 이유가 바로 그 경우다(자세한 산수는 reserveSlots).
+    const densePaths = new Set(combined.map((r) => r.path));
+    const lexicalOnly = lexical
+      .filter((l) => !densePaths.has(l.path))
+      .slice(0, LEXICAL_RESERVED_SLOTS)
+      .map((l) => l.path);
+
     // 융합 순위로 항목을 재구성한다. dense 쪽 메타데이터(hop/isSeed/시드 정보)는
     // 있으면 그대로 살리고, 어휘로만 잡힌 노트는 시드로 취급한다(그래프 경로가 없다).
     const denseByPath = new Map(combined.map((r) => [r.path, r]));
@@ -660,23 +679,30 @@ export class VaultIndexer {
     // 그대로 실으면 "관련도 1.6%"로 오해를 만든다. 키워드 폴백 경로도 같은 규칙이다.
     const maxFused = fused.length > 0 ? fused[0].score : 0;
 
-    const items: GraphRagSearchItem[] = fused.slice(0, limit).map((f) => {
-      const d = denseByPath.get(f.path);
-      const l = lexicalByPath.get(f.path);
+    const fusedByPath = new Map(fused.map((f) => [f.path, f]));
+    const finalPaths = reserveSlots(fused.map((f) => f.path), lexicalOnly, limit);
+
+    const items: GraphRagSearchItem[] = finalPaths.map((path) => {
+      const f = fusedByPath.get(path);
+      const d = denseByPath.get(path);
+      const l = lexicalByPath.get(path);
       const base = d ?? l;
+      const score = f?.score ?? 0;
       return {
-        path: f.path,
-        title: base?.title ?? f.path,
+        path,
+        title: base?.title ?? path,
         excerpt: base?.excerpt ?? "",
-        combinedScore: maxFused > 0 ? f.score / maxFused : 0,
+        combinedScore: maxFused > 0 ? score / maxFused : 0,
         vectorScore: d?.vectorScore ?? 0,
         hop: d?.hop ?? 0,
         isSeed: d?.isSeed ?? true,
         seedPath: d?.seedPath ?? null,
         // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
         seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
-        // 반환할 항목에 대해서만 최적 청크를 다시 찾아 헤딩을 붙인다.
-        heading: this.bestChunkMatch(queryEmbedding, f.path)?.heading ?? null,
+        // 헤딩은 **임베딩으로 맞은 청크**의 헤딩이다. dense가 못 찾아 어휘로만 들어온
+        // 노트에는 붙이지 않는다 — 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"이라고
+        // 표시하면 인용 앵커가 엉뚱한 곳을 가리킨다.
+        heading: d ? this.bestChunkMatch(queryEmbedding, path)?.heading ?? null : null,
       };
     });
 

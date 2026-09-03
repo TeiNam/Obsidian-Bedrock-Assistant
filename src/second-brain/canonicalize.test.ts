@@ -373,3 +373,38 @@ describe("normalizeAliases", () => {
     expect(merged.length).toBeGreaterThan(before.length);
   });
 });
+
+describe("mergeAliases — 정본 파일명이 H1과 다를 때", () => {
+  it("정본 H1과 같은 중복 파일명을 별칭으로 남긴다", () => {
+    // 별칭의 존재 이유: 중복 노트를 지운 뒤 그 노트를 가리켰던 링크가 정본으로 풀리게
+    // 하는 것. 정본 H1으로 막으면 바로 이 경우에 별칭이 하나도 안 남는다.
+    const cluster = {
+      canonical: {
+        path: "People/john-profile.md",
+        title: "John",
+        similarity: 1,
+        bodyLength: 100,
+        linkCount: 5,
+      },
+      duplicates: [
+        { path: "Inbox/John.md", title: "John", similarity: 0.95, bodyLength: 10, linkCount: 0 },
+      ],
+      reason: "same-title" as const,
+    };
+
+    expect(mergeAliases(undefined, cluster)).toEqual(["John"]);
+  });
+
+  it("정본 파일명과 같은 값은 여전히 제외한다", () => {
+    // 옵시디언이 이미 파일명으로 링크를 푼다 — 같은 값을 별칭에 넣어도 하는 일이 없다.
+    const cluster = {
+      canonical: { path: "Notes/John.md", title: "다른 제목", similarity: 1, bodyLength: 100, linkCount: 5 },
+      duplicates: [
+        { path: "Inbox/x.md", title: "John", similarity: 0.95, bodyLength: 10, linkCount: 0 },
+      ],
+      reason: "similar-title" as const,
+    };
+
+    expect(mergeAliases(undefined, cluster)).toEqual(["x"]);
+  });
+});

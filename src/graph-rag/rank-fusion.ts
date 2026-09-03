@@ -90,3 +90,39 @@ export function fuseRanks(lists: readonly RankedList[]): FusedRank[] {
     }
   );
 }
+
+/**
+ * 한 목록에만 있는 상위 후보의 결과 자리를 보장한다.
+ *
+ * 왜 필요한가: RRF의 K는 60이라 상위 순위 간 점수 차가 매우 작다(1위 1/61 vs 10위 1/70,
+ * 15% 차이). 어휘 목록에 가중치 0.5를 곱하면 **어휘 1위**가 0.5/61 ≈ 0.0082가 되어
+ * **dense 10위** 1/70 ≈ 0.0143보다도 낮다. 두 목록에 다 있는 노트는 점수가 합산되어
+ * 올라가지만, 어휘 목록에만 있는 노트는 `limit=10`으로 자르는 단계에서 항상 사라진다.
+ *
+ * 그런데 하이브리드 검색을 넣은 이유가 바로 그 경우다 — 에러 코드·함수명처럼 dense가
+ * 상위권 밖으로 밀어낸 정확 문자열을 어휘가 잡아오는 것. 가중치를 1.0으로 올리면 어휘
+ * 1위가 dense 1위와 동점이 되어 이번엔 어휘가 주 신호를 뒤집는다. 순위 조정으로는 두
+ * 요구를 동시에 만족시킬 수 없어 자리를 예약한다.
+ *
+ * 예약분은 **목록 끝의 자리**를 차지한다 — dense 상위권을 밀어내지 않는다.
+ *
+ * @param ranked 융합 순위(경로 순서)
+ * @param reserved 자리를 보장할 경로. 앞쪽이 우선이다.
+ * @param limit 최종 결과 수
+ */
+export function reserveSlots(
+  ranked: readonly string[],
+  reserved: readonly string[],
+  limit: number
+): string[] {
+  if (limit <= 0) return [];
+
+  const head = ranked.slice(0, limit);
+  const inHead = new Set(head);
+  const missing = reserved.filter((path) => !inHead.has(path));
+  if (missing.length === 0) return head;
+
+  // 예약분이 limit보다 많으면 예약분만 남는다(그럴 만큼 예약하지 않는 것이 호출부 책임).
+  const take = missing.slice(0, limit);
+  return [...head.slice(0, limit - take.length), ...take];
+}

@@ -22,7 +22,6 @@ import {
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
-import { parseAiFirstNote, buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { parseJsonArray, toStringArray } from "./llm-json";
@@ -341,12 +340,6 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
  */
 const RECONCILE_BLOCK_KEY = "reconcile";
 
-/** 노트 경로에서 제목 후보(확장자 제거한 파일명)를 추론한다. */
-function deriveTitleFromPath(notePath: string): string {
-  const base = notePath.slice(notePath.lastIndexOf("/") + 1);
-  return base.endsWith(".md") ? base.slice(0, -3) : base;
-}
-
 /**
  * 비(非) AI-first 노트의 프론트매터 `learned_at`만 최소 변경으로 갱신한다.
  *
@@ -384,47 +377,28 @@ function updateLearnedAtMinimal(content: string, now: string): string {
 /**
  * 단일 노트에 승인된 정정안을 반영하고 `learned_at`을 갱신한 새 내용을 만든다 — 순수 보조.
  *
- * - AI-first 노트(parseAiFirstNote가 성공)면 메타데이터를 보존한 채 `learned_at`만 now로 바꾸고,
- *   본문에 정정안을 RECONCILE_BLOCK_KEY Sentinel_Block으로 병합한 뒤 buildAiFirstNote로 재직렬화한다.
- * - 그 외(비 AI-first)면 정정안을 Sentinel_Block으로 문서 끝에 병합하고 프론트매터 `learned_at`만
- *   최소 변경으로 갱신한다.
- * - 두 경로 모두 Generated_Region만 교체하므로 사람이 작성한 User_Region은 보존된다.
+ * 정정안을 Sentinel_Block으로 문서 끝에 병합하고 프론트매터 `learned_at`만 최소 변경으로
+ * 갱신한다. Generated_Region만 교체하므로 사람이 작성한 User_Region은 보존된다.
+ *
+ * **AI-first 형식으로 재직렬화하지 않는다.** 과거에는 `parseAiFirstNote`가 성공하면
+ * `buildAiFirstNote`로 다시 썼는데, 그 판정은 "프론트매터가 닫혀 있다" 뿐이라 **모든**
+ * 일반 노트가 통과한다. 그러면 재직렬화가 아는 키(title/recency/confidence/valid_from/
+ * learned_at/source/tags)만 남기고 `aliases`·`cssclasses`·사용자 정의 키·YAML 주석·목록형
+ * tags를 조용히 지운다. 모순 반영 대상은 검색에 걸린 **사용자 노트**이므로 실제 데이터
+ * 손실이다.
+ *
+ * 최소 갱신 경로가 AI-first 노트에도 똑같이 맞는다 — `learned_at` 줄만 바꾸고 나머지는
+ * 건드리지 않으므로 메타데이터 보존은 오히려 더 확실하다.
  *
  * @param current 원본 노트 내용
- * @param notePath 노트 경로(제목 추론용)
  * @param suggestion 승인된 정정안(빈 문자열이면 본문은 그대로 두고 learned_at만 갱신)
  * @param now YYYY-MM-DD 형식의 갱신 시점
  */
-function applyToNoteContent(
-  current: string,
-  notePath: string,
-  suggestion: string,
-  now: string,
-): string {
-  const hasSuggestion = suggestion.trim() !== "";
-  const parsed = parseAiFirstNote(current);
-
-  if (!parsed.parseFailed) {
-    // AI-first 노트: 본문에만 정정안을 병합(User_Region 보존)하고 메타의 learned_at을 갱신한다.
-    const newBody = hasSuggestion
-      ? upsertGeneratedBlock(parsed.body, RECONCILE_BLOCK_KEY, suggestion)
-      : parsed.body;
-    const meta: AiFirstMeta = {
-      title: parsed.meta.title ?? deriveTitleFromPath(notePath),
-      recency: parsed.meta.recency ?? "evergreen",
-      confidence: parsed.meta.confidence ?? "medium",
-      validFrom: parsed.meta.validFrom,
-      learnedAt: now, // Bi_Temporal: 정정을 알게 된 시점으로 갱신 (Req 8.4)
-      source: parsed.meta.source,
-      tags: parsed.meta.tags,
-    };
-    return buildAiFirstNote({ meta, body: newBody }, now);
-  }
-
-  // 비 AI-first 노트: 정정안 Sentinel_Block을 끝에 병합한 뒤 프론트매터 learned_at만 갱신한다.
-  const withSuggestion = hasSuggestion
-    ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, suggestion)
-    : current;
+function applyToNoteContent(current: string, suggestion: string, now: string): string {
+  const withSuggestion =
+    suggestion.trim() !== ""
+      ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, suggestion)
+      : current;
   return updateLearnedAtMinimal(withSuggestion, now);
 }
 
@@ -452,29 +426,77 @@ export async function applyReconciliation(
   approved: Contradiction,
   now: string,
 ): Promise<string> {
-  const targets = Array.isArray(approved?.notePaths) ? approved.notePaths : [];
-  if (targets.length === 0) {
+  return applyReconciliations(ctx, [approved], now);
+}
+
+/**
+ * 노트 하나에 정정안을 반영한다. 실제로 썼으면 true.
+ *
+ * 존재하지 않는 노트는 생성하지 않는다(비파괴, 승인 범위 한정). 내용이 그대로면 쓰지
+ * 않는다 — 같은 바이트를 써서 mtime만 바꾸면 인덱서가 그 노트를 다시 임베딩한다.
+ */
+async function writeSuggestion(
+  ctx: SecondBrainContext,
+  notePath: string,
+  suggestion: string,
+  now: string,
+): Promise<boolean> {
+  const file = ctx.app.vault.getAbstractFileByPath(notePath);
+  if (!(file instanceof TFile)) return false;
+
+  return processIfChanged(ctx.app, file, (content) =>
+    applyToNoteContent(content, suggestion, now)
+  );
+}
+
+/**
+ * 승인된 정정안 여러 건을 **노트 단위로 합쳐** 한 번씩 반영한다 (Req 8.4).
+ *
+ * 왜 합치는가: 정정안은 대상 노트마다 고정 키 `reconcile` Sentinel_Block에 upsert된다.
+ * 한 배치에서 두 승인 항목의 `notePaths`가 같은 노트를 포함하면 두 번째 쓰기가 첫 번째를
+ * **교체**한다 — 요약은 둘 다 반영했다고 말하지만 노트에는 마지막 것만 남는다. 사용자가
+ * 명시적으로 승인한 정정이 조용히 사라지는 것이므로 노트별로 모아 한 번만 쓴다.
+ *
+ * 항목별 키를 쪼개지 않은 이유: 키가 항목 순서에 묶이면 다음 실행에서 순서가 바뀔 때
+ * 같은 노트에 낡은 블록이 남는다. 하나의 블록에 번호를 붙이는 쪽이 멱등하다.
+ *
+ * @param approved 사용자가 승인한 모순 항목들
+ * @param now YYYY-MM-DD 형식의 반영 시점(learned_at 갱신용, 주입)
+ */
+export async function applyReconciliations(
+  ctx: SecondBrainContext,
+  approved: readonly Contradiction[],
+  now: string,
+): Promise<string> {
+  // 노트별 정정안. 같은 문구가 두 항목에 있으면 한 번만 넣는다.
+  const byNote = new Map<string, string[]>();
+
+  for (const item of approved) {
+    const suggestion = (item?.suggestion ?? "").trim();
+    const targets = Array.isArray(item?.notePaths) ? item.notePaths : [];
+    for (const rawPath of targets) {
+      const notePath = normalizePath(rawPath);
+      const list = byNote.get(notePath) ?? [];
+      if (suggestion !== "" && !list.includes(suggestion)) list.push(suggestion);
+      byNote.set(notePath, list);
+    }
+  }
+
+  if (byNote.size === 0) {
     return "반영할 대상 노트가 없습니다(승인된 모순 항목에 노트 경로가 없습니다).";
   }
 
   const updated: string[] = [];
   const skipped: string[] = [];
 
-  for (const rawPath of targets) {
-    const notePath = normalizePath(rawPath);
-    const file = ctx.app.vault.getAbstractFileByPath(notePath);
+  for (const [notePath, suggestions] of byNote) {
+    // 한 건이면 그대로, 여러 건이면 번호를 붙여 하나의 블록에 담는다.
+    const merged =
+      suggestions.length <= 1
+        ? suggestions[0] ?? ""
+        : suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
 
-    // 존재하지 않는 노트는 생성하지 않고 건너뛴다(비파괴, 승인 범위 한정).
-    if (!(file instanceof TFile)) {
-      skipped.push(notePath);
-      continue;
-    }
-
-    // 실제 변경이 있을 때만 기록한다(멱등성 — 동일 내용이면 쓰기 생략).
-    const wrote = await processIfChanged(ctx.app, file, (content) =>
-      applyToNoteContent(content, notePath, approved.suggestion ?? "", now)
-    );
-    if (wrote) updated.push(notePath);
+    if (await writeSuggestion(ctx, notePath, merged, now)) updated.push(notePath);
     else skipped.push(notePath);
   }
 

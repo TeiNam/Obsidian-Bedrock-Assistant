@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import fc from "fast-check";
 import {
   normalizeDecision,
+  effectiveStatus,
   parseDecisionReport,
   decisionKey,
   mergeLedger,
@@ -590,5 +591,45 @@ describe("parseDecisionReport — 전부 무효인 응답", () => {
 
     expect(out.ok).toBe(true);
     expect(out.dropped).toBe(0);
+  });
+});
+
+// ============================================
+// 승인 화면과 병합의 상태 판정 일치
+// ============================================
+/**
+ * LLM은 `status: "open"`과 `supersededBy: "B로 간다"`를 같이 돌려주는 일이 흔하다.
+ * 승인 화면이 원시 status를 보여주면 사용자는 "열림"으로 보고 승인한 뒤 원장에서
+ * "대체됨"을 발견한다 — 보지 않은 상태 전환을 승인한 셈이다.
+ */
+describe("effectiveStatus", () => {
+  it("supersededBy가 다른 결정을 가리키면 대체됨이다", () => {
+    const e = decision({ decision: "A로 간다", status: "open", supersededBy: "B로 간다" });
+    expect(effectiveStatus(e)).toBe("superseded");
+  });
+
+  it("자기 자신을 가리키면 원래 상태를 유지한다", () => {
+    const e = decision({ decision: "A로 간다", status: "open", supersededBy: "A로 간다!" });
+    expect(effectiveStatus(e)).toBe("open");
+  });
+
+  it("supersededBy가 비면 원래 상태다", () => {
+    expect(effectiveStatus(decision({ status: "done", supersededBy: "" }))).toBe("done");
+  });
+
+  it("mergeLedger가 기록하는 상태와 일치한다", () => {
+    // 두 판정이 갈라지면 화면과 원장이 다른 말을 한다.
+    const entries = [
+      decision({ decision: "A", status: "open", supersededBy: "B" }),
+      decision({ decision: "C", status: "open", supersededBy: "" }),
+      decision({ decision: "D", status: "done", supersededBy: "E" }),
+    ];
+
+    const merged = mergeLedger([], entries);
+
+    for (const entry of entries) {
+      const found = merged.find((m) => decisionKey(m.decision) === decisionKey(entry.decision));
+      expect(found?.status).toBe(effectiveStatus(entry));
+    }
   });
 });

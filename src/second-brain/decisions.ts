@@ -151,17 +151,32 @@ export function mergeLedger(
   for (const entry of incoming) put(entry);
 
   // supersededBy가 가리키는 결정을 superseded로 표시한다.
+  // 판정은 effectiveStatus가 단일 출처로 갖는다 — 승인 화면이 같은 함수를 쓴다.
   for (const key of order) {
     const entry = byKey.get(key)!;
-    if (entry.supersededBy === "") continue;
-    const targetKey = decisionKey(entry.supersededBy);
-    // "A가 B로 대체됨"이라고 적힌 항목은 A 자신이 superseded다.
-    if (targetKey !== "" && targetKey !== key) {
-      byKey.set(key, { ...entry, status: "superseded" });
-    }
+    const status = effectiveStatus(entry);
+    if (status !== entry.status) byKey.set(key, { ...entry, status });
   }
 
   return order.map((key) => byKey.get(key)!);
+}
+
+/**
+ * 승인 시 원장에 기록될 **유효 상태**.
+ *
+ * `mergeLedger`는 `supersededBy`가 자신이 아닌 다른 결정을 가리키면 그 항목을
+ * `superseded`로 바꾼다. LLM은 `status: "open"`과 `supersededBy: "B로 간다"`를 같이
+ * 돌려주는 일이 흔한데, 승인 화면이 원시 `status`를 그대로 보여주면 사용자는 "열림"으로
+ * 보고 승인한 뒤 원장에서 "대체됨"을 발견한다 — 보지 않은 상태 전환을 승인한 셈이다.
+ *
+ * 화면과 병합이 같은 함수를 쓰게 해서 두 판정이 갈라지지 않게 한다.
+ */
+export function effectiveStatus(entry: DecisionEntry): DecisionStatus {
+  const targetKey = decisionKey(entry.supersededBy);
+  const selfKey = decisionKey(entry.decision);
+  // 자기 자신을 가리키는 supersededBy는 대체가 아니다.
+  if (targetKey !== "" && targetKey !== selfKey) return "superseded";
+  return entry.status;
 }
 
 /** 상태는 진행 방향으로만 바뀐다. */

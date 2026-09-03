@@ -7,6 +7,7 @@
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { DecisionEntry } from "../second-brain/decisions";
+import { effectiveStatus } from "../second-brain/decisions";
 import { ApprovalListModal, type ApprovalLabels } from "./approval-list-modal";
 
 const STATUS_TEXT: Record<DecisionEntry["status"], string> = {
@@ -50,7 +51,11 @@ export class DecisionReviewModal extends ApprovalListModal<DecisionEntry> {
       const head = card.createDiv({ cls: "ba-decision-head" });
       this.createCheckbox(head, index);
       head.createSpan({ cls: "ba-decision-text", text: item.decision });
-      head.createSpan({ cls: "ba-decision-status", text: STATUS_TEXT[item.status] });
+      // 원시 status가 아니라 **승인 시 기록될 상태**를 보여준다. LLM이 status를 open으로
+      // 두고 supersededBy를 채우는 일이 흔한데, 그대로 보여주면 사용자가 보지 않은 상태
+      // 전환을 승인하게 된다.
+      const status = effectiveStatus(item);
+      head.createSpan({ cls: "ba-decision-status", text: STATUS_TEXT[status] });
 
       const body = card.createDiv({ cls: "ba-decision-body" });
 
@@ -65,6 +70,15 @@ export class DecisionReviewModal extends ApprovalListModal<DecisionEntry> {
       if (item.due !== "") meta.push(item.due);
       if (meta.length > 0) {
         body.createDiv({ cls: "ba-decision-field", text: meta.join(" · ") });
+      }
+
+      // 무엇으로 대체되는지도 보여준다. 상태만 "대체됨"이라고 하고 대상을 숨기면
+      // 사용자가 그 판정이 맞는지 확인할 수 없다.
+      if (status === "superseded" && item.supersededBy !== "") {
+        body.createDiv({
+          cls: "ba-decision-field",
+          text: `→ ${item.supersededBy}`,
+        });
       }
 
       // 출처는 승인 판정의 핵심 근거다 — 확인할 수 없으면 승인해선 안 된다.
