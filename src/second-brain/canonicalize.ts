@@ -140,6 +140,67 @@ export function buildTitleBuckets(entries: readonly VaultIndexEntry[]): Map<stri
 }
 
 /**
+ * 후보들을 "임계값을 넘는 유사도"로 연결한 연결 요소로 나눈다.
+ *
+ * 모든 쌍을 비교한다. 한 노트를 기준으로 삼으면 그 노트가 무관할 때 나머지가 서로 비교되지
+ * 않아 군집을 놓치고, 그 노트에 임베딩이 없으면 버킷 전체를 잃는다.
+ *
+ * 임베딩이 없거나 차원이 다른 노트는 아무와도 연결되지 않는다 — 유사도 0으로 취급하면
+ * 재인덱싱 중인 노트가 조용히 섞이고, 1로 취급하면 무관한 노트를 중복이라 제안한다.
+ *
+ * 결과는 경로 오름차순으로 정렬된 그룹들이며, 그룹 자체도 첫 경로 순이다(결정성).
+ */
+function connectedGroups(
+  paths: readonly string[],
+  byPath: ReadonlyMap<string, VaultIndexEntry>,
+  minSimilarity: number
+): VaultIndexEntry[][] {
+  const entries = paths
+    .map((path) => byPath.get(path))
+    .filter((entry): entry is VaultIndexEntry => entry !== undefined);
+
+  const vectors = entries.map((entry) => representativeEmbedding(entry));
+
+  // 인접 목록. i < j만 채우고 양방향으로 쓴다.
+  const neighbors = entries.map(() => new Set<number>());
+  for (let i = 0; i < entries.length; i++) {
+    const a = vectors[i];
+    if (a === null) continue;
+    for (let j = i + 1; j < entries.length; j++) {
+      const b = vectors[j];
+      if (b === null) continue;
+      const cosine = compareVectors(a, b);
+      if (cosine === null) continue;
+      if ((cosine + 1) / 2 < minSimilarity) continue;
+      neighbors[i].add(j);
+      neighbors[j].add(i);
+    }
+  }
+
+  const seen = new Set<number>();
+  const groups: VaultIndexEntry[][] = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (seen.has(i)) continue;
+    const stack = [i];
+    const component: number[] = [];
+    seen.add(i);
+    while (stack.length > 0) {
+      const at = stack.pop()!;
+      component.push(at);
+      for (const next of neighbors[at]) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+    if (component.length < 2) continue;
+    groups.push(component.sort((a, b) => a - b).map((idx) => entries[idx]));
+  }
+
+  return groups;
+}
+
+/**
  * 정본 기준으로 유사도를 다시 잰다.
  *
  * 유사도는 버킷 시드(경로 순 첫 노트) 기준으로 재지만 정본은 링크 수·본문 길이로 고른다.
@@ -216,74 +277,51 @@ export function findDuplicateClusters(
   // 버킷 키를 정렬해 순회 순서를 고정한다 — 같은 인덱스에 항상 같은 군집이 나와야 한다.
   for (const key of [...buckets.keys()].sort()) {
     const paths = buckets.get(key)!;
-    const fresh = paths.filter((p) => !claimed.has(p));
+    const fresh = [...paths.filter((p) => !claimed.has(p))].sort();
     if (fresh.length < 2) continue;
 
-    // 버킷 안에서 첫 노트를 기준으로 유사도를 재고 임계값을 넘는 것만 남긴다.
-    const seedPath = [...fresh].sort()[0];
-    const seed = byPath.get(seedPath);
-    const seedVec = seed ? representativeEmbedding(seed) : null;
-    if (!seed || seedVec === null) continue;
+    // 버킷의 **모든 쌍**을 비교해 연결 요소를 찾는다.
+    //
+    // 경로순 첫 노트만 기준으로 재면 그 노트가 무관할 때 군집을 통째로 놓친다 —
+    // `Alpha Project`가 무관하고 `Beta Project`·`Gamma Project`만 같은 대상이면 B·C는
+    // 서로 비교되지 않는다. 첫 노트에 임베딩이 없으면 버킷 전체를 잃기까지 했다.
+    //
+    // 버킷 크기가 MAX_CLUSTER_SIZE(8)로 제한되므로 쌍은 최대 28개다.
+    for (const group of connectedGroups(fresh, byPath, minSimilarity)) {
+      if (group.length < 2) continue;
 
-    const members: DuplicateMember[] = [
-      {
-        path: seed.path,
-        title: seed.title || basename(seed.path),
-        similarity: 1,
-        bodyLength: bodyLength(seed),
-        linkCount: linkCount(seed),
-      },
-    ];
-
-    // 경로 순으로 돌아 동점 시 순서가 입력 순서에 좌우되지 않게 한다.
-    for (const path of [...fresh].sort()) {
-      if (path === seedPath) continue;
-      const entry = byPath.get(path);
-      if (!entry) continue;
-
-      const vec = representativeEmbedding(entry);
-      if (vec === null) continue;
-      const cosine = compareVectors(seedVec, vec);
-      // null은 차원 불일치(비교 불가)다. 유사도 0으로 취급하면 재인덱싱 중인 노트가
-      // 조용히 섞이고, 1로 취급하면 무관한 노트를 중복이라 제안한다.
-      if (cosine === null) continue;
-
-      const similarity = (cosine + 1) / 2;
-      if (similarity < minSimilarity) continue;
-
-      members.push({
+      const members: DuplicateMember[] = group.map((entry) => ({
         path: entry.path,
         title: entry.title || basename(entry.path),
-        similarity,
+        // 정본을 고른 뒤 그 기준으로 다시 잰다(rescoreAgainstCanonical).
+        similarity: 1,
         bodyLength: bodyLength(entry),
         linkCount: linkCount(entry),
+      }));
+
+      const seedCanonical = pickCanonical(members);
+      const rescored = rescoreAgainstCanonical(members, seedCanonical.path, byPath, minSimilarity);
+      // 정본 기준으로 다시 재면 남는 것이 정본 하나뿐일 수 있다. 그러면 군집이 아니다.
+      if (rescored.length < 2) continue;
+
+      const canonical = rescored.find((m) => m.path === seedCanonical.path) ?? seedCanonical;
+      const duplicates = rescored
+        .filter((m) => m.path !== canonical.path)
+        .sort((a, b) => {
+          // 유사도 동점은 경로로 깬다. 같은 임베딩을 가진 노트들이 흔하므로(템플릿에서
+          // 만든 노트 등) 동점 처리를 빼면 결과가 입력 순서에 따라 흔들린다.
+          if (b.similarity !== a.similarity) return b.similarity - a.similarity;
+          return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+        });
+
+      // 군집에서 빠진 노트는 claim하지 않는다 — 다른 버킷에서 제대로 묶일 수 있다.
+      for (const m of rescored) claimed.add(m.path);
+      clusters.push({
+        canonical,
+        duplicates,
+        reason: key.startsWith("title:") ? "same-title" : "similar-title",
       });
     }
-
-    if (members.length < 2) continue;
-
-    const seedCanonical = pickCanonical(members);
-    const rescored = rescoreAgainstCanonical(members, seedCanonical.path, byPath, minSimilarity);
-    // 정본 기준으로 다시 재면 남는 것이 정본 하나뿐일 수 있다. 그러면 군집이 아니다.
-    if (rescored.length < 2) continue;
-
-    const canonical = rescored.find((m) => m.path === seedCanonical.path) ?? seedCanonical;
-    const duplicates = rescored
-      .filter((m) => m.path !== canonical.path)
-      .sort((a, b) => {
-        // 유사도 동점은 경로로 깬다. 같은 임베딩을 가진 노트들이 흔하므로(템플릿에서
-        // 만든 노트 등) 동점 처리를 빼면 결과가 입력 순서에 따라 흔들린다.
-        if (b.similarity !== a.similarity) return b.similarity - a.similarity;
-        return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
-      });
-
-    // 군집에서 빠진 노트는 claim하지 않는다 — 다른 버킷에서 제대로 묶일 수 있다.
-    for (const m of rescored) claimed.add(m.path);
-    clusters.push({
-      canonical,
-      duplicates,
-      reason: key.startsWith("title:") ? "same-title" : "similar-title",
-    });
   }
 
   // 흡수 대상이 많은 군집이 먼저 오도록 정렬하되, 동수는 정본 경로로 깬다.

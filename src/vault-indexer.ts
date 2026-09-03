@@ -89,13 +89,39 @@ function pickMatchedChunk(
 function countTerm(text: string, term: string): number {
   if (term === "") return 0;
 
-  if (/^[a-z0-9]+$/.test(term)) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const matches = text.match(new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g"));
+  const boundary = boundaryPattern(term);
+  if (boundary !== null) {
+    const matches = text.match(boundary);
     return matches === null ? 0 : matches.length;
   }
 
   return text.split(term).length - 1;
+}
+
+/**
+ * 질의어가 텍스트에서 처음 나오는 위치. 없으면 -1.
+ *
+ * `countTerm`과 **같은 규칙**을 쓴다. `indexOf`로 찾으면 라틴 토큰에서 부분문자열 위치가
+ * 나온다 — 청크 앞에 `this`가 있고 실제 `is`가 500자 뒤에 있으면 발췌 창이 엉뚱한 곳을
+ * 잘라 정작 적중어가 빠진다.
+ */
+function firstTermIndex(text: string, term: string): number {
+  if (term === "") return -1;
+
+  const boundary = boundaryPattern(term);
+  if (boundary !== null) {
+    const match = boundary.exec(text);
+    return match === null ? -1 : match.index;
+  }
+
+  return text.indexOf(term);
+}
+
+/** 라틴 토큰의 단어 경계 정규식. 라틴이 아니면 null(부분문자열로 센다). */
+function boundaryPattern(term: string): RegExp | null {
+  if (!/^[a-z0-9]+$/.test(term)) return null;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g");
 }
 
 /** 질의를 어휘 검색용 토큰으로 쪼갠다. */
@@ -124,16 +150,25 @@ function bestLexicalChunk(
     let first = -1;
     for (const term of terms) {
       // 점수 규칙은 keywordSearch와 같아야 한다 — 다르면 "어휘가 맞은 청크"가 실제로
-      // 순위를 올린 근거와 어긋난다.
+      // 순위를 올린 근거와 어긋난다. 위치도 같은 규칙으로 찾는다.
       const count = countTerm(lower, term);
       if (count === 0) continue;
-      const at = lower.indexOf(term);
+      const at = firstTermIndex(lower, term);
       hits += count;
       if (at >= 0 && (first < 0 || at < first)) first = at;
     }
     if (hits === 0) continue;
     if (best === null || hits > best.hits) {
-      best = { heading: chunk.heading ?? null, text: chunk.text, hits, at: Math.max(0, first) };
+      const at = Math.max(0, first);
+      best = {
+        // 청크의 heading은 **청크 시작 지점**의 헤딩이다. 한 청크가 `# 개요`와 `## 결정`을
+        // 함께 담고 적중어가 결정 절에 있으면, 발췌는 결정 절을 보여주면서 앵커는 개요를
+        // 가리킨다. 적중 오프셋 앞쪽에서 마지막 헤딩을 찾아 그것을 쓴다.
+        heading: headingAtOffset(chunk.text, at) ?? chunk.heading ?? null,
+        text: chunk.text,
+        hits,
+        at,
+      };
     }
   }
 
@@ -141,6 +176,23 @@ function bestLexicalChunk(
   // 적중어 **주변**을 자른다. 청크 전체를 돌려주면 소비자가 앞부분만 잘라 쓸 때
   // (obsidian-tools는 500자) 정작 맞은 문자열이 사라진다.
   return { heading: best.heading, text: windowAround(best.text, best.at) };
+}
+
+/**
+ * 청크 안에서 주어진 오프셋보다 앞에 있는 마지막 ATX 헤딩. 없으면 null.
+ *
+ * 청크 텍스트에는 헤딩 줄이 그대로 들어 있다(청커는 크기로 자른다). 그래서 청크 안에서
+ * 절이 바뀌는 경우가 있고, 그때 청크 시작 헤딩을 앵커로 쓰면 다른 절을 가리킨다.
+ */
+function headingAtOffset(text: string, offset: number): string | null {
+  const before = text.slice(0, offset);
+  let found: string | null = null;
+  // chunker와 같은 규칙 — 닫는 표식은 앞에 공백이 있을 때만 벗긴다.
+  for (const m of before.matchAll(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/gm)) {
+    const heading = m[1].trim();
+    if (heading !== "") found = heading;
+  }
+  return found;
 }
 
 /** 적중 위치가 보이도록 앞뒤 문맥을 남기고 자른다. 문단 경계는 맞추지 않는다(단순함 우선). */

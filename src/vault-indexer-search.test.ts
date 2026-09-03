@@ -486,6 +486,68 @@ describe("VaultIndexer 어휘 점수 — 단어 경계", () => {
   });
 });
 
+// ============================================
+// 적중 위치와 절의 일치
+// ============================================
+/**
+ * `indexOf`로 위치를 찾으면 라틴 토큰에서 부분문자열 위치가 나온다. 발췌 창이 엉뚱한 곳을
+ * 잘라 정작 적중어가 빠지고, 앵커도 다른 절을 가리킨다.
+ */
+describe("VaultIndexer 적중 위치·절", () => {
+  function makeSingleChunk(body: string): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "note.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "노트",
+          excerpt: body.slice(0, 100),
+          searchText: body.toLowerCase(),
+          chunks: [{ index: 0, text: body, embedding: [], charStart: 0, heading: "개요" }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("부분문자열이 아니라 단어 위치에서 발췌한다", async () => {
+    // 앞쪽 `this`에 든 "is"가 아니라 뒤쪽 독립 단어 "is"를 기준으로 잘라야 한다.
+    const body = `this ${"가".repeat(1200)} it is here`;
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("is");
+
+    expect(result.items[0].matchedText).toContain("it is here");
+  });
+
+  it("적중 오프셋의 절을 앵커로 쓴다", async () => {
+    // 한 청크가 두 절을 담으면 청크 시작 헤딩(개요)이 아니라 적중 절(결정)을 가리켜야 한다.
+    const body = ["# 개요", "개요 문단", "", "## 결정", "특이한식별자ZZ 를 쓴다"].join("\n");
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("특이한식별자zz");
+
+    expect(result.items[0].heading).toBe("결정");
+  });
+
+  it("적중 앞에 헤딩이 없으면 청크 헤딩을 쓴다", async () => {
+    const body = "도입부에 특이한식별자ZZ 가 있다";
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("특이한식별자zz");
+
+    expect(result.items[0].heading).toBe("개요");
+  });
+});
+
 describe("VaultIndexer 어휘 후보 풀과 limit", () => {
   /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
   function makeAlignedClient() {

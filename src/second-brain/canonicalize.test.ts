@@ -408,3 +408,63 @@ describe("mergeAliases — 정본 파일명이 H1과 다를 때", () => {
     expect(mergeAliases(undefined, cluster)).toEqual(["x"]);
   });
 });
+
+// ============================================
+// 버킷 내 모든 쌍 비교
+// ============================================
+/**
+ * 경로순 첫 노트만 기준으로 재면 그 노트가 무관할 때 군집을 통째로 놓친다. 첫 노트에
+ * 임베딩이 없으면 버킷 전체를 잃기까지 했다.
+ */
+describe("findDuplicateClusters — 모든 쌍 비교", () => {
+  it("첫 노트가 무관해도 나머지 중복을 찾는다", () => {
+    const clusters = findDuplicateClusters([
+      // 경로순 첫 노트인데 다른 둘과 무관하다.
+      entry("A Project.md", "Project", ORTHOGONAL),
+      entry("B Project.md", "Project", SAME, { outlinks: ["x.md"] }),
+      entry("C Project.md", "Project", SAME),
+    ]);
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].canonical.path).toBe("B Project.md");
+    expect(clusters[0].duplicates.map((d) => d.path)).toEqual(["C Project.md"]);
+  });
+
+  it("첫 노트에 임베딩이 없어도 버킷을 잃지 않는다", () => {
+    const clusters = findDuplicateClusters([
+      entry("A Project.md", "Project", [], { chunks: [], embedding: [] }),
+      entry("B Project.md", "Project", SAME, { outlinks: ["x.md"] }),
+      entry("C Project.md", "Project", SAME),
+    ]);
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].duplicates.map((d) => d.path)).toEqual(["C Project.md"]);
+  });
+
+  it("한 버킷에서 서로 다른 두 군집을 낸다", () => {
+    // A·B는 서로, C·D는 서로 같고 두 짝은 무관하다.
+    const V1 = [1, 0, 0];
+    const V2 = [0, 1, 0];
+    const clusters = findDuplicateClusters([
+      entry("A Project.md", "Project", V1, { outlinks: ["x.md"] }),
+      entry("B Project.md", "Project", V1),
+      entry("C Project.md", "Project", V2, { outlinks: ["y.md"] }),
+      entry("D Project.md", "Project", V2),
+    ]);
+
+    expect(clusters).toHaveLength(2);
+    const paths = clusters.map((c) => [c.canonical.path, ...c.duplicates.map((d) => d.path)]);
+    expect(paths).toContainEqual(["A Project.md", "B Project.md"]);
+    expect(paths).toContainEqual(["C Project.md", "D Project.md"]);
+  });
+
+  it("아무 쌍도 임계값을 넘지 않으면 군집이 없다", () => {
+    const clusters = findDuplicateClusters([
+      entry("A Project.md", "Project", [1, 0, 0]),
+      entry("B Project.md", "Project", [0, 1, 0]),
+      entry("C Project.md", "Project", [0, 0, 1]),
+    ]);
+
+    expect(clusters).toEqual([]);
+  });
+});
