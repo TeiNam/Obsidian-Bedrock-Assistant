@@ -390,3 +390,51 @@ describe("mergeRelatedLinksBlock — 별칭 속 파이프", () => {
     expect(parseRelatedLinksBlock("## 관련 노트\n\n- [[Notes/x|A | B]]")).toEqual(["Notes/x"]);
   });
 });
+
+describe("formatSuggestionLink — 특수문자 경로", () => {
+  it("경로에 #이 있으면 마크다운 링크로 쓴다", () => {
+    // `[[Notes/foo#bar]]`는 `Notes/foo`의 `bar` 절로 해석된다 — 파일을 가리키지 않는다.
+    const link = formatSuggestionLink({
+      sourcePath: "o.md",
+      targetPath: "Notes/foo#bar.md",
+      targetTitle: "제목",
+      similarity: 0.9,
+    });
+
+    expect(link).toBe("[제목](Notes/foo%23bar.md)");
+    expect(link).not.toContain("[[");
+  });
+
+  it("공백도 인코딩한다", () => {
+    const link = formatSuggestionLink({
+      sourcePath: "o.md",
+      targetPath: "Notes/a#b c.md",
+      targetTitle: "제목",
+      similarity: 0.9,
+    });
+
+    expect(link).toBe("[제목](Notes/a%23b%20c.md)");
+  });
+
+  it("제목이 없으면 경로를 표시로 쓴다", () => {
+    const link = formatSuggestionLink({
+      sourcePath: "o.md",
+      targetPath: "Notes/foo#bar.md",
+      targetTitle: "",
+      similarity: 0.9,
+    });
+
+    expect(link).toBe("[Notes/foo#bar](Notes/foo%23bar.md)");
+  });
+
+  it("특수문자가 없으면 위키링크를 유지한다", () => {
+    expect(
+      formatSuggestionLink({
+        sourcePath: "o.md",
+        targetPath: "Notes/normal.md",
+        targetTitle: "제목",
+        similarity: 0.9,
+      })
+    ).toBe("[[Notes/normal|제목]]");
+  });
+});

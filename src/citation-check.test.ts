@@ -500,3 +500,42 @@ describe("extractCitations — 잘못된 URI 이스케이프", () => {
     expect(extractCitations("[x](%ED%8F%B4%EB%8D%94/Note.md)")[0].target).toBe("폴더/Note.md");
   });
 });
+
+describe("extractCitations — 꺾쇠 목적지", () => {
+  it("공백이 든 경로를 꺾쇠로 감싼 링크를 받는다", () => {
+    // 공백 경로를 쓰는 표준 마크다운 형태다. 받지 않으면 그 형태의 지어낸 인용이
+    // 검증에서 빠진다.
+    const out = extractCitations("[근거](<Projects/Fake Note.md>)");
+
+    expect(out).toHaveLength(1);
+    expect(out[0].target).toBe("Projects/Fake Note.md");
+  });
+
+  it("꺾쇠 목적지의 앵커도 받는다", () => {
+    const out = extractCitations("[근거](<Projects/Fake Note.md#결론>)");
+    expect(out[0].target).toBe("Projects/Fake Note.md");
+    expect(out[0].anchor).toBe("결론");
+  });
+
+  it("꺾쇠 인용도 존재하지 않으면 경고한다", () => {
+    const out = findUnresolvedCitations(extractCitations("[근거](<없는 노트.md>)"), ["a.md"]);
+    expect(out).toHaveLength(1);
+  });
+});
+
+describe("stripCode — 닫는 펜스 조건", () => {
+  it("펜스 뒤에 문자가 붙은 줄은 닫는 펜스가 아니다", () => {
+    // CommonMark 규약이다. 닫힌 것으로 처리하면 그 뒤 코드의 위키링크가 실제 인용으로
+    // 오인된다.
+    const text = ["```", "```json", "[[코드 안의 링크]]", "```", "[[진짜 인용]]"].join("\n");
+
+    const out = extractCitations(text);
+
+    expect(out.map((c) => c.target)).toEqual(["진짜 인용"]);
+  });
+
+  it("펜스 뒤 공백은 허용한다", () => {
+    const text = ["```", "[[코드]]", "```   ", "[[진짜]]"].join("\n");
+    expect(extractCitations(text).map((c) => c.target)).toEqual(["진짜"]);
+  });
+});

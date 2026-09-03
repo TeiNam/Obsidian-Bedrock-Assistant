@@ -166,8 +166,18 @@ function pathWithoutExtension(path: string): string {
   return path.replace(/\.md$/i, "");
 }
 
-/** 위키링크 한 줄. 별칭이 대상과 같거나 없으면 표기를 늘리지 않는다. */
+/**
+ * 링크 한 줄. 별칭이 대상과 같거나 없으면 표기를 늘리지 않는다.
+ *
+ * 경로에 `#`나 `|`가 있으면 위키링크로 쓸 수 없다 — `[[Notes/foo#bar]]`는 `Notes/foo`의
+ * `bar` 절로 해석되고, `|`는 별칭 구분자가 된다. 그 경우 퍼센트 인코딩한 마크다운 링크로
+ * 쓴다(옵시디언이 두 형태를 모두 해석한다).
+ */
 function formatWikiLink(target: string, alias: string): string {
+  if (/[#|]/.test(target)) {
+    const encoded = target.replace(/#/g, "%23").replace(/\|/g, "%7C").replace(/ /g, "%20");
+    return `[${alias === "" ? target : alias}](${encoded}.md)`;
+  }
   return alias === "" || alias === target ? `[[${target}]]` : `[[${target}|${alias}]]`;
 }
 

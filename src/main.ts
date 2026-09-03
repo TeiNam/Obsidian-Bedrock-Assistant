@@ -976,14 +976,26 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 후보 목록은 Sentinel_Block으로 병합한다 — 사용자 텍스트 보존 + 재실행 멱등.
         // 내용이 그대로면 쓰지 않는다. 같은 군집을 다시 승인할 때 같은 바이트를 써서
         // mtime만 바뀌면 인덱서가 그 노트를 다시 임베딩한다(API 비용).
-        const blockChanged = await processIfChanged(this.app, file, (content) =>
-          upsertGeneratedBlock(content, CANONICAL_BLOCK_KEY, buildCanonicalBlock(cluster))
-        );
+        // 이전 블록이 가리켰던 노트도 갱신 대상이다. 후보가 군집에서 빠지면 블록에서
+        // 링크가 사라지는데, 그 노트의 파일은 바뀌지 않아 인덱스의 backlinks에 정본이
+        // 계속 남는다 — 합집합으로 갱신해야 그래프가 맞는다.
+        //
+        // 대입은 transform이 두 번 불려도 같은 값이므로 안전하다.
+        let previousTargets: string[] = [];
+        const blockChanged = await processIfChanged(this.app, file, (content) => {
+          previousTargets = wikiLinkTargets(
+            this.app,
+            getGeneratedBlock(content, CANONICAL_BLOCK_KEY) ?? "",
+            cluster.canonical.path
+          );
+          return upsertGeneratedBlock(content, CANONICAL_BLOCK_KEY, buildCanonicalBlock(cluster));
+        });
         // 실제로 바뀐 노트만 센다.
         if (blockChanged || addedAliases > 0) {
           notes++;
           touched.add(cluster.canonical.path);
           for (const d of liveDuplicates) linkedDuplicates.add(d.path);
+          for (const path of previousTargets) linkedDuplicates.add(path);
         }
       }
 

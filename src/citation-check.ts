@@ -45,10 +45,15 @@ export function stripCode(markdown: string): string {
       return blank(line);
     }
 
-    // 같은 문자로 시작하고 여는 펜스만큼 긴 줄이 닫는 펜스다.
-    if (m && m[1][0] === fenceMarker[0] && m[1].length >= fenceMarker.length) {
-      fenceMarker = null;
-    }
+    // 같은 문자로 시작하고 여는 펜스만큼 길며 **뒤에 공백만 있는** 줄이 닫는 펜스다.
+    // CommonMark 규약이다. 뒤에 문자가 붙은 줄(코드 안의 ```json 등)을 닫는 펜스로
+    // 처리하면 그 뒤 코드의 위키링크가 실제 인용으로 오인된다.
+    const closes =
+      m !== null &&
+      m[1][0] === fenceMarker[0] &&
+      m[1].length >= fenceMarker.length &&
+      line.slice(line.indexOf(m[1]) + m[1].length).trim() === "";
+    if (closes) fenceMarker = null;
     return blank(line);
   });
   // 닫히지 않은 펜스는 위 루프에서 문서 끝까지 코드로 처리된다 — 스트리밍이 끊긴
@@ -160,6 +165,14 @@ export function extractCitations(markdown: string): Citation[] {
   // 2) 마크다운 링크 중 .md 대상. 헤딩 앵커(`Note.md#절`)까지 받는다 —
   //    받지 않으면 그 형태로 존재하지 않는 노트·절을 인용해도 검증되지 않는다.
   for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s#]+\.md)(#[^)\s]*)?(?:\s[^)]*)?\)/gi)) {
+    const target = safeDecode(m[1]);
+    const anchor = m[2] === undefined ? "" : safeDecode(m[2]);
+    add(m[0], splitTarget(`${target}${anchor}`));
+  }
+
+  // 3) 꺾쇠로 감싼 목적지 — `[근거](<Projects/Fake Note.md>)`.
+  //    공백이 든 경로를 쓰는 표준 형태다. 받지 않으면 그 형태의 지어낸 인용이 검증에서 빠진다.
+  for (const m of text.matchAll(/\[[^\]\n]*\]\(<([^<>\n]+\.md)(#[^<>\n]*)?>\)/gi)) {
     const target = safeDecode(m[1]);
     const anchor = m[2] === undefined ? "" : safeDecode(m[2]);
     add(m[0], splitTarget(`${target}${anchor}`));
