@@ -788,3 +788,87 @@ describe("원장 왕복 불변식", () => {
     );
   });
 });
+
+// ============================================
+// 의미 있는 기호 보존
+// ============================================
+/**
+ * 모든 문장부호를 지우면 `C#를 쓴다`와 `C++를 쓴다`가 같은 키가 되어 mergeLedger가 서로
+ * 다른 결정을 하나로 합친다 — 하나가 사라지고 상태·근거까지 섞인다.
+ */
+describe("decisionKey — 기호", () => {
+  it("언어 이름과 비교 연산자를 구분한다", () => {
+    expect(decisionKey("C#를 쓴다")).not.toBe(decisionKey("C++를 쓴다"));
+    expect(decisionKey("A > B")).not.toBe(decisionKey("A < B"));
+    expect(decisionKey("F#로 간다")).not.toBe(decisionKey("F로 간다"));
+  });
+
+  it("장식용 문장부호 차이는 여전히 합친다", () => {
+    expect(decisionKey("Bedrock을 쓴다!")).toBe(decisionKey("  bedrock을   쓴다  "));
+    expect(decisionKey("A로 간다.")).toBe(decisionKey("A로 간다"));
+    expect(decisionKey("(A)로 간다")).toBe(decisionKey("A 로 간다"));
+  });
+
+  it("서로 다른 결정이 병합되지 않는다", () => {
+    const out = mergeLedger(
+      [],
+      [
+        decision({ decision: "C#를 쓴다", sources: ["a.md"] }),
+        decision({ decision: "C++를 쓴다", sources: ["b.md"] }),
+      ]
+    );
+
+    expect(out).toHaveLength(2);
+  });
+});
+
+// ============================================
+// 근거 링크의 별칭·앵커
+// ============================================
+describe("parseLedger — 근거 링크", () => {
+  /** 근거 칸에 주어진 링크로 원장 표 한 줄을 만든다. */
+  function ledgerWith(sourceCell: string): string {
+    return [
+      "### 열림 (1)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      `| 어떤 결정 | 이유 | — | — | — | ${sourceCell} |`,
+    ].join("\n");
+  }
+
+  it("별칭을 경로에 섞지 않는다", () => {
+    // 표 안의 파이프는 `\|`로 이스케이프된 형태로 저장된다(formatLedger의 cell).
+    // 그대로 두면 `Meetings/a|회의.md`가 근거가 되고, 다음 병합에서 정상 경로와 중복된다.
+    expect(parseLedger(ledgerWith("[[Meetings/a\\|회의]]"))[0].sources).toEqual([
+      "Meetings/a.md",
+    ]);
+  });
+
+  it("헤딩 앵커를 경로에 섞지 않는다", () => {
+    expect(parseLedger(ledgerWith("[[Meetings/a#결론]]"))[0].sources).toEqual(["Meetings/a.md"]);
+    expect(parseLedger(ledgerWith("[[Meetings/a#결론\\|회의]]"))[0].sources).toEqual([
+      "Meetings/a.md",
+    ]);
+  });
+
+  it("이스케이프하지 않은 파이프는 표를 깨므로 보존 행으로 간다", () => {
+    // 옵시디언의 표 렌더러도 그 행을 7칸으로 읽는다. 해석하지 않고 원문을 남기는 것이
+    // 맞다 — 추측해서 고치면 사용자가 쓴 것과 달라진다.
+    const out = parseLedgerDetailed(ledgerWith("[[Meetings/a|회의]]"));
+    expect(out.entries).toEqual([]);
+    expect(out.unparsed).toHaveLength(1);
+  });
+
+  it("이미 .md가 붙어 있으면 다시 붙이지 않는다", () => {
+    expect(parseLedger(ledgerWith("[[Meetings/a.md]]"))[0].sources).toEqual(["Meetings/a.md"]);
+    expect(parseLedger(ledgerWith("[[Meetings/a.MD]]"))[0].sources).toEqual(["Meetings/a.MD"]);
+  });
+
+  it("별칭만 있고 경로가 비면 버린다", () => {
+    // 근거가 하나도 남지 않으면 항목 자체가 보존 행으로 간다.
+    const out = parseLedgerDetailed(ledgerWith("[[|회의]]"));
+    expect(out.entries).toEqual([]);
+    expect(out.unparsed).toHaveLength(1);
+  });
+});

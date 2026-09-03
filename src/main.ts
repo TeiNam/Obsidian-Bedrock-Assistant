@@ -64,6 +64,7 @@ import { TriageReviewModal } from "./modals/triage-review-modal";
 import {
   buildTriagePrompt,
   parseTriageReport,
+  sanitizeTag,
   resolveTargetPath,
   MAX_TRIAGE_NOTES,
 } from "./second-brain/inbox-triage";
@@ -692,8 +693,23 @@ export default class GeminiAssistantPlugin extends Plugin {
                 : typeof fm.tags === "string"
                   ? [fm.tags]
                   : [];
-              const existing = [...new Set(raw)];
-              const merged = [...new Set([...existing, ...plan.tags])];
+              // 중복 판정은 **제안 태그와 같은 정규화 기준**으로 한다. 기존 `Work`나
+              // `#work`가 있는데 제안 `work`를 별개로 추가하면 의미가 같은 태그가 둘
+              // 생긴다. 표시는 기존 원문을 그대로 살린다.
+              const seen = new Set<string>();
+              const existing: string[] = [];
+              for (const tag of raw) {
+                const key = sanitizeTag(tag);
+                if (key === "" || seen.has(key)) continue;
+                seen.add(key);
+                existing.push(tag);
+              }
+              const merged = [...existing];
+              for (const tag of plan.tags) {
+                if (seen.has(tag)) continue;
+                seen.add(tag);
+                merged.push(tag);
+              }
               // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
               // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
               if (merged.length > existing.length) {

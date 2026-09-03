@@ -71,19 +71,37 @@ function bestLexicalChunk(
   entry: VaultIndexEntry | undefined,
   terms: readonly string[]
 ): { heading: string | null; text: string } | null {
-  let best: { heading: string | null; text: string; hits: number } | null = null;
+  let best: { heading: string | null; text: string; hits: number; at: number } | null = null;
 
   for (const chunk of entry?.chunks ?? []) {
     const lower = chunk.text.toLowerCase();
     let hits = 0;
-    for (const term of terms) hits += lower.split(term).length - 1;
+    let first = -1;
+    for (const term of terms) {
+      const at = lower.indexOf(term);
+      if (at < 0) continue;
+      hits += lower.split(term).length - 1;
+      if (first < 0 || at < first) first = at;
+    }
     if (hits === 0) continue;
     if (best === null || hits > best.hits) {
-      best = { heading: chunk.heading ?? null, text: chunk.text, hits };
+      best = { heading: chunk.heading ?? null, text: chunk.text, hits, at: Math.max(0, first) };
     }
   }
 
-  return best === null ? null : { heading: best.heading, text: best.text };
+  if (best === null) return null;
+  // 적중어 **주변**을 자른다. 청크 전체를 돌려주면 소비자가 앞부분만 잘라 쓸 때
+  // (obsidian-tools는 500자) 정작 맞은 문자열이 사라진다.
+  return { heading: best.heading, text: windowAround(best.text, best.at) };
+}
+
+/** 적중 위치가 보이도록 앞뒤 문맥을 남기고 자른다. 문단 경계는 맞추지 않는다(단순함 우선). */
+function windowAround(text: string, at: number, size = LEXICAL_WINDOW_CHARS): string {
+  if (text.length <= size) return text;
+  // 적중어가 창의 앞 1/4 지점에 오게 해서 뒤쪽 문맥을 더 남긴다.
+  const start = Math.max(0, Math.min(at - Math.floor(size / 4), text.length - size));
+  const slice = text.slice(start, start + size);
+  return (start > 0 ? "… " : "") + slice + (start + size < text.length ? " …" : "");
 }
 
 export interface GraphRagSearchItem {
@@ -162,6 +180,14 @@ const LEXICAL_POOL_SIZE = 30;
 const LEXICAL_RESERVED_SLOTS = 2;
 
 /**
+ * 어휘 적중 구간의 길이(문자).
+ *
+ * 소비자가 앞부분만 잘라 쓰는 가장 짧은 경계(obsidian-tools의 500자)에 맞춘다. 청크 전체를
+ * 돌려주면 적중어가 그 경계 밖으로 밀려 모델이 정작 맞은 문자열을 못 본다.
+ */
+const LEXICAL_WINDOW_CHARS = 500;
+
+/**
  * 융합에서 어휘 목록에 주는 가중치. dense가 이 플러그인의 주 신호이므로 보조로 둔다.
  *
  * 1.0으로 두면 어떤 단어를 여러 번 반복한 노트가 의미적으로 더 맞는 노트를 밀어낼 수
@@ -202,7 +228,14 @@ export class VaultIndexer {
   // 로드한 인덱스의 임베딩 구성이 현재 설정과 달라 벡터를 신뢰할 수 없는 상태
   private staleIndex = false;
   // buildEntry 진행 중에 삭제·이동된 경로. 완료 시 기록을 취소해 부활을 막는다.
-  private removedDuringIndexing: Set<string> = new Set();
+  /**
+   * 경로별 삭제 세대. `removeFile`마다 1 증가한다.
+   *
+   * 불린 표식으로는 "삭제 후 같은 경로로 복원"을 구분할 수 없었다. 복원 후 새로 시작한
+   * indexFile의 결과까지 표식에 걸려 폐기되고, 그 노트는 다음 수정이 있을 때까지 검색에서
+   * 사라졌다. 작업 시작 시점의 세대를 기억해 **그 이후 삭제가 있었을 때만** 폐기한다.
+   */
+  private removalGeneration: Map<string, number> = new Map();
 
   constructor(app: App, client: IAiClient) {
     this.app = app;
@@ -389,9 +422,10 @@ export class VaultIndexer {
         return;
       }
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
+      const generation = this.currentGeneration(file.path);
       const entry = await this.buildEntry(file, content, readMtime);
       // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-      this.commitEntry(file.path, entry);
+      this.commitEntry(file.path, entry, generation);
     }
 
     /**
@@ -579,9 +613,10 @@ export class VaultIndexer {
     }
 
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
+    const generation = this.currentGeneration(file.path);
     const entry = await this.buildEntry(file, content, readMtime);
     // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-    this.commitEntry(file.path, entry);
+    this.commitEntry(file.path, entry, generation);
   }
 
   /**
@@ -599,7 +634,7 @@ export class VaultIndexer {
     // 진행 중인 인덱싱 작업이 완료 후 이 경로를 다시 써넣지 못하게 표시한다.
     // buildEntry(임베딩 호출 포함)는 수 초가 걸리므로, 그 사이 삭제·이동된 노트가
     // 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남을 수 있다.
-    this.removedDuringIndexing.add(path);
+    this.removalGeneration.set(path, (this.removalGeneration.get(path) ?? 0) + 1);
     // 대기열에 남은 예약도 취소한다(삭제된 파일을 다시 인덱싱할 이유가 없다).
     this.pendingFiles.delete(path);
   }
@@ -608,12 +643,16 @@ export class VaultIndexer {
    * buildEntry 완료 후 인덱스에 기록한다. 작업 중 해당 경로가 삭제·이동됐으면
    * 기록을 취소해 삭제된 노트가 부활하지 않게 한다.
    */
-  private commitEntry(path: string, entry: VaultIndexEntry): void {
-    if (this.removedDuringIndexing.has(path)) {
-      this.removedDuringIndexing.delete(path);
-      return;
-    }
+  private commitEntry(path: string, entry: VaultIndexEntry, generation: number): void {
+    // 작업이 시작된 뒤 삭제가 있었으면 기록하지 않는다. 그 이전 삭제(같은 경로로 복원된
+    // 경우)는 이 작업과 무관하므로 기록해야 한다.
+    if ((this.removalGeneration.get(path) ?? 0) !== generation) return;
     this.index.set(path, entry);
+  }
+
+  /** 현재 삭제 세대. buildEntry를 시작하기 **전에** 읽어야 한다. */
+  private currentGeneration(path: string): number {
+    return this.removalGeneration.get(path) ?? 0;
   }
 
   /**

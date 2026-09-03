@@ -142,9 +142,12 @@ export function extractCitations(markdown: string): Citation[] {
     add(m[0], citation);
   }
 
-  // 2) 마크다운 링크 중 .md 대상
-  for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s]+\.md)(?:\s[^)]*)?\)/gi)) {
-    add(m[0], splitTarget(decodeURIComponent(m[1])));
+  // 2) 마크다운 링크 중 .md 대상. 헤딩 앵커(`Note.md#절`)까지 받는다 —
+  //    받지 않으면 그 형태로 존재하지 않는 노트·절을 인용해도 검증되지 않는다.
+  for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s#]+\.md)(#[^)\s]*)?(?:\s[^)]*)?\)/gi)) {
+    const target = decodeURIComponent(m[1]);
+    const anchor = m[2] === undefined ? "" : decodeURIComponent(m[2]);
+    add(m[0], splitTarget(`${target}${anchor}`));
   }
 
   return out;

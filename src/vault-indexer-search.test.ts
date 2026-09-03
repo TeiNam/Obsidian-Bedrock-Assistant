@@ -352,6 +352,78 @@ describe("VaultIndexer 적중 청크 본문", () => {
   });
 });
 
+// ============================================
+// 어휘 적중어 주변 발췌
+// ============================================
+/**
+ * 청크 전체(최대 2000자)를 돌려주면 소비자가 앞부분만 잘라 쓸 때(obsidian-tools는 500자)
+ * 정작 맞은 문자열이 사라진다. 검색 결과에는 들어 있는데 모델 입력에는 없는 상태다.
+ */
+describe("VaultIndexer 어휘 적중 구간", () => {
+  it("적중어가 청크 뒤쪽에 있어도 발췌에 포함된다", async () => {
+    const filler = "가".repeat(1500);
+    const body = `${filler}\n특이한식별자XYZ 가 여기 있다`;
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "long.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "긴 노트",
+          excerpt: filler.slice(0, 500),
+          searchText: body.toLowerCase(),
+          chunks: [{ index: 0, text: body, embedding: [], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("특이한식별자xyz");
+
+    expect(result.usedKeywordFallback).toBe(true);
+    const matched = result.items[0].matchedText ?? "";
+    expect(matched).toContain("특이한식별자XYZ");
+    // 소비자가 앞 500자만 잘라도 적중어가 남아야 한다.
+    expect(matched.slice(0, 500)).toContain("특이한식별자XYZ");
+    // 잘렸음을 표시한다.
+    expect(matched.startsWith("… ")).toBe(true);
+  });
+
+  it("청크가 짧으면 그대로 싣는다", async () => {
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "short.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "짧은 노트",
+          excerpt: "키워드 본문",
+          searchText: "키워드 본문",
+          chunks: [{ index: 0, text: "키워드 본문", embedding: [], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("키워드");
+    expect(result.items[0].matchedText).toBe("키워드 본문");
+  });
+});
+
 describe("VaultIndexer 어휘 후보 풀과 limit", () => {
   /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
   function makeAlignedClient() {

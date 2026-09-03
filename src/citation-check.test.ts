@@ -447,3 +447,33 @@ describe("findUnresolvedCitations — 폴더별 앵커", () => {
     expect(findUnresolvedCitations(extractCitations("[[Topic#나]]"), paths, headings)).toEqual([]);
   });
 });
+
+describe("extractCitations — 마크다운 링크의 앵커", () => {
+  it("Note.md#절 형태를 추출한다", () => {
+    // 앵커를 못 받으면 그 형태로 없는 노트·절을 인용해도 검증되지 않는다.
+    const out = extractCitations("[설명](Projects/Note.md#결론)");
+
+    expect(out).toHaveLength(1);
+    expect(out[0].target).toBe("Projects/Note.md");
+    expect(out[0].anchor).toBe("결론");
+  });
+
+  it("앵커가 없는 형태도 그대로 받는다", () => {
+    const out = extractCitations("[설명](Projects/Note.md)");
+    expect(out[0].target).toBe("Projects/Note.md");
+    expect(out[0].anchor).toBeUndefined();
+  });
+
+  it("URL 인코딩된 앵커를 해석한다", () => {
+    const out = extractCitations("[설명](Note.md#%EA%B2%B0%EB%A1%A0)");
+    expect(out[0].anchor).toBe("결론");
+  });
+
+  it("앵커가 붙은 링크도 존재하지 않으면 경고한다", () => {
+    const out = findUnresolvedCitations(
+      extractCitations("[설명](없는노트.md#절)"),
+      ["Projects/Note.md"]
+    );
+    expect(out).toHaveLength(1);
+  });
+});

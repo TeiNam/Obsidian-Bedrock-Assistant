@@ -121,18 +121,53 @@ describe("인덱싱 도중 삭제: 삭제된 노트가 부활하지 않는다", 
     expect(indexer.size).toBe(0);
   });
 
-  it("삭제 표시는 1회만 소비되어 이후 정상 인덱싱을 막지 않는다", async () => {
+  it("삭제 후 같은 경로로 복원하면 즉시 인덱싱된다", async () => {
+    // 삭제 표식을 불린으로 두면 복원 후 첫 indexFile 결과까지 폐기되고, 그 노트는 다음
+    // 수정이 있을 때까지 검색에서 사라진다. 삭제는 **이 작업이 시작된 뒤**에 일어났을
+    // 때만 폐기 사유다.
     const file = makeTFile("note.md");
     const contents = new Map([["note.md", "# 노트\n본문"]]);
     const indexer = new VaultIndexer(makeApp([file], contents), makeClient());
 
-    // 삭제 → 재생성 시나리오
     indexer.removeFile("note.md");
     await indexer.indexFile(file);
-    // 첫 인덱싱은 삭제 표시에 걸려 취소된다(진행 중 삭제로 간주).
-    expect(indexer.size).toBe(0);
 
-    // 표시가 소비됐으므로 다음 인덱싱은 정상 기록되어야 한다.
+    expect(indexer.size).toBe(1);
+  });
+
+  it("인덱싱 도중 삭제되면 기록하지 않는다", async () => {
+    // 삭제된 노트가 임베딩 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남는 것을
+    // 막는 것이 원래 목적이다. 그 보장은 유지돼야 한다.
+    const file = makeTFile("note.md");
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+
+    let indexer: VaultIndexer;
+    const client = {
+      // buildEntry가 임베딩을 기다리는 사이에 삭제가 들어온 상황을 만든다.
+      getEmbedding: vi.fn(async () => {
+        indexer.removeFile("note.md");
+        return [0.5, 0.5, 0.5];
+      }),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    indexer = new VaultIndexer(makeApp([file], contents), client);
+    await indexer.indexFile(file);
+
+    expect(indexer.size).toBe(0);
+  });
+
+  it("복원 후 다시 삭제되면 그 작업도 취소된다", async () => {
+    // 세대 번호가 누적되므로 두 번째 사이클도 같게 동작해야 한다.
+    const file = makeTFile("note.md");
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+    const indexer = new VaultIndexer(makeApp([file], contents), makeClient());
+
+    indexer.removeFile("note.md");
+    await indexer.indexFile(file);
+    expect(indexer.size).toBe(1);
+
+    indexer.removeFile("note.md");
+    expect(indexer.size).toBe(0);
     file.stat = { ...file.stat, mtime: 2000 } as TFile["stat"];
     await indexer.indexFile(file);
     expect(indexer.size).toBe(1);

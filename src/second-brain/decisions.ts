@@ -93,11 +93,23 @@ export function parseDecisionReport(llmText: unknown, allowedPaths?: ReadonlySet
   return parseJsonArray(llmText, (raw) => normalizeDecision(raw, allowedPaths));
 }
 
-/** 결정 문구 비교용 정규화 — 같은 결정을 다르게 적은 경우를 합치기 위함이다. */
+/**
+ * 결정 문구 비교용 정규화 — 같은 결정을 다르게 적은 경우를 합치기 위함이다.
+ *
+ * **의미를 갖는 기호는 남긴다.** 모든 문장부호를 지우면 `C#를 쓴다`와 `C++를 쓴다`,
+ * `A > B`와 `A < B`가 같은 키가 되어 mergeLedger가 서로 다른 결정을 하나로 합친다 —
+ * 하나가 사라지고 상태·근거까지 섞인다.
+ *
+ * 남기는 것: 프로그래밍 언어·비교에 쓰이는 `# + < > = / & * -`.
+ * 지우는 것: 문장 끝 장식(`. , ! ? ; :`)과 괄호·인용부호처럼 같은 결정을 다르게 적을 때
+ * 흔히 달라지는 것들.
+ */
+const DECORATIVE_PUNCTUATION = /[.,!?;:'"“”‘’()[\]{}·…]+/gu;
+
 export function decisionKey(decision: string): string {
   return decision
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(DECORATIVE_PUNCTUATION, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -386,9 +398,14 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
     }
 
     // 위키링크에서 경로를 되읽는다. .md는 formatLedger가 떼므로 다시 붙인다.
-    const sources = [...sourceCell.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) =>
-      m[1].endsWith(".md") ? m[1] : `${m[1]}.md`
-    );
+    //
+    // 별칭(`|`)과 헤딩 앵커(`#`)를 먼저 떼야 한다. 사용자가 원장에서
+    // `[[Meetings/a|회의]]`처럼 고치면 그대로 `Meetings/a|회의.md`가 근거로 저장되고,
+    // 다음 병합에서 정상 경로와 별개 항목으로 중복된다.
+    const sources = [...sourceCell.matchAll(/\[\[([^\]]+)\]\]/g)]
+      .map((m) => (m[1].split("|")[0] ?? "").split("#")[0].trim())
+      .filter((path) => path !== "")
+      .map((path) => (path.toLowerCase().endsWith(".md") ? path : `${path}.md`));
     // 근거 칸을 일반 텍스트나 마크다운 링크로 고친 행이 여기 온다. 항목으로 만들 수는
     // 없지만 사용자가 쓴 것이므로 지우지 않는다.
     if (sources.length === 0) {
