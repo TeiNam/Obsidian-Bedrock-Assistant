@@ -875,9 +875,14 @@ export default class GeminiAssistantPlugin extends Plugin {
           // 원장을 되읽어 병합한다. 사용자가 원장에서 직접 고친 값을 유지하려면
           // 그 값을 읽어와야 한다.
           await this.app.vault.process(existing, (content) => {
+            // **생성 블록만** 되읽는다. 문서 전체로 폴백하면, 마커 없는 기존 Decisions.md에
+            // 손으로 만든 표가 있을 때 그 항목을 읽어 생성 블록에 복사하고 원본 표는 그대로
+            // 남겨 같은 표가 두 번 보인다. 그리고 이후 실행은 생성 블록만 읽으므로 사용자가
+            // 원본 표를 고쳐도 반영되지 않는다.
+            //
             // 해석하지 못한 행은 원문으로 되돌려 쓴다. 생성 블록 전체가 교체되므로
             // 넘기지 않으면 사용자가 손으로 고친 행이 이 승인으로 삭제된다.
-            const parsed = parseLedgerDetailed(getGeneratedBlock(content, DECISION_BLOCK_KEY) ?? content);
+            const parsed = parseLedgerDetailed(getGeneratedBlock(content, DECISION_BLOCK_KEY) ?? "");
             merged = mergeLedger(parsed.entries, approved);
             return upsertGeneratedBlock(
               content,

@@ -211,11 +211,24 @@ describe("Property: extractJsonArray", () => {
     expect(out.dropped).toBe(0);
   });
 
-  it("전부 0건이면 앞의 후보를 택한다", () => {
-    // 빈 배열 응답이 이 경로다. 어느 쪽을 택해도 결과가 같다.
+  it("전부 0건이면 버린 항목이 적은 후보를 택한다", () => {
+    // 앞의 `[1]`을 고르면 dropped=1이 되고 호출부가 "제안이 모두 무효"라고 보고한다 —
+    // 정상적인 "결과 없음"이 오류로 보인다.
     const out = parseJsonArray("[1] 참고 []", (raw) => (typeof raw === "string" ? raw : null));
+
     expect(out.ok).toBe(true);
     expect(out.items).toEqual([]);
+    expect(out.dropped).toBe(0);
+  });
+
+  it("항목 수가 우선이고 dropped는 그다음이다", () => {
+    // 앞 후보는 1건 통과 + 1건 버림, 뒤 후보는 0건 통과. 앞을 택해야 한다.
+    const out = parseJsonArray('["살아남음", 1] 그리고 []', (raw) =>
+      typeof raw === "string" ? raw : null
+    );
+
+    expect(out.items).toEqual(["살아남음"]);
+    expect(out.dropped).toBe(1);
   });
 
   it("parseJsonArray는 유효 배열을 항상 ok로 받는다", () => {

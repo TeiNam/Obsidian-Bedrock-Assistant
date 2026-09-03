@@ -167,8 +167,12 @@ export function resolveTargetPath(
 ): string | null {
   // 제안 제목이 정리 후 비면(예: LLM이 ".md"만 돌려준 경우) 제안이 없는 것으로 보고
   // 현재 이름을 유지한다. 폴더 제안은 그대로 살려 이동은 가능하게 둔다.
+  //
+  // 기존 파일명은 **정리하지 않는다.** `foo#bar.md`나 `foo.md.md`처럼 sanitizeTitle이
+  // 손대는 이름도 이미 볼트에 있는 유효한 파일명이다. 폴더만 옮기는 승인에서 이름까지
+  // 바꾸면 사용자가 승인하지 않은 변경이 되고, 승인 화면에는 이동만 표시된다.
   const suggested = sanitizeTitle(plan.suggestedTitle);
-  const title = suggested !== "" ? suggested : sanitizeTitle(basenameNoExt(plan.path));
+  const title = suggested !== "" ? suggested : basenameNoExt(plan.path);
   if (title === "") return null;
   const folder = plan.suggestedFolder !== "" ? plan.suggestedFolder : dirOf(plan.path);
 

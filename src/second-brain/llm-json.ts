@@ -141,7 +141,9 @@ export function parseJsonArray<T>(
   // 배열이다. 앞에서부터 첫 후보를 집으면 실제 응답이 버려진다. 정규화기가 스키마를 알기
   // 때문에 여기서만 가릴 수 있다.
   //
-  // 동수면 앞에 있는 것을 택한다 — 전부 0건인 경우(빈 배열 응답)가 여기 온다.
+  // 항목 수가 같으면 **버린 항목이 적은** 후보를 택한다. `[1] 참고 []`에서 둘 다 0건인데
+  // 앞의 `[1]`을 고르면 dropped=1이 되고, 호출부가 "제안이 모두 무효"라고 보고한다 —
+  // 정상적인 "결과 없음"이 오류로 보이는 것이다.
   let best: { items: T[]; dropped: number } | null = null;
   for (const candidate of candidates) {
     const parsed = JSON.parse(candidate) as unknown[];
@@ -152,7 +154,13 @@ export function parseJsonArray<T>(
       if (item === null) dropped++;
       else items.push(item);
     }
-    if (best === null || items.length > best.items.length) best = { items, dropped };
+    if (
+      best === null ||
+      items.length > best.items.length ||
+      (items.length === best.items.length && dropped < best.dropped)
+    ) {
+      best = { items, dropped };
+    }
   }
 
   // 후보가 하나 이상이므로 best는 반드시 채워진다. 단정 대신 기본값으로 표현한다.

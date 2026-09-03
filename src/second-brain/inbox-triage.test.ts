@@ -372,3 +372,29 @@ describe("sanitizeTitle — 확장자", () => {
     expect(sanitizeTitle("Report.md 초안")).toBe("Report.md 초안");
   });
 });
+
+describe("resolveTargetPath — 폴더만 이동", () => {
+  it("기존 파일명을 그대로 유지한다", () => {
+    // sanitizeTitle이 손대는 이름도 이미 볼트에 있는 유효한 파일명이다. 폴더만 옮기는
+    // 승인에서 이름까지 바꾸면 사용자가 승인하지 않은 변경이 된다.
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "" }), path: "Inbox/foo#bar.md" },
+      new Set()
+    );
+
+    expect(out).toBe("Projects/foo#bar.md");
+  });
+
+  it("이름에 든 .md도 건드리지 않는다", () => {
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "" }), path: "Inbox/foo.md.md" },
+      new Set()
+    );
+
+    expect(out).toBe("Projects/foo.md.md");
+  });
+
+  it("제목을 제안했을 때만 정리한다", () => {
+    expect(resolveTargetPath(plan({ suggestedTitle: "a#b" }), new Set())).toBe("Projects/a b.md");
+  });
+});

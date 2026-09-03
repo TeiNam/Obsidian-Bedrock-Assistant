@@ -367,3 +367,26 @@ describe("formatSuggestionLink", () => {
     ).toBe("[[Notes/Alpha|알파]]");
   });
 });
+
+describe("mergeRelatedLinksBlock — 별칭 속 파이프", () => {
+  it("파이프가 든 제목을 잘라내지 않는다", () => {
+    // 옵시디언은 첫 파이프만 구분자로 읽는다. split("|")로 쪼개면 별칭이 잘리고 다음
+    // 병합에서 사용자가 승인한 표시 제목이 조용히 사라진다.
+    const s1: LinkSuggestion = {
+      sourcePath: "o.md",
+      targetPath: "Notes/x.md",
+      targetTitle: "A | B",
+      similarity: 0.9,
+    };
+
+    const first = mergeRelatedLinksBlock(null, [s1]);
+    expect(first).toContain("[[Notes/x|A | B]]");
+
+    // 같은 대상을 다시 승인해도 별칭이 유지된다(멱등).
+    expect(mergeRelatedLinksBlock(first, [s1])).toBe(first);
+  });
+
+  it("파이프가 든 별칭을 되읽어도 대상은 경로다", () => {
+    expect(parseRelatedLinksBlock("## 관련 노트\n\n- [[Notes/x|A | B]]")).toEqual(["Notes/x"]);
+  });
+});

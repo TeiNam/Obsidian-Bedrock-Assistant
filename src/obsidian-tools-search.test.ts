@@ -165,3 +165,52 @@ describe("Graph_RAG_Search 빈 결과/실패 메시지 (단위)", () => {
     expect(rendered).not.toContain("검색 결과가 없습니다");
   });
 });
+
+describe("검색 결과 인용 앵커", () => {
+  /** 헤딩과 적중 본문을 지정한 단일 결과. */
+  function itemWithHeading(heading: string | null): GraphRagSearchItem {
+    return {
+      path: "folder/note.md",
+      title: "노트",
+      excerpt: "발췌",
+      combinedScore: 0.9,
+      vectorScore: 0.8,
+      hop: 0,
+      isSeed: true,
+      seedPath: null,
+      seedTitle: null,
+      heading,
+    };
+  }
+
+  it("헤딩이 있으면 경로 기반 앵커를 만든다", async () => {
+    const rendered = await makeExecutor({ items: [itemWithHeading("결론")] }).execute(
+      "search_vault",
+      { query: "x" }
+    );
+
+    // 대상은 확장자를 뗀 **경로**다 — title은 인덱서가 뽑은 첫 H1이라 파일을 가리키지 않는다.
+    expect(rendered).toContain("[[folder/note#결론]]");
+  });
+
+  it("헤딩에 파이프가 있으면 앵커를 붙이지 않는다", async () => {
+    // 위키링크에서 `|`는 별칭 구분자이고 이스케이프 방법이 없다. `[[path#A | B]]`는 대상이
+    // `path#A`가 되어 존재하지 않는 절이나 다른 절을 인용하게 만든다.
+    const rendered = await makeExecutor({ items: [itemWithHeading("A | B")] }).execute(
+      "search_vault",
+      { query: "x" }
+    );
+
+    expect(rendered).not.toContain("[[folder/note#");
+    expect(rendered).not.toContain("맞은 구간");
+  });
+
+  it("헤딩이 없으면 앵커가 없다", async () => {
+    const rendered = await makeExecutor({ items: [itemWithHeading(null)] }).execute(
+      "search_vault",
+      { query: "x" }
+    );
+
+    expect(rendered).not.toContain("인용:");
+  });
+});

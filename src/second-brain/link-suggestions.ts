@@ -204,7 +204,12 @@ function parseRelatedLinks(block: string | null): ParsedLink[] {
 
   const out: ParsedLink[] = [];
   for (const m of block.matchAll(/^\s*-\s*\[\[([^\]\n]+)/gm)) {
-    const [targetPart, aliasPart = ""] = m[1].split("|");
+    // **첫** 파이프만 구분자다. 옵시디언도 그렇게 읽는다 — 별칭에 파이프가 들어간
+    // `[[경로|A | B]]`를 split("|")로 쪼개면 별칭이 `A`로 잘리고, 다음 병합에서 사용자가
+    // 승인한 표시 제목이 조용히 사라진다.
+    const pipe = m[1].indexOf("|");
+    const targetPart = pipe < 0 ? m[1] : m[1].slice(0, pipe);
+    const aliasPart = pipe < 0 ? "" : m[1].slice(pipe + 1);
     // 헤딩 앵커는 대상 판정에 쓰지 않는다.
     const target = (targetPart.split("#")[0] ?? "").trim();
     if (target !== "") out.push({ target, alias: aliasPart.trim() });

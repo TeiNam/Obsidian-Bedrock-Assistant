@@ -492,7 +492,11 @@ export class ToolExecutor {
     //
     // 앵커 대상은 **경로**다. item.title은 인덱서가 뽑은 첫 H1이지 파일명이 아니므로
     // `[[제목#헤딩]]`은 그 노트를 가리키지 않거나 같은 제목의 다른 노트로 간다.
-    const anchor = item.heading
+    // 헤딩에 파이프가 있으면 앵커를 붙이지 않는다. 위키링크에서 `|`는 별칭 구분자이고
+    // 이스케이프 방법이 없어서, `[[path#A | B]]`는 대상이 `path#A`가 된다 — 존재하지 않는
+    // 절이나 다른 절을 인용하게 만든다. 노트 단위 인용으로 물러나는 쪽이 정확하다.
+    const anchorable = item.heading !== null && item.heading !== undefined && !item.heading.includes("|");
+    const anchor = anchorable
       ? `\n   인용: [[${item.path.replace(/\.md$/i, "")}#${item.heading}]] (맞은 구간: "${item.heading}")`
       : "";
 
