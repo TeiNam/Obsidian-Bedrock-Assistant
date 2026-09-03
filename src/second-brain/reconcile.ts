@@ -250,10 +250,31 @@ function buildReconcilePrompt(topic: string, hits: SearchHit[]): string {
  * @param ctx Second Brain 실행 컨텍스트
  * @param topic 모순을 점검할 주제
  */
-export async function runReconcile(ctx: SecondBrainContext, topic: string): Promise<string> {
+export interface ReconcileOutcome {
+  /** 도구 응답·알림에 그대로 쓰는 사람이 읽는 리포트. */
+  report: string;
+  /**
+   * 승인 UI에 넘길 구조화된 모순 목록. 주제가 비었거나 관련 노트가 없거나
+   * 응답 해석에 실패했거나 모순이 0건이면 빈 배열이다.
+   *
+   * 문자열 리포트만 돌려주면 승인 화면이 그것을 다시 파싱해야 한다 — LLM 응답을 한 번
+   * 파싱해 놓고 그 결과를 버리고 사람이 읽을 문장을 재파싱하는 것은 되돌릴 이유가 없는
+   * 정보 손실이다.
+   */
+  contradictions: Contradiction[];
+}
+
+/**
+ * runReconcile의 구조화된 형태. 리포트 문자열과 파싱된 모순 목록을 함께 돌려준다.
+ * 동작은 runReconcile과 동일하며 비파괴다 — 어떤 노트도 건드리지 않는다.
+ */
+export async function runReconcileDetailed(
+  ctx: SecondBrainContext,
+  topic: string
+): Promise<ReconcileOutcome> {
   const trimmedTopic = topic.trim();
   if (trimmedTopic === "") {
-    return "모순을 점검할 주제(topic)가 필요합니다.";
+    return { report: "모순을 점검할 주제(topic)가 필요합니다.", contradictions: [] };
   }
 
   // 1) 기존 Graph RAG 검색 재사용 (읽기 전용, 비파괴)
@@ -264,7 +285,10 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
 
   // 2) 관련 노트 없음 → 점검할 모순 없음 안내 (노트 미변경)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`;
+    return {
+      report: `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`,
+      contradictions: [],
+    };
   }
 
   // 3) 검색 히트 → 모순 점검 프롬프트
@@ -284,22 +308,39 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
   // 5-1) 응답 해석 실패 → "모순 없음"으로 오보고하지 않고 실패를 명시한다.
   //      응답이 토큰 제한으로 잘렸거나 JSON 형식이 아닌 경우가 여기에 해당한다.
   if (!parsed.ok) {
-    return [
-      "모순 점검 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림).",
-      "모순이 없다는 뜻이 아니므로, 다시 실행하거나 최대 토큰을 늘려 주세요.",
-      "어떤 노트도 변경하지 않았습니다.",
-    ].join("\n");
+    return {
+      report: [
+        "모순 점검 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림).",
+        "모순이 없다는 뜻이 아니므로, 다시 실행하거나 최대 토큰을 늘려 주세요.",
+        "어떤 노트도 변경하지 않았습니다.",
+      ].join("\n"),
+      contradictions: [],
+    };
   }
 
   const contradictions = parsed.items;
 
   // 6) 모순 0건 → 안내, 노트 미변경 (Req 8.5)
   if (contradictions.length === 0) {
-    return `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`;
+    return {
+      report: `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`,
+      contradictions: [],
+    };
   }
 
   // 7) 모순 리포트 반환 — 어떤 노트도 수정하지 않는다 (Req 8.2)
-  return `${formatReconcileReport(contradictions)}${staleNote}`;
+  return {
+    report: `${formatReconcileReport(contradictions)}${staleNote}`,
+    contradictions,
+  };
+}
+
+/**
+ * 모순해결 실행 래퍼 — 리포트 문자열만 필요한 호출부(LLM 도구)를 위한 얇은 감싸기.
+ * 동작은 runReconcileDetailed와 완전히 같다.
+ */
+export async function runReconcile(ctx: SecondBrainContext, topic: string): Promise<string> {
+  return (await runReconcileDetailed(ctx, topic)).report;
 }
 
 /**

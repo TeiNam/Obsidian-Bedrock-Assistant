@@ -43,6 +43,9 @@ import {
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
+import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
+import { runReconcileDetailed, applyReconciliation } from "./second-brain/reconcile";
+import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
@@ -487,6 +490,52 @@ export default class GeminiAssistantPlugin extends Plugin {
     };
   }
 
+  /**
+   * 주제로 모순을 점검하고, 발견되면 승인 화면을 띄운다.
+   *
+   * 점검(1단계)은 비파괴이므로 옵트인 검사 없이 실행할 수 있지만, 반영(2단계)은 노트를
+   * 고치므로 Second Brain 기능 활성 여부를 먼저 확인한다. 모순이 0건이거나 점검이
+   * 실패하면 리포트만 알리고 승인 화면을 띄우지 않는다 — 빈 목록을 보여줄 이유가 없다.
+   */
+  private async openReconcileReview(topic: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    let outcome: Awaited<ReturnType<typeof runReconcileDetailed>>;
+    try {
+      outcome = await runReconcileDetailed(this.buildSecondBrainContext(), topic);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`모순 점검 실패: ${reason}`, 10000);
+      return;
+    }
+
+    if (outcome.contradictions.length === 0) {
+      new Notice(outcome.report, 10000);
+      return;
+    }
+
+    new ReconcileReviewModal(
+      this.app,
+      this,
+      outcome.contradictions,
+      async (approved) => {
+        // applyReconciliation은 한 건씩 받는다. learned_at에 쓸 날짜는 한 번만 계산해
+        // 같은 배치에 같은 시점이 기록되게 한다.
+        const today = buildDateStr(new Date());
+        const summaries: string[] = [];
+        for (const item of approved) {
+          summaries.push(
+            await applyReconciliation(this.buildSecondBrainContext(), item, today)
+          );
+        }
+        return summaries.join("\n\n");
+      }
+    ).open();
+  }
+
   /** 현재 활성 노트의 제목(basename)을 반환한다. 없으면 빈 문자열. */
   private getActiveNoteTitle(): string {
     return this.app.workspace.getActiveFile()?.basename ?? "";
@@ -606,6 +655,31 @@ export default class GeminiAssistantPlugin extends Plugin {
           ],
           onSubmit: (values) =>
             this.runSecondBrainTool("reconcile_topic", { topic: values.topic }),
+        }).open();
+      },
+    });
+
+    // 모순 검토·반영 — reconcile 2단계(applyReconciliation)의 유일한 진입점.
+    //
+    // 기존 "모순 점검"은 비파괴 리포트만 낸다(Req 8.2). 반영은 명시적 승인을 요구하도록
+    // 처음부터 별 함수로 분리돼 있었지만(Req 8.4) 승인 화면이 없어 도달할 수 없었다.
+    this.addCommand({
+      id: "second-brain-reconcile-review",
+      name: "모순 검토 및 반영 (reconcile → apply)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "모순 검토 및 반영",
+          submitLabel: "점검",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "모순을 점검할 주제",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) => this.openReconcileReview(values.topic),
         }).open();
       },
     });

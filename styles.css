@@ -1802,3 +1802,68 @@ body.theme-light .ba-message-content pre {
   width: 14px;
   height: 14px;
 }
+
+/* 모순 검토·반영 모달 */
+.ba-reconcile-modal {
+  max-width: 720px;
+}
+
+.ba-reconcile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+
+.ba-reconcile-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-reconcile-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-reconcile-paths {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.ba-reconcile-body {
+  margin-top: 8px;
+  padding-inline-start: 24px;
+}
+
+.ba-reconcile-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.ba-reconcile-statements {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ba-reconcile-suggestion {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.ba-reconcile-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

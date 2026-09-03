@@ -16,6 +16,7 @@ import { TFile } from "obsidian";
 import {
   parseContradictionReport,
   runReconcile,
+  runReconcileDetailed,
   applyReconciliation,
   type Contradiction,
 } from "./reconcile";
@@ -465,5 +466,81 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       reconcileSource.indexOf("export async function applyReconciliation"),
     );
     expect(runReconcileBody).not.toContain("applyReconciliation(");
+  });
+});
+
+// ============================================
+// runReconcileDetailed — 구조화된 결과 (승인 UI용)
+// ============================================
+/**
+ * 승인 화면은 모순 목록을 구조화된 형태로 받아야 한다. 문자열 리포트만 돌려주면
+ * 화면이 그것을 다시 파싱해야 하는데, LLM 응답을 이미 한 번 파싱해 놓고 그 결과를
+ * 버리고 사람이 읽을 문장을 재파싱하는 것은 되돌릴 이유가 없는 정보 손실이다.
+ */
+describe("runReconcileDetailed — 구조화된 결과", () => {
+  const TWO = JSON.stringify([
+    {
+      notePaths: ["A.md", "B.md"],
+      statements: ["A는 X라고 한다", "B는 Y라고 한다"],
+      suggestion: "최신 근거인 B를 채택하고 A에 단서를 추가한다",
+    },
+    {
+      notePaths: ["C.md"],
+      statements: ["C는 Z를 두 번 다르게 적었다"],
+      suggestion: "Z의 정의를 하나로 통일한다",
+    },
+  ]);
+
+  it("리포트와 모순 목록을 함께 돌려준다", async () => {
+    const { ctx, vault } = makeContext({ items: [makeItem()] }, TWO);
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+
+    expect(outcome.contradictions).toHaveLength(2);
+    expect(outcome.contradictions[0].notePaths).toEqual(["A.md", "B.md"]);
+    expect(outcome.contradictions[1].suggestion).toContain("통일");
+    expect(outcome.report).not.toBe("");
+    // 여전히 비파괴다 — 반영은 별도 단계(applyReconciliation)의 책임이다.
+    expectNoVaultWrites(vault);
+  });
+
+  it("runReconcile은 같은 리포트 문자열을 돌려준다(래퍼)", async () => {
+    const a = await runReconcileDetailed(
+      makeContext({ items: [makeItem()] }, TWO).ctx,
+      "주제 X"
+    );
+    const b = await runReconcile(makeContext({ items: [makeItem()] }, TWO).ctx, "주제 X");
+
+    expect(b).toBe(a.report);
+  });
+
+  it("주제가 비면 빈 목록이다", async () => {
+    const { ctx } = makeContext({ items: [makeItem()] }, TWO);
+
+    expect((await runReconcileDetailed(ctx, "   ")).contradictions).toEqual([]);
+  });
+
+  it("관련 노트가 없으면 빈 목록이다", async () => {
+    const { ctx } = makeContext({ items: [] }, TWO);
+
+    expect((await runReconcileDetailed(ctx, "없는 주제")).contradictions).toEqual([]);
+  });
+
+  it("모순 0건이면 빈 목록이다", async () => {
+    const { ctx } = makeContext({ items: [makeItem()] }, "[]");
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+    expect(outcome.contradictions).toEqual([]);
+    expect(outcome.report).toContain("발견된 모순이 없습니다");
+  });
+
+  it("응답 해석에 실패하면 빈 목록이고 '모순 없음'으로 오보고하지 않는다", async () => {
+    // 승인 화면이 빈 목록을 "깨끗함"으로 오해하면 안 되므로 리포트가 실패를 명시한다.
+    const { ctx } = makeContext({ items: [makeItem()] }, "JSON이 아닌 응답");
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+    expect(outcome.contradictions).toEqual([]);
+    expect(outcome.report).toContain("해석할 수 없었습니다");
+    expect(outcome.report).not.toContain("발견된 모순이 없습니다");
   });
 });
