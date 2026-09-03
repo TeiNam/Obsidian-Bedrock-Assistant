@@ -71,11 +71,13 @@ export function sanitizeTitle(title: string): string {
     .replace(UNSAFE_TITLE_CHARS, " ")
     .replace(/\s+/g, " ")
     .trim()
+    // 후행 마침표·공백을 **먼저** 없앤다. 윈도우에서 파일명으로 쓸 수 없고, 순서를 뒤집으면
+    // `Report.md.`에서 확장자 제거가 먼저 실패한 뒤 마지막 점만 사라져 `Report.md`가 되고,
+    // 경로를 만들 때 확장자가 다시 붙어 `Report.md.md`가 된다.
+    .replace(/[.\s]+$/, "")
     // LLM이 `Report.md`처럼 확장자를 붙여 돌려주는 일이 있다. 그대로 쓰면
     // `Report.md.md` 파일이 생기고, 승인 화면에 보인 제목과도 달라진다.
     .replace(/\.md$/i, "")
-    .trim()
-    // 후행 마침표·공백은 윈도우에서 파일명으로 쓸 수 없다.
     .replace(/[.\s]+$/, "");
 
   if (cleaned === "") return "";
@@ -171,12 +173,12 @@ export function normalizeTriagePlan(
 
 /** 실제로 무언가를 바꾸는 제안이 있는지. */
 export function hasActionableSuggestion(plan: TriagePlan): boolean {
-  return (
-    plan.suggestedTitle !== "" ||
-    plan.suggestedFolder !== "" ||
-    plan.tags.length > 0 ||
-    plan.splitHint !== ""
-  );
+  // splitHint는 **적용 대상이 아니다.** 적용 루프는 태그·이름·폴더만 처리하므로, 힌트만
+  // 있는 계획을 승인 가능으로 보이면 사용자가 승인해도 아무 일이 없고 힌트도 저장되지
+  // 않는다. 노트를 나누는 것은 사람이 판단할 일이고 자동화 대상이 아니다.
+  //
+  // 힌트 자체는 승인 화면에 함께 보여준다 — 다른 변경이 있는 계획의 참고 정보다.
+  return plan.suggestedTitle !== "" || plan.suggestedFolder !== "" || plan.tags.length > 0;
 }
 
 /** LLM 응답에서 검토 제안 목록을 파싱한다. */

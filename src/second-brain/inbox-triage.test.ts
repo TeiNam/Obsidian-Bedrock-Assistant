@@ -124,17 +124,35 @@ describe("normalizeTriagePlan", () => {
 });
 
 describe("hasActionableSuggestion", () => {
-  it("제목·폴더·태그·분할 중 하나라도 있으면 true다", () => {
+  it("제목·폴더·태그 중 하나라도 있으면 true다", () => {
     expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "", tags: [] }))).toBe(
       false
     );
     expect(hasActionableSuggestion(plan({ suggestedTitle: "x", suggestedFolder: "", tags: [] }))).toBe(
       true
     );
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "y", tags: [] }))).toBe(
+      true
+    );
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "", tags: ["a"] }))).toBe(
+      true
+    );
+  });
+
+  it("분할 힌트만 있으면 false다", () => {
+    // 적용 루프는 태그·이름·폴더만 처리한다. 힌트만 있는 계획을 승인 가능으로 보이면
+    // 사용자가 승인해도 아무 일이 없고 힌트도 저장되지 않는다.
     expect(
       hasActionableSuggestion(
         plan({ suggestedTitle: "", suggestedFolder: "", tags: [], splitHint: "나누세요" })
       )
+    ).toBe(false);
+  });
+
+  it("다른 변경이 있으면 힌트가 함께 있어도 true다", () => {
+    // 힌트 자체는 승인 화면의 참고 정보로 보여준다.
+    expect(
+      hasActionableSuggestion(plan({ suggestedTitle: "x", splitHint: "나누세요" }))
     ).toBe(true);
   });
 });
@@ -472,5 +490,20 @@ describe("sanitizeTitle — 확장자가 붙은 예약 이름", () => {
   it("예약 이름을 포함하기만 한 것은 그대로 둔다", () => {
     expect(sanitizeTitle("CONTROL.txt")).toBe("CONTROL.txt");
     expect(sanitizeTitle("회의 CON 정리")).toBe("회의 CON 정리");
+  });
+});
+
+describe("sanitizeTitle — 후행 구두점 뒤의 확장자", () => {
+  it("`Report.md.`도 확장자를 제거한다", () => {
+    // 순서를 뒤집으면 확장자 제거가 먼저 실패한 뒤 마지막 점만 사라져 `Report.md`가 되고,
+    // 경로를 만들 때 확장자가 다시 붙어 `Report.md.md`가 된다.
+    expect(sanitizeTitle("Report.md.")).toBe("Report");
+    expect(sanitizeTitle("Report.md ")).toBe("Report");
+    expect(sanitizeTitle("Report.MD..")).toBe("Report");
+  });
+
+  it("대상 경로에 확장자가 두 번 붙지 않는다", () => {
+    const out = resolveTargetPath(plan({ suggestedTitle: "Report.md." }), new Set());
+    expect(out).toBe("Projects/Report.md");
   });
 });

@@ -489,12 +489,16 @@ export class ChatView extends ItemView {
     });
   }
 
-  /** 목록에서 마지막 어시스턴트 메시지의 인덱스. 없으면 -1. */
+  /**
+   * 재생성 버튼을 붙일 메시지의 인덱스. 없으면 -1.
+   *
+   * **마지막 메시지가 어시스턴트일 때만** 준다. `prepareRegeneration`은 배열의 마지막
+   * 역할이 assistant일 때만 동작하므로, 사용자 메시지로 끝난 세션에서 앞선 어시스턴트
+   * 메시지에 버튼을 붙이면 눌러도 아무 일이 없다.
+   */
   private lastAssistantIndex(messages: readonly { role: string }[]): number {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") return i;
-    }
-    return -1;
+    const last = messages.length - 1;
+    return last >= 0 && messages[last].role === "assistant" ? last : -1;
   }
 
   /**
