@@ -33,6 +33,8 @@ import {
   buildGapReport,
   writeGapReport,
   GAP_REPORT_FILE,
+  findOrphanNotes,
+  findStubNotes,
 } from "./second-brain/knowledge-gaps";
 import {
   selectReviewQueue,
@@ -44,6 +46,15 @@ import {
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
+import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
+import {
+  suggestLinks,
+  buildRelatedLinksBlock,
+  groupBySource,
+  RELATED_LINKS_BLOCK_KEY,
+} from "./second-brain/link-suggestions";
+import { upsertGeneratedBlock } from "./second-brain/sentinel-blocks";
+import { VIEW_I18N } from "./chat-view-i18n";
 import { runReconcileDetailed, applyReconciliation } from "./second-brain/reconcile";
 import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
@@ -491,6 +502,63 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   /**
+   * 고아·스텁 노트에 붙일 링크 후보를 계산해 승인 화면을 띄운다.
+   *
+   * LLM 호출이 없다 — 인덱스에 이미 있는 임베딩으로 답할 수 있는 질문이다.
+   * 링크는 그래프를 영구히 바꾸므로 Second Brain 활성 여부를 먼저 확인하고,
+   * 후보가 0건이면 화면을 띄우지 않는다.
+   */
+  private async openLinkSuggestions(): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const entries = this.indexer.getEntries();
+    const wikiFolder = this.settings.secondBrain.wikiFolder;
+
+    // 연결이 필요한 노트 = 고아(연결 0) + 스텁(내용 부족). 둘 다 그래프 순회에서
+    // 사실상 도달 불가라 RAG 이웃 확장 혜택을 못 받는다.
+    const gapPaths = new Set([
+      ...findOrphanNotes(entries, wikiFolder).map((g) => g.path),
+      ...findStubNotes(entries, wikiFolder).map((g) => g.path),
+    ]);
+    const sources = entries.filter((e) => gapPaths.has(e.path));
+
+    const suggestions = suggestLinks(sources, entries, { wikiFolder });
+    if (suggestions.length === 0) {
+      new Notice(t.linkSuggestNone, 8000);
+      return;
+    }
+
+    new LinkSuggestionModal(this.app, this, suggestions, async (approved) => {
+      const grouped = groupBySource(approved);
+      let links = 0;
+
+      for (const [sourcePath, group] of grouped) {
+        const file = this.app.vault.getAbstractFileByPath(sourcePath);
+        if (!(file instanceof TFile)) continue;
+
+        const block = buildRelatedLinksBlock(group);
+        // process로 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있다.
+        await this.app.vault.process(file, (content) =>
+          upsertGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY, block)
+        );
+        links += group.length;
+      }
+
+      // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
+      for (const sourcePath of grouped.keys()) {
+        const file = this.app.vault.getAbstractFileByPath(sourcePath);
+        if (file instanceof TFile) await this.indexer.indexFile(file);
+      }
+
+      return { notes: grouped.size, links };
+    }).open();
+  }
+
+  /**
    * 주제로 모순을 점검하고, 발견되면 승인 화면을 띄운다.
    *
    * 점검(1단계)은 비파괴이므로 옵트인 검사 없이 실행할 수 있지만, 반영(2단계)은 노트를
@@ -815,6 +883,12 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-link-suggestions",
+      name: "링크 제안 (고아·스텁 노트 연결)",
+      callback: () => void this.openLinkSuggestions(),
+    });
+
     this.addCommand({
       id: "second-brain-review-queue",
       name: "복습 큐 (다시 볼 노트)",

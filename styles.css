@@ -1867,3 +1867,60 @@ body.theme-light .ba-message-content pre {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* 링크 제안 검토 모달 */
+.ba-link-suggest-modal {
+  max-width: 640px;
+}
+
+.ba-link-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+
+.ba-link-suggest-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-link-suggest-source {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.ba-link-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.ba-link-suggest-target {
+  font-size: 13px;
+  color: var(--text-accent);
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.ba-link-suggest-score {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.ba-link-suggest-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
