@@ -288,16 +288,24 @@ export function parseLedger(markdown: string): DecisionEntry[] {
 
     const trimmed = line.trim();
     if (status === null || !trimmed.startsWith("|")) continue;
-    // 헤더 행과 구분선은 건너뛴다.
-    if (trimmed.startsWith("| ---") || trimmed.startsWith("| 결정 |")) continue;
 
     // 이스케이프된 파이프(\|)를 칸 구분자로 오인하지 않도록 분리한다.
-    const cells = trimmed
+    const rawCells = trimmed
       .replace(/^\|/, "")
       .replace(/\|$/, "")
       .split(/(?<!\\)\|/)
-      .map(uncell);
-    if (cells.length < 5) continue;
+      .map((c) => c.trim());
+    if (rawCells.length < 5) continue;
+
+    // 헤더 행과 구분선은 건너뛴다.
+    //
+    // 접두어("| ---" / "| 결정 |")로 판정하면 안 된다 — `---`로 시작하는 결정 문구나
+    // "결정"이라는 결정 문구가 그 행을 구분선/헤더로 오인시켜 **항목이 사라진다**.
+    // 칸 내용으로 판정하면 그런 오인이 없다.
+    if (rawCells.every((c) => /^:?-{2,}:?$/.test(c))) continue;
+    if (rawCells[0] === "결정" && rawCells[1] === "이유") continue;
+
+    const cells = rawCells.map(uncell);
 
     // 6칸(대체 칸 포함)이 정본이다. 사용자가 손으로 5칸 행을 적었을 수도 있으므로
     // 그 경우 마지막 칸을 근거로 보고 대체 대상은 비운다.

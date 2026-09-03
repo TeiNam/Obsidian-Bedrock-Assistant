@@ -507,3 +507,36 @@ describe("Property: formatLedger → parseLedger 왕복 안정성", () => {
     );
   });
 });
+
+describe("parseLedger — 구분선·헤더 오인", () => {
+  it("`---`로 시작하는 결정이 구분선으로 오인되지 않는다", () => {
+    // 속성 테스트가 찾은 결함: 접두어 "| ---"로 구분선을 판정해 이 행이 통째로
+    // 버려졌고, 병합에서 항목이 사라졌다.
+    const e = decision({ decision: "--- 임시 방편으로 A를 쓴다" });
+
+    const back = parseLedger(formatLedger([e]));
+    expect(back).toHaveLength(1);
+    expect(back[0].decision).toBe("--- 임시 방편으로 A를 쓴다");
+  });
+
+  it("'결정'이라는 결정 문구가 헤더로 오인되지 않는다", () => {
+    const e = decision({ decision: "결정", rationale: "짧은 이유" });
+
+    expect(parseLedger(formatLedger([e]))).toHaveLength(1);
+  });
+
+  it("실제 구분선과 헤더는 여전히 건너뛴다", () => {
+    const md = [
+      "### 열림 (1)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| :--- | ---: | :---: | --- | --- | --- |",
+      "| 실제 결정 | 이유 | — | — | — | [[a]] |",
+    ].join("\n");
+
+    const back = parseLedger(md);
+    expect(back).toHaveLength(1);
+    expect(back[0].decision).toBe("실제 결정");
+  });
+});
