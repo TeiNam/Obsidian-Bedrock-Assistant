@@ -369,3 +369,50 @@ describe("stripFrontmatter — 원문 기반 경계", () => {
     expect(stripFrontmatter(content, staleSource(), "a.md").startsWith("---")).toBe(false);
   });
 });
+
+// ============================================
+// Property: stripFrontmatter
+// ============================================
+/**
+ * 경계를 원문에서 계산하도록 바꿨으므로, 어떤 입력에도 지켜져야 하는 성질을 못박는다.
+ * 특히 "YAML이 본문에 새지 않는다"가 이번 수정의 목적이다.
+ */
+/** 캐시가 아예 없는 소스. 원문 계산만 검증한다. */
+const noCacheSource = {
+  resolvedLinks: {},
+  getBacklinks: () => [],
+  getFileCache: () => null,
+  fileExists: () => true,
+} as unknown as MetadataSource;
+
+describe("Property: stripFrontmatter", () => {
+  const line = fc.stringMatching(/^[가-힣A-Za-z0-9 :#-]{0,20}$/);
+
+  it("결과는 항상 원문의 접미사다", () => {
+    fc.assert(
+      fc.property(fc.array(line, { maxLength: 8 }), (lines) => {
+        const content = lines.join("\n");
+        const body = stripFrontmatter(content, noCacheSource, "a.md");
+        expect(content.endsWith(body)).toBe(true);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("프론트매터가 있으면 결과에 YAML 키가 남지 않는다", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.stringMatching(/^[a-z_]{1,8}: [가-힣A-Za-z0-9 ]{1,10}$/), { minLength: 1, maxLength: 5 }),
+        fc.array(line, { maxLength: 5 }),
+        (fmLines, bodyLines) => {
+          const content = `---\n${fmLines.join("\n")}\n---\n${bodyLines.join("\n")}`;
+          const body = stripFrontmatter(content, noCacheSource, "a.md");
+          for (const fmLine of fmLines) expect(body).not.toContain(fmLine);
+        }
+      ),
+      { numRuns: 400 }
+    );
+  });
+
+
+});
