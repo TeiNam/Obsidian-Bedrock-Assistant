@@ -20,6 +20,7 @@
 
 import { App, TFile, normalizePath } from "obsidian";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
 
 /** Wiki_Folder 하위에 두는 기본 카테고리 폴더 목록. 이 목록에 없는 카테고리는 "기타"로 분류된다. */
 export const WIKI_CATEGORIES = ["entities", "concepts", "projects"] as const;
@@ -170,13 +171,12 @@ export async function writeIndexCatalog(
   const existing = app.vault.getAbstractFileByPath(indexPath);
 
   if (existing instanceof TFile) {
-    // 기존 문서: 현재 내용을 읽어 catalog 블록만 교체(User_Region 보존, Req 4.4).
-    const current = await app.vault.read(existing);
-    const updated = upsertGeneratedBlock(current, CATALOG_BLOCK_KEY, catalog);
-    // 내용이 동일하면 불필요한 쓰기를 피한다(멱등).
-    if (updated !== current) {
-      await app.vault.modify(existing, updated);
-    }
+    // 기존 문서: catalog 블록만 교체(User_Region 보존, Req 4.4).
+    // 내용이 같으면 쓰지 않고, 쓸 때는 원자적으로 쓴다 — 스케줄러와 사용자 편집이
+    // 겹칠 수 있다(vault-write 주석 참고).
+    await processIfChanged(app, existing, (content) =>
+      upsertGeneratedBlock(content, CATALOG_BLOCK_KEY, catalog)
+    );
     return;
   }
 

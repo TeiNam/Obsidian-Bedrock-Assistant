@@ -24,6 +24,7 @@ import {
 } from "./search-adapter";
 import { parseAiFirstNote, buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
 import { parseJsonArray, toStringArray } from "./llm-json";
 
 /**
@@ -432,16 +433,12 @@ export async function applyReconciliation(
       continue;
     }
 
-    const current = await ctx.app.vault.read(file);
-    const next = applyToNoteContent(current, notePath, approved.suggestion ?? "", now);
-
-    // 실제 변경이 있을 때만 기록한다(멱등성 — 동일 내용이면 modify 생략).
-    if (next !== current) {
-      await ctx.app.vault.modify(file, next);
-      updated.push(notePath);
-    } else {
-      skipped.push(notePath);
-    }
+    // 실제 변경이 있을 때만 기록한다(멱등성 — 동일 내용이면 쓰기 생략).
+    const wrote = await processIfChanged(ctx.app, file, (content) =>
+      applyToNoteContent(content, notePath, approved.suggestion ?? "", now)
+    );
+    if (wrote) updated.push(notePath);
+    else skipped.push(notePath);
   }
 
   const parts: string[] = [];

@@ -137,6 +137,13 @@ function setupExistingArchitecture(userMemo: string) {
     modify: vi.fn(async (f: any, content: string) => {
       f.content = content;
     }),
+    // processIfChanged가 쓰는 원자적 쓰기. 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: any, fn: (data: string) => string) => {
+      const next = fn(f.content ?? "");
+      f.content = next;
+      return next;
+    }),
     // 기존 노트 경로에서는 호출되지 않아야 하는 쓰기 API(호출 여부 검증용 spy).
     create: vi.fn(),
     createFolder: vi.fn(),
@@ -167,9 +174,11 @@ describe("runArchitect — 재실행 보존 (Req 10.4)", () => {
 
     const result = await runArchitect(ctx);
 
-    // 기존 노트는 새로 생성하지 않고 modify로 갱신한다(create/createFolder 미호출).
+    // 기존 노트는 새로 생성하지 않고 원자적 쓰기(process)로 갱신한다.
+    // read→modify 왕복은 읽은 뒤 쓰기 전에 들어온 사용자 편집을 덮어쓴다.
     expect(result).toContain("갱신");
-    expect(vault.modify).toHaveBeenCalledTimes(1);
+    expect(vault.process).toHaveBeenCalledTimes(1);
+    expect(vault.modify).not.toHaveBeenCalled();
     expect(vault.create).not.toHaveBeenCalled();
     expect(vault.createFolder).not.toHaveBeenCalled();
 

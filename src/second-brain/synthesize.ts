@@ -24,6 +24,7 @@ import {
 } from "./search-adapter";
 import { buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
 import { ensureWikiFolders } from "./wiki-structure";
 // 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
 import { ensureWithinFolder } from "./vault-path-guard";
@@ -138,11 +139,9 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   const existing = ctx.app.vault.getAbstractFileByPath(notePath);
   if (existing instanceof TFile) {
     // 기존 종합 노트: synthesis 블록만 교체하여 프론트매터·프리앰블·User_Region을 보존한다.
-    const current = await ctx.app.vault.read(existing);
-    const updated = upsertGeneratedBlock(current, SYNTHESIS_BLOCK_KEY, synthesisBody);
-    if (updated !== current) {
-      await ctx.app.vault.modify(existing, updated);
-    }
+    await processIfChanged(ctx.app, existing, (content) =>
+      upsertGeneratedBlock(content, SYNTHESIS_BLOCK_KEY, synthesisBody)
+    );
     return `종합 노트를 갱신했습니다: ${notePath}${staleNote}`;
   }
 

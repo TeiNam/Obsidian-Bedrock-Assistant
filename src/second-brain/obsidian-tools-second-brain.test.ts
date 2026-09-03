@@ -102,6 +102,13 @@ function makeVault(initialFiles: any[] = [], initialFolders: any[] = []) {
     modify: vi.fn(async (f: any, content: string) => {
       f.content = content;
     }),
+    // processIfChanged가 쓰는 원자적 쓰기. 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: any, fn: (data: string) => string) => {
+      const next = fn(f.content ?? "");
+      f.content = next;
+      return next;
+    }),
     _map: map,
   };
 }
@@ -243,13 +250,14 @@ describe("update_index — 카탈로그 갱신 + 사용자 메모 보존 (Req 6.
     const result = await executor.execute("update_index", {});
 
     expect(result).toContain("갱신");
-    // index.md는 새로 만들지 않고 기존 파일을 수정한다
-    expect(vault.modify).toHaveBeenCalled();
-    const modifyCall = vault.modify.mock.calls.find(
+    // index.md는 새로 만들지 않고 기존 파일을 원자적으로 수정한다.
+    expect(vault.process).toHaveBeenCalled();
+    const processCall = vault.process.mock.calls.find(
       (c: any[]) => c[0]?.path === indexPath,
     );
-    expect(modifyCall).toBeDefined();
-    const written = modifyCall![1] as string;
+    expect(processCall).toBeDefined();
+    // process는 변환 함수를 받으므로 결과는 파일 객체에서 읽는다.
+    const written = (indexFile as unknown as { content: string }).content;
 
     // 사용자 메모는 그대로 보존된다
     expect(written).toContain(userMemo);

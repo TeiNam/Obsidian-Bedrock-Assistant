@@ -53,6 +53,13 @@ function makeMockVault() {
     // 쓰기성 API — runReconcile은 이들 중 무엇도 호출하면 안 된다(비파괴).
     create: vi.fn(async () => undefined),
     modify: vi.fn(async () => undefined),
+    // processIfChanged가 쓰는 원자적 쓰기. 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: any, fn: (data: string) => string) => {
+      const next = fn(f.content ?? "");
+      f.content = next;
+      return next;
+    }),
     delete: vi.fn(async () => undefined),
     createFolder: vi.fn(async () => undefined),
     // 읽기성 API(혹시 모를 접근 대비) — 호출돼도 무해
@@ -299,6 +306,14 @@ function makeApplyVault(files: TFile[]) {
     modify: vi.fn(async (f: TFile, content: string) => {
       (f as unknown as { content: string }).content = content;
     }),
+    // processIfChanged가 쓰는 원자적 쓰기. 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: TFile, fn: (data: string) => string) => {
+      const holder = f as unknown as { content: string };
+      const next = fn(holder.content ?? "");
+      holder.content = next;
+      return next;
+    }),
     create: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
     createFolder: vi.fn(async () => undefined),
@@ -352,8 +367,10 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
 
     const summary = await applyReconciliation(ctx, approved, "2024-06-15");
 
-    // 승인 노트만 1회 갱신
-    expect(vault.modify).toHaveBeenCalledTimes(1);
+    // 승인 노트만 1회 갱신. 원자적 쓰기(process)를 써야 한다 — read→modify 왕복은
+    // 읽은 뒤 쓰기 전에 들어온 사용자 편집을 덮어쓴다.
+    expect(vault.process).toHaveBeenCalledTimes(1);
+    expect(vault.modify).not.toHaveBeenCalled();
     expect(vault.create).not.toHaveBeenCalled();
 
     const updated = contentOf(fileA);
@@ -388,8 +405,8 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
     // B.md는 읽기/쓰기 어느 것도 호출되지 않아야 한다.
     expect(vault.read).toHaveBeenCalledTimes(1);
     expect(vault.read).toHaveBeenCalledWith(fileA);
-    expect(vault.modify).toHaveBeenCalledTimes(1);
-    expect(vault.modify).toHaveBeenCalledWith(fileA, expect.any(String));
+    expect(vault.process).toHaveBeenCalledTimes(1);
+    expect(vault.process).toHaveBeenCalledWith(fileA, expect.any(Function));
     // B 노트 내용 불변
     expect(contentOf(fileB)).toBe("건드리면 안 되는 B 노트");
   });
@@ -405,6 +422,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
 
     const summary = await applyReconciliation(ctx, approved, "2024-06-15");
 
+    expect(vault.process).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
     expect(vault.create).not.toHaveBeenCalled();
     expect(summary).toContain("건너뜀");
@@ -423,7 +441,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
 
     await applyReconciliation(ctx, approved, "2024-06-15");
 
-    expect(vault.modify).toHaveBeenCalledTimes(1);
+    expect(vault.process).toHaveBeenCalledTimes(1);
     const updated = contentOf(fileA);
     // 최소 프론트매터로 learned_at이 추가됨
     expect(updated).toContain("learned_at: 2024-06-15");
@@ -443,6 +461,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       "2024-06-15",
     );
 
+    expect(vault.process).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
     expect(summary).toContain("대상 노트가 없습니다");
   });

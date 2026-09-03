@@ -17,6 +17,7 @@ import { normalizePath, TFile } from "obsidian";
 import type { App } from "obsidian";
 import type { VaultIndexEntry } from "../types";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
 
 /** 스텁(내용 부족) 판정 기준 본문 길이. 이보다 짧으면 후보가 된다. */
 export const STUB_MAX_CHARS = 200;
@@ -284,11 +285,9 @@ export async function writeGapReport(
   const existing = app.vault.getAbstractFileByPath(path);
 
   if (existing instanceof TFile) {
-    const current = await app.vault.read(existing);
-    const updated = upsertGeneratedBlock(current, GAP_BLOCK_KEY, report);
-    if (updated !== current) {
-      await app.vault.modify(existing, updated);
-    }
+    await processIfChanged(app, existing, (content) =>
+      upsertGeneratedBlock(content, GAP_BLOCK_KEY, report)
+    );
     return;
   }
 

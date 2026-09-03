@@ -74,6 +74,13 @@ function makeMockVault() {
     getAbstractFileByPath: vi.fn(() => null),
     create: vi.fn(async () => undefined),
     modify: vi.fn(async () => undefined),
+    // processIfChanged가 쓰는 원자적 쓰기. 단일 스레드 테스트에서는 읽기-변환-쓰기를
+    // 이어붙이면 관찰 가능한 동작이 같다.
+    process: vi.fn(async (f: any, fn: (data: string) => string) => {
+      const next = fn(f.content ?? "");
+      f.content = next;
+      return next;
+    }),
     read: vi.fn(async () => ""),
     createFolder: vi.fn(async () => undefined),
     getMarkdownFiles: vi.fn(() => []),
