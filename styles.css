@@ -2022,3 +2022,52 @@ body.theme-light .ba-message-content pre {
   word-break: break-all;
   margin-top: 2px;
 }
+
+/* Inbox 검토 모달 */
+.ba-triage-modal {
+  max-width: 680px;
+}
+
+.ba-triage-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-triage-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-triage-path {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.ba-triage-body {
+  margin-top: 6px;
+  padding-inline-start: 24px;
+}
+
+.ba-triage-change {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-normal);
+}
+
+.ba-triage-split {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-warning);
+  margin-top: 2px;
+}
+
+.ba-triage-reason {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}

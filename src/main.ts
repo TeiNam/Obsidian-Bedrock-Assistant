@@ -58,6 +58,13 @@ import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
 import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
 import { CanonicalizeModal } from "./modals/canonicalize-modal";
 import { DecisionReviewModal } from "./modals/decision-review-modal";
+import { TriageReviewModal } from "./modals/triage-review-modal";
+import {
+  buildTriagePrompt,
+  parseTriageReport,
+  resolveTargetPath,
+  MAX_TRIAGE_NOTES,
+} from "./second-brain/inbox-triage";
 import {
   buildDecisionPrompt,
   parseDecisionReport,
@@ -525,6 +532,146 @@ export default class GeminiAssistantPlugin extends Plugin {
       wikiFolder: this.settings.secondBrain.wikiFolder,
       persist: () => this.saveSettings(),
     };
+  }
+
+  /**
+   * 지정 폴더의 노트에 제목·이동·태그 제안을 받아 승인 화면을 띄운다.
+   *
+   * 기존 P.A.R.A 정리와 달리 볼트 전체를 건드리지 않고 지정 폴더만 본다. 한 번에
+   * MAX_TRIAGE_NOTES건만 처리한다 — LLM 비용과 승인 화면의 판단 가능성을 함께 제한한다.
+   */
+  private async openInboxTriage(folder: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const target = normalizePath(folder.trim());
+    if (target === "") {
+      new Notice("정리할 폴더 경로가 필요합니다.");
+      return;
+    }
+
+    try {
+      // 대상 폴더의 마크다운 노트를 최근 수정 순으로 모은다. 최근에 캡처한 것이
+      // 정리 대기 중일 가능성이 높다.
+      const inboxFiles = this.app.vault
+        .getMarkdownFiles()
+        .filter((f) => f.path === target || f.path.startsWith(`${target}/`))
+        .sort((a, b) => b.stat.mtime - a.stat.mtime)
+        .slice(0, MAX_TRIAGE_NOTES);
+
+      if (inboxFiles.length === 0) {
+        new Notice(t.triageEmptyFolder(target), 8000);
+        return;
+      }
+
+      const entries = this.indexer.getEntries();
+      const byPath = new Map(entries.map((e) => [e.path, e]));
+
+      // 볼트의 기존 폴더와 자주 쓰는 태그를 프롬프트에 함께 준다. 주지 않으면 LLM이
+      // 매번 새 폴더·태그 체계를 지어내고 볼트가 비슷한 뜻으로 갈라진다.
+      const folders = [
+        ...new Set(
+          this.app.vault
+            .getMarkdownFiles()
+            .map((f) => f.path.slice(0, f.path.lastIndexOf("/")))
+            .filter((d) => d !== "" && d !== target && !d.startsWith(`${target}/`))
+        ),
+      ].sort();
+
+      const tagCounts = new Map<string, number>();
+      for (const entry of entries) {
+        for (const tag of entry.tags ?? []) {
+          tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+        }
+      }
+      const commonTags = [...tagCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 30)
+        .map(([tag]) => tag);
+
+      const prompt = buildTriagePrompt(
+        inboxFiles.map((f) => ({
+          path: f.path,
+          excerpt: byPath.get(f.path)?.excerpt ?? "",
+        })),
+        folders,
+        commonTags
+      );
+
+      const response = await this.aiClient.converseLight(
+        prompt,
+        "당신은 노트 정리를 제안하는 도구입니다. JSON 배열만 출력합니다.",
+        2500
+      );
+
+      const allPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+      const parsed = parseTriageReport(response.text, new Set(folders), allPaths);
+
+      if (!parsed.ok) {
+        new Notice(
+          "Inbox 검토 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림). 제안이 없다는 뜻이 아닙니다.",
+          10000
+        );
+        return;
+      }
+      if (parsed.items.length === 0) {
+        new Notice(t.triageNone, 8000);
+        return;
+      }
+
+      new TriageReviewModal(this.app, this, parsed.items, async (approved) => {
+        let moved = 0;
+        let tagged = 0;
+        let skipped = 0;
+
+        // 이번 배치에서 만들어질 경로도 충돌 검사에 포함한다. 두 노트에 같은 제목을
+        // 제안하면 뒤엣것이 앞엣것을 덮어쓸 수 있다.
+        const taken = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+
+        for (const plan of approved) {
+          const file = this.app.vault.getAbstractFileByPath(plan.path);
+          if (!(file instanceof TFile)) {
+            skipped++;
+            continue;
+          }
+
+          // 태그를 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
+          if (plan.tags.length > 0) {
+            await this.app.fileManager.processFrontMatter(file, (fm) => {
+              const existing = Array.isArray(fm.tags)
+                ? fm.tags.filter((v: unknown): v is string => typeof v === "string")
+                : typeof fm.tags === "string"
+                  ? [fm.tags]
+                  : [];
+              const merged = [...new Set([...existing, ...plan.tags])];
+              if (merged.length > existing.length) fm.tags = merged;
+            });
+            tagged++;
+          }
+
+          const destination = resolveTargetPath(plan, taken);
+          if (destination === null) {
+            // 대상이 이미 있거나 바뀌는 것이 없다 — 덮어쓰지 않고 넘어간다.
+            continue;
+          }
+
+          // fileManager.renameFile은 이 노트를 가리키는 링크를 자동으로 갱신한다.
+          // vault.rename은 갱신하지 않아 볼트의 링크가 깨진다.
+          await this.app.fileManager.renameFile(file, destination);
+          taken.add(destination);
+          taken.delete(plan.path);
+          moved++;
+        }
+
+        return { moved, tagged, skipped };
+      }).open();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`Inbox 검토 실패: ${reason}`, 10000);
+    }
   }
 
   /**
@@ -1045,6 +1192,27 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-inbox-triage",
+      name: "Inbox 검토 (제목·이동·태그 제안)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "Inbox 검토",
+          submitLabel: "검토",
+          fields: [
+            {
+              key: "folder",
+              label: "폴더",
+              type: "text",
+              placeholder: "정리할 폴더 (예: Inbox)",
+              defaultValue: "Inbox",
+            },
+          ],
+          onSubmit: (values) => this.openInboxTriage(values.folder),
+        }).open();
+      },
+    });
+
     this.addCommand({
       id: "second-brain-decisions",
       name: "결정 추출 → 원장 (decisions)",
