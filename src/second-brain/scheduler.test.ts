@@ -308,7 +308,7 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
 
 describe("SecondBrainScheduler — 옵트인 격리 (Req 1.6)", () => {
   // Validates: Requirements 1.6
-  it("enabled=false이면 maybeRunOnStartup이 파이프라인을 실행하지 않는다(쓰기/persist 없음)", async () => {
+  it("enabled=false이면 maybeRun이 파이프라인을 실행하지 않는다(쓰기/persist 없음)", async () => {
     // enabled=false 외 조건은 모두 트리거 충족(schedulerEnabled=true, lastScheduledRun=0).
     const { ctx, vault, persist } = buildHarness({
       settings: { enabled: false, schedulerEnabled: true, lastScheduledRun: 0 },
@@ -316,7 +316,7 @@ describe("SecondBrainScheduler — 옵트인 격리 (Req 1.6)", () => {
     const scheduler = new SecondBrainScheduler();
     const now = 3_000_000;
 
-    await scheduler.maybeRunOnStartup(ctx, now);
+    await scheduler.maybeRun(ctx, now);
 
     // 어떤 Vault 쓰기도, 영속화도 발생하지 않아야 한다.
     expect(vault.createFolder).not.toHaveBeenCalled();
@@ -327,5 +327,74 @@ describe("SecondBrainScheduler — 옵트인 격리 (Req 1.6)", () => {
     // lastScheduledRun도 변경되지 않아야 한다(초기값 유지).
     expect(ctx.settings.lastScheduledRun).toBe(0);
     expect(scheduler.isRunning).toBe(false);
+  });
+});
+
+// ============================================
+// 전멸 실행 후 냉각 (주기 tick 대비)
+// ============================================
+/**
+ * lastScheduledRun은 한 단계라도 성공했을 때만 갱신된다(Req 11.6). 전멸한 실행은
+ * 시각을 남기지 않아 주기 판정을 매번 통과한다.
+ *
+ * 앱 시작 시에만 트리거될 때는 "다음 시작에서 재시도"라 합리적이었다. 주기 tick이
+ * 붙은 뒤로는 원인이 지속되는 실패(잘못된 API 키, 만료된 자격증명)에서 tick마다
+ * 영원히 재시도하게 되므로 냉각이 필요하다.
+ */
+describe("SecondBrainScheduler — 전멸 실행 후 냉각", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it("전 단계 실패 직후의 재시도는 건너뛴다", async () => {
+    const { ctx } = buildHarness({ allStepsThrow: true });
+    const scheduler = new SecondBrainScheduler();
+    const now = 10 * HOUR;
+
+    const first = await scheduler.maybeRun(ctx, now);
+    expect(first.ran).toBe(true);
+    expect(first.succeeded).toBe(0);
+
+    // 냉각 시간(1시간) 안의 재시도는 실행되지 않는다.
+    const second = await scheduler.maybeRun(ctx, now + 30 * 60 * 1000);
+    expect(second.ran).toBe(false);
+  });
+
+  it("냉각 시간이 지나면 다시 시도한다", async () => {
+    const { ctx } = buildHarness({ allStepsThrow: true });
+    const scheduler = new SecondBrainScheduler();
+    const now = 10 * HOUR;
+
+    await scheduler.maybeRun(ctx, now);
+    const retried = await scheduler.maybeRun(ctx, now + HOUR + 1);
+
+    // 원인이 사라졌을 수도 있으므로 영원히 막지는 않는다.
+    expect(retried.ran).toBe(true);
+  });
+
+  it("성공한 실행에는 냉각을 걸지 않는다", async () => {
+    const { ctx } = buildHarness();
+    const scheduler = new SecondBrainScheduler();
+    const now = 10 * HOUR;
+
+    const result = await scheduler.maybeRun(ctx, now);
+    expect(result.succeeded).toBeGreaterThan(0);
+
+    // 이후 실행은 냉각이 아니라 lastScheduledRun 주기 판정이 막아야 한다.
+    expect(ctx.settings.lastScheduledRun).toBe(now);
+    const soon = await scheduler.maybeRun(ctx, now + 60 * 1000);
+    expect(soon.ran).toBe(false);
+    // 주기(24시간)가 지나면 다시 돈다 — 냉각에 걸려 있지 않다는 증거다.
+    const later = await scheduler.maybeRun(ctx, now + 25 * HOUR);
+    expect(later.ran).toBe(true);
+  });
+
+  it("비활성 상태에서는 냉각 판정 전에 반환한다", async () => {
+    const { ctx, persist } = buildHarness({
+      allStepsThrow: true,
+      settings: { enabled: false },
+    });
+    const scheduler = new SecondBrainScheduler();
+
+    expect((await scheduler.maybeRun(ctx, 10 * HOUR)).ran).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
   });
 });

@@ -62,6 +62,19 @@ export interface SecondBrainContext {
 const MS_PER_HOUR = 60 * 60 * 1000;
 
 /**
+ * 전 단계가 실패한 직후 다음 자동 시도까지의 최소 간격.
+ *
+ * lastScheduledRun은 한 단계라도 성공했을 때만 갱신된다(Req 11.6) — 전멸한 실행은
+ * 시각을 남기지 않아 다음 트리거에서 곧바로 재시도된다. 앱 시작 시에만 트리거될 때는
+ * 합리적이었지만, 주기 tick이 붙은 뒤로는 원인이 지속되는 실패(잘못된 API 키, 만료된
+ * 자격증명)에서 tick마다 영원히 재시도하게 된다.
+ *
+ * 이 냉각 시간은 의도적으로 영속화하지 않는다. 프로세스 생명주기만 기억하면 되고,
+ * 사용자가 설정을 고쳐 재시작했을 때는 즉시 다시 시도하는 쪽이 맞다.
+ */
+const FAILED_RUN_COOLDOWN_MS = 60 * 60 * 1000;
+
+/**
  * 스케줄 트리거 판정 — 순수 함수 (Req 11.2, 11.3, Property 12).
  *
  * 현재 시각(now)이 (마지막 실행 시각 + 주기) 이상이면 true, 아니면 false를 반환한다.
@@ -200,6 +213,12 @@ export class SecondBrainScheduler {
   /** 동시 실행 가드 (Req 11.5). 파이프라인 실행 중이면 true. */
   private running = false;
 
+  /**
+   * 전 단계가 실패한 마지막 자동 시도 시각. 0이면 그런 실패가 없었다는 뜻이다.
+   * 영속화하지 않는다(FAILED_RUN_COOLDOWN_MS 주석 참고).
+   */
+  private lastFailedAttemptAt = 0;
+
   /** 실행 중 여부 (진단/테스트용 읽기 전용 노출). */
   get isRunning(): boolean {
     return this.running;
@@ -266,17 +285,21 @@ export class SecondBrainScheduler {
   }
 
   /**
-   * 앱 시작 시 자동 트리거 (Req 11.1). onLayoutReady에서 호출한다.
+   * 자동 트리거 (Req 11.1). 앱 시작(onLayoutReady)과 주기 tick 양쪽에서 호출한다.
    *
    * 다음 조건을 모두 만족할 때만 Cleanup_Pipeline을 실행한다.
    * - 기능이 활성(enabled)일 것 — 옵트인 격리 (Req 1.6)
    * - 자동 스케줄러가 활성(schedulerEnabled)일 것 (Req 11.1)
    * - 트리거 조건(shouldRunScheduled)을 만족할 것 (Req 11.2, 11.3)
+   * - 직전 실행이 전멸했다면 냉각 시간이 지났을 것
+   *
+   * 조건 검사를 전부 품고 있으므로 호출부는 무조건 불러도 안전하다. 주기 tick이
+   * 자주 돌아도 대부분은 여기서 즉시 반환한다.
    *
    * @param ctx Second Brain 실행 컨텍스트
    * @param now 현재 시각 (epoch ms). main.ts에서 Date.now()를 주입한다.
    */
-  async maybeRunOnStartup(ctx: SecondBrainContext, now: number): Promise<CleanupRunResult> {
+  async maybeRun(ctx: SecondBrainContext, now: number): Promise<CleanupRunResult> {
     const skipped: CleanupRunResult = { ran: false, succeeded: 0, failed: 0, failedSteps: [] };
 
     // 옵트인 격리: 기능 비활성 시 아무 동작도 하지 않는다 (Req 1.6)
@@ -296,6 +319,25 @@ export class SecondBrainScheduler {
       return skipped;
     }
 
-    return await this.runCleanupPipeline(ctx, now);
+    // 전멸한 실행은 lastScheduledRun을 남기지 않으므로 위 주기 판정을 매번 통과한다.
+    // 냉각 없이는 원인이 지속되는 실패에서 tick마다 재시도한다.
+    if (
+      this.lastFailedAttemptAt !== 0 &&
+      now - this.lastFailedAttemptAt < FAILED_RUN_COOLDOWN_MS
+    ) {
+      return skipped;
+    }
+
+    const result = await this.runCleanupPipeline(ctx, now);
+
+    // 실제로 돌았고 한 단계도 성공하지 못했으면 냉각을 건다. 성공이 섞였으면
+    // lastScheduledRun이 갱신되어 주기 판정이 막아주므로 냉각은 해제한다.
+    if (result.ran && result.succeeded === 0) {
+      this.lastFailedAttemptAt = now;
+    } else if (result.succeeded > 0) {
+      this.lastFailedAttemptAt = 0;
+    }
+
+    return result;
   }
 }

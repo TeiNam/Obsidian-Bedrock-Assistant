@@ -48,6 +48,15 @@ import { ReviewQueueModal } from "./modals/review-queue-modal";
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
 
+/**
+ * Second Brain 자동 스케줄러의 주기 검사 간격(ms).
+ *
+ * 실제 실행 주기는 설정(schedulerIntervalHours, 기본 24시간)이 정한다. 이 값은 "그
+ * 주기가 됐는지 얼마나 자주 확인하는가"이며, 확인 자체는 설정 비교 몇 번이라 싸다.
+ * 30분이면 예정 시각에서 최대 30분 늦게 실행된다.
+ */
+const SCHEDULER_TICK_MS = 30 * 60 * 1000;
+
 /** 접근 이력 저장 디바운스 지연(ms). 노트를 열 때마다 디스크에 쓰지 않기 위함이다. */
 const ACCESS_LOG_SAVE_DEBOUNCE_MS = 5000;
 
@@ -201,7 +210,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 중단된 사이 스케줄러가 시작되어 "빈 인덱스"로 카탈로그를 덮어쓴다. 반드시
     // 로드 완료를 기다린 뒤 실행해야 한다.
     //
-    // maybeRunOnStartup 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
+    // maybeRun 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
     // 여기서는 무조건 호출해도 옵트인 격리가 보장된다(비활성 시 아무 동작 없음).
     this.app.workspace.onLayoutReady(() => {
       void (async () => {
@@ -216,7 +225,7 @@ export default class GeminiAssistantPlugin extends Plugin {
           console.error("인덱스 로드 실패:", e);
         }
         try {
-          await this.secondBrainScheduler.maybeRunOnStartup(
+          await this.secondBrainScheduler.maybeRun(
             this.buildSecondBrainContext(),
             Date.now()
           );
@@ -225,6 +234,26 @@ export default class GeminiAssistantPlugin extends Plugin {
         }
       })();
     });
+
+    // 주기 tick — 시작 시 한 번만 검사하면 옵시디언을 며칠 열어두는 사용 패턴에서
+    // 자동 스케줄러가 거의 돌지 않는다. maybeRun이 활성 여부·주기·실패 냉각을 모두
+    // 검사하므로 tick은 대부분 즉시 반환한다.
+    //
+    // registerInterval에 넘기면 플러그인 unload 시 옵시디언이 정리한다.
+    this.registerInterval(
+      window.setInterval(() => {
+        void (async () => {
+          try {
+            await this.secondBrainScheduler.maybeRun(
+              this.buildSecondBrainContext(),
+              Date.now()
+            );
+          } catch (e) {
+            console.error("Second Brain 스케줄러 주기 실행 실패:", e);
+          }
+        })();
+      }, SCHEDULER_TICK_MS)
+    );
 
     // 리본 아이콘 추가
     this.ribbonIconEl = this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
