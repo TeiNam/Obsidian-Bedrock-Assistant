@@ -232,7 +232,12 @@ export function mergeRelatedLinksBlock(
     links.push({ target: t, alias: a === t ? "" : a });
   };
 
-  for (const { target, alias } of parseRelatedLinks(existingBlock)) add(target, alias);
+  for (const { target, alias } of parseRelatedLinks(existingBlock)) {
+    // 마크다운 대체 링크는 `.md`가 붙어 저장되고 parseNoteLinks가 그것을 보존한다.
+    // 그대로 병합하면 formatNoteLink가 `.md`를 다시 붙여 `.md.md`가 되고, 새 제안과도
+    // 중복 제거되지 않는다.
+    add(pathWithoutExtension(target), alias);
+  }
   for (const s of suggestions) add(pathWithoutExtension(s.targetPath), s.targetTitle);
 
   if (links.length === 0) return "";

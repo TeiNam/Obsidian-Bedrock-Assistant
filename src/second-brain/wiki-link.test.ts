@@ -246,3 +246,25 @@ describe("formatNoteLink — 링크 문법을 깨뜨리는 문자", () => {
     expect(parseNoteLinks(link)[0].target).toBe("Notes/a%20b#c.md");
   });
 });
+
+describe("formatNoteLink — 별칭 안전성", () => {
+  it("별칭에 대괄호가 있으면 마크다운으로 물러난다", () => {
+    // `[[Notes/a|제목[초안]]]`은 되읽을 수 없다 — 위키링크 안에 `[`가 있으면 어디까지가
+    // 링크인지 정해지지 않고, 다음 승인에서 기존 링크가 조용히 삭제된다.
+    const link = formatNoteLink("Notes/a", "제목[초안]");
+
+    expect(link).toBe("[제목(초안)](Notes/a.md)");
+    // 되읽을 수 있다.
+    expect(parseNoteLinks(link)).toEqual([{ target: "Notes/a.md", alias: "제목(초안)" }]);
+  });
+
+  it("안전한 별칭은 위키링크를 유지한다", () => {
+    expect(formatNoteLink("Notes/a", "제목 (초안)")).toBe("[[Notes/a|제목 (초안)]]");
+  });
+});
+
+describe("formatAnchorLink — 대괄호", () => {
+  it("헤딩에 대괄호가 있으면 null이다", () => {
+    expect(formatAnchorLink("Notes/a", "결론[초안]")).toBeNull();
+  });
+});

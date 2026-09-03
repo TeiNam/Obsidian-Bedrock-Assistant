@@ -286,3 +286,63 @@ describe("VaultIndexer.refreshGraphMetadata", () => {
     expect(indexer.getEntries()[0].backlinks).toEqual([]);
   });
 });
+
+describe("refreshGraphMetadata — 태그 변경", () => {
+  /** 지정한 태그를 돌려주는 MetadataSource. */
+  function sourceWithTags(tags: string[]): MetadataSource {
+    return {
+      resolvedLinks: {},
+      getBacklinks: () => [],
+      getFileCache: () => ({ tags: tags.map((t) => `#${t}`), frontmatter: {} }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  function seedWithTags(indexer: VaultIndexer, tags: string[]): void {
+    indexer.deserialize(
+      JSON.stringify({
+        schemaVersion: 2,
+        entries: [
+          {
+            path: "B.md",
+            embedding: [1, 2, 3],
+            lastModified: 5000,
+            title: "B",
+            excerpt: "발췌",
+            searchText: `b 본문 ${tags.join(" ")}`,
+            chunks: [{ index: 0, text: "본문", embedding: [1, 2, 3], charStart: 0 }],
+            outlinks: [],
+            backlinks: [],
+            tags,
+            frontmatter: {},
+          },
+        ],
+      })
+    );
+  }
+
+  it("태그가 바뀌면 재색인 대상으로 표시한다", () => {
+    // searchText에 태그가 들어 있고 여기서 다시 만들 수 없다(원문이 인덱스에 없다).
+    // 표시하지 않으면 지운 태그로 키워드 검색이 계속 그 노트를 반환한다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seedWithTags(indexer, ["work", "old"]);
+    indexer.setMetadataSource(sourceWithTags(["work"]));
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries()[0];
+    expect(entry.tags).toEqual(["work"]);
+    expect(entry.needsReindex).toBe(true);
+  });
+
+  it("태그가 그대로면 표시하지 않는다", () => {
+    // 재색인은 임베딩 비용이 든다. 바뀌지 않았으면 부를 이유가 없다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seedWithTags(indexer, ["work"]);
+    indexer.setMetadataSource(sourceWithTags(["work"]));
+
+    indexer.refreshGraphMetadata("B.md");
+
+    expect(indexer.getEntries()[0].needsReindex).toBeUndefined();
+  });
+});

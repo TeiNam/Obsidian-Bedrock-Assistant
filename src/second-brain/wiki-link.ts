@@ -8,8 +8,16 @@
 // 생성 블록에 링크를 쓰는 곳이 여러 곳(링크 제안·중복 후보·지식 공백·위키 인덱스)이라
 // 각자 문자열을 보간하면 한 곳만 고치고 나머지는 계속 깨진 링크를 쓴다. 여기서 한 번 정한다.
 
-/** 위키링크로 쓸 수 없는 문자. 있으면 마크다운 링크로 물러난다. */
-const UNSAFE_IN_WIKILINK = /[#|]/;
+/** 대상에 있으면 위키링크로 쓸 수 없는 문자. `#`는 앵커, `|`는 별칭 구분자가 된다. */
+const UNSAFE_TARGET = /[#|]/;
+
+/**
+ * 별칭에 있으면 위키링크로 쓸 수 없는 문자.
+ *
+ * `[[Notes/a|제목[초안]]]`은 되읽을 수 없다 — 위키링크 안에 `[`가 있으면 어디까지가
+ * 링크인지 정해지지 않는다. 그러면 다음 승인에서 기존 링크를 못 읽어 조용히 삭제된다.
+ */
+const UNSAFE_ALIAS = /[[\]]/;
 
 /** 확장자를 뗀 경로. 링크 대상으로 쓴다. */
 export function pathWithoutExtension(path: string): string {
@@ -28,7 +36,7 @@ export function pathWithoutExtension(path: string): string {
 export function formatNoteLink(target: string, alias = ""): string {
   const trimmedAlias = alias.trim();
 
-  if (UNSAFE_IN_WIKILINK.test(target)) {
+  if (UNSAFE_TARGET.test(target) || UNSAFE_ALIAS.test(trimmedAlias)) {
     const label = sanitizeLabel(trimmedAlias === "" ? target : trimmedAlias);
     return `[${label}](${encodeLinkPath(target)}.md)`;
   }
@@ -49,8 +57,8 @@ export function formatNoteLink(target: string, alias = ""): string {
  */
 export function formatAnchorLink(target: string, heading: string): string | null {
   if (heading.trim() === "") return null;
-  if (UNSAFE_IN_WIKILINK.test(heading)) return null;
-  if (UNSAFE_IN_WIKILINK.test(target)) return null;
+  if (UNSAFE_TARGET.test(heading) || UNSAFE_ALIAS.test(heading)) return null;
+  if (UNSAFE_TARGET.test(target) || UNSAFE_ALIAS.test(target)) return null;
   return `[[${target}#${heading}]]`;
 }
 

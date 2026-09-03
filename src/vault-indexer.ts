@@ -579,14 +579,22 @@ export class VaultIndexer {
     if (!existing || !this.metadataSource) return;
 
     const metadata = extractMetadata(path, this.metadataSource);
-    // 태그가 바뀌면 키워드 검색 텍스트도 따라가야 한다. 본문은 그대로이므로 기존
-    // searchText에서 태그 부분만 다시 만들 수는 없다 — 태그를 덧붙이는 쪽이 안전하다.
+
+    // 태그가 바뀌었으면 searchText도 낡는다(태그가 그 안에 들어 있다). 여기서 다시 만들 수는
+    // 없다 — searchText는 프론트매터를 포함한 **원문**으로 만들어지고 인덱스에는 그 원문이
+    // 없다. 대신 재색인 대상으로 표시해 다음 인덱싱이 제대로 다시 만들게 한다. 그러지 않으면
+    // 지운 태그로 키워드 검색이 계속 그 노트를 반환한다.
+    const tagsChanged =
+      metadata.tags.length !== (existing.tags?.length ?? 0) ||
+      metadata.tags.some((tag, i) => tag !== existing.tags?.[i]);
+
     this.index.set(path, {
       ...existing,
       outlinks: metadata.outlinks,
       backlinks: metadata.backlinks,
       tags: metadata.tags,
       frontmatter: metadata.frontmatter,
+      ...(tagsChanged ? { needsReindex: true } : {}),
     });
   }
 

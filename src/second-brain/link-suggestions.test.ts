@@ -438,3 +438,38 @@ describe("formatSuggestionLink — 특수문자 경로", () => {
     ).toBe("[[Notes/normal|제목]]");
   });
 });
+
+describe("mergeRelatedLinksBlock — 마크다운 대체 링크 왕복", () => {
+  const special: LinkSuggestion = {
+    sourcePath: "o.md",
+    targetPath: "Notes/foo#bar.md",
+    targetTitle: "제목",
+    similarity: 0.9,
+  };
+
+  it("`.md.md`를 만들지 않는다", () => {
+    // 마크다운 대체 링크는 `.md`가 붙어 저장되고 parseNoteLinks가 그것을 보존한다.
+    // 그대로 병합하면 formatNoteLink가 다시 붙인다.
+    const first = mergeRelatedLinksBlock(null, [special]);
+    const second = mergeRelatedLinksBlock(first, [special]);
+
+    expect(second).not.toContain(".md.md");
+    // 같은 링크를 다시 승인해도 중복되지 않는다.
+    expect(second).toBe(first);
+  });
+
+  it("위키링크와 마크다운 링크가 섞여도 누적된다", () => {
+    const normal: LinkSuggestion = {
+      sourcePath: "o.md",
+      targetPath: "Notes/normal.md",
+      targetTitle: "보통",
+      similarity: 0.85,
+    };
+
+    const block = mergeRelatedLinksBlock(mergeRelatedLinksBlock(null, [special]), [normal]);
+
+    expect(block).toContain("Notes/foo%23bar.md");
+    expect(block).toContain("[[Notes/normal|보통]]");
+    expect(block).not.toContain(".md.md");
+  });
+});
