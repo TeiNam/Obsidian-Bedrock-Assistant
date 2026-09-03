@@ -396,7 +396,7 @@ function applyToNoteContent(
  *
  * 사용자가 모순 리포트의 특정 Contradiction(정정안)을 명시적으로 "승인"한 경우에만 호출된다.
  * 승인된 Contradiction의 대상 노트(approved.notePaths)만 다음과 같이 갱신한다.
- * - 기존 edit_note/sentinel 병합 경로(vault.read → upsert → vault.modify)로 정정안을 반영하되,
+ * - 기존 sentinel 병합 경로(processIfChanged로 원자적 upsert)로 정정안을 반영하되,
  *   Generated_Region만 교체하여 사람이 작성한 User_Region을 보존한다(비파괴 쓰기).
  * - 각 대상 노트의 Bi_Temporal `learned_at`을 갱신 시점(now)으로 업데이트한다.
  * - 존재하지 않는 경로는 건너뛴다(생성하지 않음). 승인되지 않은 노트는 일절 건드리지 않는다.
