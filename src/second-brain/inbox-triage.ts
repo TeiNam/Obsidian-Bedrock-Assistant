@@ -183,17 +183,24 @@ export function resolveTargetPath(
   // 비교는 **대소문자를 무시한다.** macOS·Windows 기본 파일시스템에서 `Projects/Foo.md`와
   // `Projects/foo.md`는 같은 파일이므로, 구분해서 통과시키면 renameFile이 오류를 내고
   // 이미 일부 반영된 승인 배치가 중간에 끊긴다.
-  if (isTaken(target, taken)) return null;
+  if (isTaken(target, taken, plan.path)) return null;
   if (escapesVault(target)) return null;
 
   return target;
 }
 
-/** 대소문자를 무시한 경로 충돌 판정. */
-function isTaken(target: string, taken: ReadonlySet<string>): boolean {
-  if (taken.has(target)) return true;
+/**
+ * 대소문자를 무시한 경로 충돌 판정. **자기 자신은 충돌이 아니다.**
+ *
+ * `taken`에는 이 노트의 현재 경로도 들어 있다. 제외하지 않으면 `Inbox/foo.md`를
+ * `Inbox/Foo.md`로 바꾸는 제안이 자기 자신과 충돌해 승인해도 건너뛰게 된다.
+ *
+ * @param self 이 노트의 현재 경로
+ */
+function isTaken(target: string, taken: ReadonlySet<string>, self: string): boolean {
   const lower = target.toLowerCase();
   for (const existing of taken) {
+    if (existing === self) continue;
     if (existing.toLowerCase() === lower) return true;
   }
   return false;

@@ -398,3 +398,24 @@ describe("resolveTargetPath — 폴더만 이동", () => {
     expect(resolveTargetPath(plan({ suggestedTitle: "a#b" }), new Set())).toBe("Projects/a b.md");
   });
 });
+
+describe("resolveTargetPath — 대소문자만 바꾸는 이름 변경", () => {
+  it("자기 자신은 충돌이 아니다", () => {
+    // taken에는 이 노트의 현재 경로도 들어 있다. 제외하지 않으면 승인해도 건너뛴다.
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "Foo", suggestedFolder: "Inbox" }), path: "Inbox/foo.md" },
+      new Set(["Inbox/foo.md"])
+    );
+
+    expect(out).toBe("Inbox/Foo.md");
+  });
+
+  it("다른 파일과의 대소문자 충돌은 여전히 막는다", () => {
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "Foo", suggestedFolder: "Projects" }), path: "Inbox/bar.md" },
+      new Set(["Inbox/bar.md", "Projects/foo.md"])
+    );
+
+    expect(out).toBeNull();
+  });
+});

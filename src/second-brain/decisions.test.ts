@@ -937,3 +937,36 @@ describe("parseLedgerDetailed — 칸 수", () => {
     expect(out.unparsed[0]).toContain("내가 추가한 열");
   });
 });
+
+describe("parseLedgerDetailed — 헤더 오인", () => {
+  it("결정 문구가 '결정'이고 이유가 '이유'인 행을 헤더로 오인하지 않는다", () => {
+    // 앞 두 칸만 보면 이 행이 헤더로 처리되고, 다음 승인에서 표를 다시 쓸 때 조용히
+    // 삭제된다. 전체 칸 이름과 칸 수가 모두 맞을 때만 헤더다.
+    const md = [
+      "### 열림 (1)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| 결정 | 이유 | — | — | — | [[a]] |",
+    ].join("\n");
+
+    const out = parseLedgerDetailed(md);
+
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0].decision).toBe("결정");
+    expect(out.unparsed).toEqual([]);
+  });
+
+  it("실제 헤더는 여전히 건너뛴다", () => {
+    const md = [
+      "### 열림 (0)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+    ].join("\n");
+
+    const out = parseLedgerDetailed(md);
+    expect(out.entries).toEqual([]);
+    expect(out.unparsed).toEqual([]);
+  });
+});

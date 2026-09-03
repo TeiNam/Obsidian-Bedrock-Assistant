@@ -445,6 +445,9 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
   return { entries: out, unparsed };
 }
 
+/** formatLedger가 쓰는 헤더 행의 칸 이름. 전부 일치할 때만 헤더로 본다. */
+const LEDGER_HEADER_CELLS = ["결정", "이유", "담당", "기한", "대체", "근거"];
+
 /** 표의 헤더 행이거나 구분선인지. formatLedger가 다시 만들므로 보존 대상이 아니다. */
 function isTableFurniture(trimmedLine: string): boolean {
   const cells = trimmedLine
@@ -453,5 +456,11 @@ function isTableFurniture(trimmedLine: string): boolean {
     .split(/(?<!\\)\|/)
     .map((c) => c.trim());
   if (cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c))) return true;
-  return cells[0] === "결정" && cells[1] === "이유";
+  // 헤더 판정은 **전체 칸 이름과 칸 수가 모두 일치**할 때만 참이다. 앞 두 칸만 보면
+  // 결정 문구가 "결정"이고 이유가 "이유"인 정상 행이 헤더로 오인되어, 다음 승인에서
+  // 표를 다시 쓸 때 그 결정이 조용히 삭제된다.
+  return (
+    cells.length === LEDGER_HEADER_CELLS.length &&
+    cells.every((cell, i) => cell === LEDGER_HEADER_CELLS[i])
+  );
 }

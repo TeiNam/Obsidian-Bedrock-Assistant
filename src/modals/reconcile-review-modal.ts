@@ -66,7 +66,9 @@ export class ReconcileReviewModal extends ApprovalListModal<Contradiction> {
   }
 
   protected async applyApproved(approved: Contradiction[]): Promise<string> {
-    const summary = await this.onApply(approved);
-    return `${this.t.reconcileReviewApplied(approved.length)}\n${summary}`;
+    // 선택 수를 성공 수로 보고하지 않는다. 모달이 열린 사이 대상 노트가 지워지면
+    // applyReconciliations가 "갱신: 0건, 건너뜀: 1건"을 돌려주는데, 앞에 "1건 반영했습니다"를
+    // 붙이면 실패를 성공으로 읽게 된다. 요약이 이미 실제 결과를 담고 있다.
+    return this.onApply(approved);
   }
 }

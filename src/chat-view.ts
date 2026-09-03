@@ -18,6 +18,7 @@ import {
   backendsSupportingFormat,
 } from "./provider-utils";
 import {
+  citationMatchesPath,
   extractCitations,
   findUnresolvedCitations,
   buildHeadingIndex,
@@ -1877,20 +1878,13 @@ export class ChatView extends ItemView {
       //
       // 인용된 노트만 훑는다. 응답 한 건마다 볼트 전체에 getFileCache를 돌리면 수천 개
       // 볼트에서 메시지마다 수천 번 조회가 된다 — 인용은 보통 한 자리 수다.
-      const cited = new Set<string>();
-      for (const c of citations) {
-        const target = c.target.toLowerCase();
-        cited.add(target);
-        cited.add(target.replace(/\.md$/i, ""));
-      }
+      // 인용 대상과 **같은 규칙으로** 파일을 고른다. 존재 판정은 경로 접미사를 인정하는데
+      // (옵시디언이 그렇게 해석한다) 여기서 정확 일치만 보면 접미사로 맞은 노트가 헤딩
+      // 인덱스에 빠지고, 앵커 검증이 "헤딩 정보 없음 → 통과"로 지어낸 절을 놓친다.
+      const citedTargets = citations.map((c) => c.target.toLowerCase());
       const headings = buildHeadingIndex(
         files
-          .filter(
-            (f) =>
-              cited.has(f.path.toLowerCase()) ||
-              cited.has(f.path.replace(/\.md$/i, "").toLowerCase()) ||
-              cited.has(f.basename.toLowerCase())
-          )
+          .filter((f) => citedTargets.some((target) => citationMatchesPath(target, f.path)))
           .map((f) => [
             f.path,
             (this.app.metadataCache.getFileCache(f)?.headings ?? []).map((h) => h.heading),

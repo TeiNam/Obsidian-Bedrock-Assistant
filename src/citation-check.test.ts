@@ -6,6 +6,7 @@ import {
   buildCitationIndex,
   findUnresolvedCitations,
   buildHeadingIndex,
+  citationMatchesPath,
 } from "./citation-check";
 
 const VAULT = ["Meetings/2026-09-01 회의록.md", "Projects/Agent LLMs.md", "daily/2026-09-03.md"];
@@ -602,5 +603,27 @@ describe("findUnresolvedCitations — 경로 접미사", () => {
 
   it("확장자가 붙은 접미사도 통과한다", () => {
     expect(findUnresolvedCitations(extractCitations("[[Projects/Note.md]]"), known)).toEqual([]);
+  });
+});
+
+describe("citationMatchesPath", () => {
+  it("존재 판정과 같은 규칙이다", () => {
+    // 규칙이 갈라지면 접미사로 맞은 노트가 헤딩 인덱스에 빠져 지어낸 절을 놓친다.
+    expect(citationMatchesPath("projects/note", "Archive/Projects/Note.md")).toBe(true);
+    expect(citationMatchesPath("archive/projects/note", "Archive/Projects/Note.md")).toBe(true);
+    expect(citationMatchesPath("archive/projects/note.md", "Archive/Projects/Note.md")).toBe(true);
+    expect(citationMatchesPath("note", "Archive/Projects/Note.md")).toBe(true);
+  });
+
+  it("세그먼트 경계가 아닌 접미사는 맞지 않는다", () => {
+    expect(citationMatchesPath("ojects/note", "Archive/Projects/Note.md")).toBe(false);
+  });
+
+  it("폴더가 틀리면 맞지 않는다", () => {
+    expect(citationMatchesPath("wrong/note", "Archive/Projects/Note.md")).toBe(false);
+  });
+
+  it("이름이 다르면 맞지 않는다", () => {
+    expect(citationMatchesPath("other", "Archive/Projects/Note.md")).toBe(false);
   });
 });

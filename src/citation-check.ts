@@ -260,6 +260,25 @@ function resolvesToNote(
 }
 
 /**
+ * 인용 대상이 이 경로의 노트를 가리키는지 — `resolvesToNote`와 **같은 규칙**이다.
+ *
+ * 헤딩 인덱스에 넣을 파일을 고르는 쪽이 쓴다. 존재 판정과 규칙이 갈라지면 접미사로 맞은
+ * 노트가 헤딩 인덱스에 빠져 지어낸 절을 놓친다.
+ *
+ * @param citedTarget 소문자화된 인용 대상
+ * @param path 볼트 파일 경로
+ */
+export function citationMatchesPath(citedTarget: string, path: string): boolean {
+  const lowerPath = path.toLowerCase();
+  const noExt = lowerPath.replace(/\.md$/i, "");
+  const target = citedTarget.replace(/\.md$/i, "");
+
+  if (target === lowerPath || target === noExt) return true;
+  if (citedTarget.includes("/")) return noExt.endsWith(`/${target}`);
+  return basenameNoExt(lowerPath) === target;
+}
+
+/**
  * 인용의 헤딩 앵커가 그 노트에 실재하는지 판정한다.
  *
  * 헤딩 정보가 없는 노트(스키마 v1 인덱스, 헤딩 없는 노트)는 통과시킨다 — 확인할 수

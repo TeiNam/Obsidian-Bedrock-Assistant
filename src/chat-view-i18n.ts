@@ -92,7 +92,6 @@ export const VIEW_I18N = {
     reconcileReviewApply: (n: number) => `Apply selected (${n})`,
     reconcileReviewCancel: "Cancel",
     reconcileReviewApplying: "Applying...",
-    reconcileReviewApplied: (n: number) => `Applied ${n} correction(s).`,
     reconcileReviewFailed: (msg: string) => `Failed to apply: ${msg}`,
     linkSuggestTitle: "Suggested links",
     linkSuggestIntro:
@@ -272,7 +271,6 @@ ${content}`,
     reconcileReviewApply: (n: number) => `선택 항목 반영 (${n})`,
     reconcileReviewCancel: "취소",
     reconcileReviewApplying: "반영 중...",
-    reconcileReviewApplied: (n: number) => `${n}건의 정정을 반영했습니다.`,
     reconcileReviewFailed: (msg: string) => `반영 실패: ${msg}`,
     linkSuggestTitle: "링크 제안",
     linkSuggestIntro:
@@ -452,7 +450,6 @@ ${content}`,
     reconcileReviewApply: (n: number) => `選択項目を反映 (${n})`,
     reconcileReviewCancel: "キャンセル",
     reconcileReviewApplying: "反映中...",
-    reconcileReviewApplied: (n: number) => `${n}件の修正を反映しました。`,
     reconcileReviewFailed: (msg: string) => `反映に失敗しました: ${msg}`,
     linkSuggestTitle: "リンクの提案",
     linkSuggestIntro:
