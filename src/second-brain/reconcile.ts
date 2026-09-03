@@ -24,6 +24,7 @@ import {
 } from "./search-adapter";
 import { parseAiFirstNote, buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { parseJsonArray, toStringArray } from "./llm-json";
 
 /**
  * 모순 항목 — 상충하는 노트 집합, 상충 진술, 제안 정정안을 담는다 (Req 8.3).
@@ -76,51 +77,9 @@ export interface ContradictionParseResult {
  * 잘못 보고했다(거짓 음성). 호출부가 두 경우를 구분할 수 있도록 ok를 함께 준다.
  */
 export function parseContradictionResult(llmText: string): ContradictionParseResult {
-  if (typeof llmText !== "string") return { ok: false, items: [] };
-  const text = llmText.trim();
-  // 빈 응답은 "모순 없음"이 아니라 해석 실패로 본다(LLM은 최소 `[]`를 출력해야 한다).
-  if (text === "") return { ok: false, items: [] };
-
-  // 코드펜스 제거 + JSON 배열 구간만 추출
-  const jsonText = extractJsonArray(text);
-  if (jsonText === null) return { ok: false, items: [] };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    // 파싱 실패 시 throw 금지, 실패 표시와 함께 빈 배열 반환 (Req 8.3)
-    return { ok: false, items: [] };
-  }
-
-  if (!Array.isArray(parsed)) return { ok: false, items: [] };
-
-  const result: Contradiction[] = [];
-  for (const raw of parsed) {
-    const item = normalizeContradiction(raw);
-    if (item !== null) result.push(item);
-  }
-  // 빈 배열([])은 정상 응답이며 "모순 없음"을 의미한다 (Req 8.5).
-  return { ok: true, items: result };
-}
-
-/**
- * 텍스트에서 JSON 배열 구간을 추출한다.
- * - 코드펜스(```json ... ```)로 감싼 경우 내부만 취한다.
- * - 그 외에는 첫 '['부터 마지막 ']'까지를 배열 후보로 본다.
- * - 배열 구간을 찾지 못하면 null.
- */
-function extractJsonArray(text: string): string | null {
-  let t = text;
-  // 코드펜스가 있으면 내부 내용만 사용한다.
-  const fenceMatch = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch) {
-    t = fenceMatch[1].trim();
-  }
-  const start = t.indexOf("[");
-  const end = t.lastIndexOf("]");
-  if (start < 0 || end < 0 || end < start) return null;
-  return t.slice(start, end + 1);
+  // 파싱·실패 의미론은 llm-json이 단일 출처로 갖는다. 빈 배열([])은 정상 응답이며
+  // "모순 없음"을 의미하고(Req 8.5), ok=false는 해석 실패다(Req 8.3).
+  return parseJsonArray(llmText, normalizeContradiction);
 }
 
 /**
@@ -143,12 +102,6 @@ function normalizeContradiction(raw: unknown): Contradiction | null {
   }
 
   return { notePaths, statements, suggestion };
-}
-
-/** 값이 문자열 배열이면 문자열 원소만 추려 반환하고, 아니면 빈 배열을 반환한다. */
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
 }
 
 /**

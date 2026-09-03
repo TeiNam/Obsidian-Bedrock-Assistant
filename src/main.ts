@@ -1,4 +1,13 @@
-import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView } from "obsidian";
+import {
+  Notice,
+  Plugin,
+  TFile,
+  addIcon,
+  setIcon,
+  getAllTags,
+  normalizePath,
+  MarkdownView,
+} from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
@@ -48,6 +57,16 @@ import { SecondBrainInputModal } from "./modals/second-brain-modals";
 import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
 import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
 import { CanonicalizeModal } from "./modals/canonicalize-modal";
+import { DecisionReviewModal } from "./modals/decision-review-modal";
+import {
+  buildDecisionPrompt,
+  parseDecisionReport,
+  parseLedger,
+  mergeLedger,
+  formatLedger,
+  DECISION_BLOCK_KEY,
+  DECISION_LEDGER_FILE,
+} from "./second-brain/decisions";
 import {
   findDuplicateClusters,
   buildCanonicalBlock,
@@ -509,6 +528,87 @@ export default class GeminiAssistantPlugin extends Plugin {
   }
 
   /**
+   * 주제 관련 노트에서 결정을 추출해 승인 화면을 띄우고, 승인분을 원장에 병합한다.
+   *
+   * 해석 실패("결정 없음"이 아니라 응답을 못 읽음)를 구분해 알린다 — 잘린 응답을
+   * "결정 없음"으로 보고하면 사용자가 문제를 놓친다.
+   */
+  private async openDecisionReview(topic: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const trimmed = topic.trim();
+    if (trimmed === "") {
+      new Notice("결정을 찾을 주제가 필요합니다.");
+      return;
+    }
+
+    try {
+      const search = await this.indexer.search(trimmed);
+      if (search.items.length === 0) {
+        new Notice(t.decisionNone, 8000);
+        return;
+      }
+
+      const prompt = buildDecisionPrompt(
+        trimmed,
+        search.items.map((i) => ({ path: i.path, excerpt: i.excerpt }))
+      );
+      const response = await this.aiClient.converseLight(
+        prompt,
+        "당신은 노트에서 결정을 정확히 추출하는 도구입니다. JSON 배열만 출력합니다.",
+        2000
+      );
+
+      const parsed = parseDecisionReport(response.text);
+      if (!parsed.ok) {
+        new Notice(
+          "결정 추출 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림). 결정이 없다는 뜻이 아닙니다.",
+          10000
+        );
+        return;
+      }
+      if (parsed.items.length === 0) {
+        new Notice(t.decisionNone, 8000);
+        return;
+      }
+
+      new DecisionReviewModal(this.app, this, parsed.items, async (approved) => {
+        const wikiFolder = this.settings.secondBrain.wikiFolder;
+        const ledgerPath = normalizePath(`${wikiFolder}/${DECISION_LEDGER_FILE}`);
+        const existing = this.app.vault.getAbstractFileByPath(ledgerPath);
+
+        let merged: ReturnType<typeof mergeLedger>;
+        if (existing instanceof TFile) {
+          // 원장을 되읽어 병합한다. 사용자가 원장에서 직접 고친 값을 유지하려면
+          // 그 값을 읽어와야 한다.
+          await this.app.vault.process(existing, (content) => {
+            merged = mergeLedger(parseLedger(content), approved);
+            return upsertGeneratedBlock(content, DECISION_BLOCK_KEY, formatLedger(merged));
+          });
+        } else {
+          merged = mergeLedger([], approved);
+          await this.app.vault.create(
+            ledgerPath,
+            upsertGeneratedBlock("# 결정 원장\n", DECISION_BLOCK_KEY, formatLedger(merged))
+          );
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(ledgerPath);
+        if (file instanceof TFile) await this.indexer.indexFile(file);
+
+        return { merged: approved.length, total: merged!.length };
+      }).open();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`결정 추출 실패: ${reason}`, 10000);
+    }
+  }
+
+  /**
    * 같은 대상을 다루는 중복 노트 군집을 찾아 승인 화면을 띄운다.
    *
    * LLM 호출이 없다. 제목 버킷으로 후보를 좁히고 인덱스의 임베딩으로 확증한다.
@@ -945,6 +1045,27 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-decisions",
+      name: "결정 추출 → 원장 (decisions)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "결정 추출",
+          submitLabel: "추출",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "결정을 찾을 주제",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) => this.openDecisionReview(values.topic),
+        }).open();
+      },
+    });
+
     this.addCommand({
       id: "second-brain-canonicalize",
       name: "중복 후보 검토 (정본·별칭 정리)",

@@ -1969,3 +1969,56 @@ body.theme-light .ba-message-content pre {
   line-height: 1.6;
   word-break: break-all;
 }
+
+/* 결정 검토 모달 */
+.ba-decision-modal {
+  max-width: 720px;
+}
+
+.ba-decision-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-decision-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-decision-text {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.ba-decision-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ba-decision-body {
+  margin-top: 6px;
+  padding-inline-start: 24px;
+}
+
+.ba-decision-field {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ba-decision-sources {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  margin-top: 2px;
+}
