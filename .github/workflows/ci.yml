@@ -1,0 +1,38 @@
+name: CI
+
+# 릴리스 워크플로는 main 푸시에서만 돈다. 그래서 PR 단계에서는 타입 오류나 깨진
+# 테스트가 아무 신호 없이 통과하고, 머지된 뒤 릴리스가 실패한다 — 그때는 main이
+# 이미 배포 불가 상태다. PR에서 같은 검증을 먼저 돌린다.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# 같은 브랜치에 연속 푸시하면 앞 실행을 취소한다. 마지막 커밋 결과만 의미가 있다.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      # npm run build = tsc -noEmit && esbuild. 타입 검사가 여기 들어 있다.
+      - name: Typecheck and build
+        run: npm run build
