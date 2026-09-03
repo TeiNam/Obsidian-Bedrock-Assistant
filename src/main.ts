@@ -1,6 +1,19 @@
-import { Notice, Plugin, TFile, addIcon, setIcon, getAllTags, MarkdownView } from "obsidian";
+import {
+  Notice,
+  Plugin,
+  TFile,
+  addIcon,
+  setIcon,
+  getAllTags,
+  normalizePath,
+  MarkdownView,
+  TFolder,
+} from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
+import type { App } from "obsidian";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
+import { stripFrontmatterFromContent } from "./graph-rag/graph-extractor";
+import { parseNoteLinks } from "./second-brain/wiki-link";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
@@ -33,6 +46,8 @@ import {
   buildGapReport,
   writeGapReport,
   GAP_REPORT_FILE,
+  findOrphanNotes,
+  findStubNotes,
 } from "./second-brain/knowledge-gaps";
 import {
   selectReviewQueue,
@@ -42,11 +57,90 @@ import {
   hasPath,
 } from "./second-brain/review-queue";
 import { ensureWikiFolders } from "./second-brain/wiki-structure";
+import { processIfChanged } from "./second-brain/vault-write";
 import { SecondBrainInputModal } from "./modals/second-brain-modals";
+import { ReconcileReviewModal } from "./modals/reconcile-review-modal";
+import { LinkSuggestionModal } from "./modals/link-suggestion-modal";
+import { CanonicalizeModal } from "./modals/canonicalize-modal";
+import { DecisionReviewModal } from "./modals/decision-review-modal";
+import { TriageReviewModal } from "./modals/triage-review-modal";
+import {
+  buildTriagePrompt,
+  parseTriageReport,
+  sanitizeTag,
+  resolveTargetPath,
+  MAX_TRIAGE_NOTES,
+} from "./second-brain/inbox-triage";
+import {
+  buildDecisionPrompt,
+  parseDecisionReport,
+  parseLedgerDetailed,
+  mergeLedger,
+  formatLedger,
+  DECISION_BLOCK_KEY,
+  DECISION_LEDGER_FILE,
+} from "./second-brain/decisions";
+import {
+  findDuplicateClusters,
+  buildCanonicalBlock,
+  mergeAliases,
+  normalizeAliases,
+  CANONICAL_BLOCK_KEY,
+} from "./second-brain/canonicalize";
+import {
+  suggestLinks,
+  mergeRelatedLinksBlock,
+  parseRelatedLinksBlock,
+  groupBySource,
+  RELATED_LINKS_BLOCK_KEY,
+} from "./second-brain/link-suggestions";
+import { upsertGeneratedBlock, getGeneratedBlock } from "./second-brain/sentinel-blocks";
+import { VIEW_I18N } from "./chat-view-i18n";
+import { runReconcileDetailed, applyReconciliations } from "./second-brain/reconcile";
+import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
+
+/**
+ * Second Brain 자동 스케줄러의 주기 검사 간격(ms).
+ *
+ * 실제 실행 주기는 설정(schedulerIntervalHours, 기본 24시간)이 정한다. 이 값은 "그
+ * 주기가 됐는지 얼마나 자주 확인하는가"이며, 확인 자체는 설정 비교 몇 번이라 싸다.
+ * 30분이면 예정 시각에서 최대 30분 늦게 실행된다.
+ */
+/**
+ * Inbox 검토에 넘길 노트 발췌의 최대 길이.
+ *
+ * 인덱서의 발췌 길이와 같게 둔다 — LLM이 보는 양이 경로에 따라 달라질 이유가 없다.
+ */
+const TRIAGE_EXCERPT_CHARS = 500;
+
+/**
+ * 텍스트에 든 위키링크가 **실제로 가리키는** 노트 경로.
+ *
+ * 생성된 블록이 다른 노트로 링크하면 그 노트의 백링크가 바뀐다. mtime은 그대로이므로
+ * 인덱서가 스스로 알아채지 못해 대상을 명시적으로 넘겨야 한다.
+ *
+ * 링크 텍스트에 `.md`를 붙여 경로로 쓰면 안 된다. `[[Note]]`가 실제로는
+ * `Folder/Note.md`를 가리킬 수 있고, 그러면 존재하지 않는 `Note.md`만 갱신해 실제 대상의
+ * 백링크가 영구히 낡는다. 옵시디언의 해석기(getFirstLinkpathDest)에 맡긴다.
+ *
+ * @param sourcePath 링크가 적힌 노트. 상대 해석의 기준이다.
+ */
+function wikiLinkTargets(app: App, text: string, sourcePath: string): string[] {
+  const out: string[] = [];
+  // 위키링크와 마크다운 링크를 모두 모은다. 파일명에 `#`·`|`가 있는 대상은 마크다운
+  // 링크로 기록되므로, 한 형태만 모으면 그 노트의 백링크가 갱신 대상에서 빠진다.
+  for (const link of parseNoteLinks(text)) {
+    const dest = app.metadataCache.getFirstLinkpathDest(link.target, sourcePath);
+    if (dest) out.push(dest.path);
+  }
+  return out;
+}
+
+const SCHEDULER_TICK_MS = 30 * 60 * 1000;
 
 /** 접근 이력 저장 디바운스 지연(ms). 노트를 열 때마다 디스크에 쓰지 않기 위함이다. */
 const ACCESS_LOG_SAVE_DEBOUNCE_MS = 5000;
@@ -201,7 +295,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 중단된 사이 스케줄러가 시작되어 "빈 인덱스"로 카탈로그를 덮어쓴다. 반드시
     // 로드 완료를 기다린 뒤 실행해야 한다.
     //
-    // maybeRunOnStartup 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
+    // maybeRun 내부에서 enabled·schedulerEnabled·트리거 주기를 모두 검사하므로
     // 여기서는 무조건 호출해도 옵트인 격리가 보장된다(비활성 시 아무 동작 없음).
     this.app.workspace.onLayoutReady(() => {
       void (async () => {
@@ -216,7 +310,7 @@ export default class GeminiAssistantPlugin extends Plugin {
           console.error("인덱스 로드 실패:", e);
         }
         try {
-          await this.secondBrainScheduler.maybeRunOnStartup(
+          await this.secondBrainScheduler.maybeRun(
             this.buildSecondBrainContext(),
             Date.now()
           );
@@ -225,6 +319,26 @@ export default class GeminiAssistantPlugin extends Plugin {
         }
       })();
     });
+
+    // 주기 tick — 시작 시 한 번만 검사하면 옵시디언을 며칠 열어두는 사용 패턴에서
+    // 자동 스케줄러가 거의 돌지 않는다. maybeRun이 활성 여부·주기·실패 냉각을 모두
+    // 검사하므로 tick은 대부분 즉시 반환한다.
+    //
+    // registerInterval에 넘기면 플러그인 unload 시 옵시디언이 정리한다.
+    this.registerInterval(
+      window.setInterval(() => {
+        void (async () => {
+          try {
+            await this.secondBrainScheduler.maybeRun(
+              this.buildSecondBrainContext(),
+              Date.now()
+            );
+          } catch (e) {
+            console.error("Second Brain 스케줄러 주기 실행 실패:", e);
+          }
+        })();
+      }, SCHEDULER_TICK_MS)
+    );
 
     // 리본 아이콘 추가
     this.ribbonIconEl = this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
@@ -458,6 +572,684 @@ export default class GeminiAssistantPlugin extends Plugin {
     };
   }
 
+  /**
+   * 지정 폴더의 노트에 제목·이동·태그 제안을 받아 승인 화면을 띄운다.
+   *
+   * 기존 P.A.R.A 정리와 달리 볼트 전체를 건드리지 않고 지정 폴더만 본다. 한 번에
+   * MAX_TRIAGE_NOTES건만 처리한다 — LLM 비용과 승인 화면의 판단 가능성을 함께 제한한다.
+   */
+  private async openInboxTriage(folder: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const target = normalizePath(folder.trim());
+    if (target === "") {
+      new Notice("정리할 폴더 경로가 필요합니다.");
+      return;
+    }
+
+    try {
+      // 대상 폴더의 마크다운 노트를 최근 수정 순으로 모은다. 최근에 캡처한 것이
+      // 정리 대기 중일 가능성이 높다.
+      const inboxFiles = this.app.vault
+        .getMarkdownFiles()
+        .filter((f) => f.path === target || f.path.startsWith(`${target}/`))
+        .sort((a, b) => b.stat.mtime - a.stat.mtime)
+        .slice(0, MAX_TRIAGE_NOTES);
+
+      if (inboxFiles.length === 0) {
+        new Notice(t.triageEmptyFolder(target), 8000);
+        return;
+      }
+
+      const entries = this.indexer.getEntries();
+      const byPath = new Map(entries.map((e) => [e.path, e]));
+
+      // 볼트의 기존 폴더와 자주 쓰는 태그를 프롬프트에 함께 준다. 주지 않으면 LLM이
+      // 매번 새 폴더·태그 체계를 지어내고 볼트가 비슷한 뜻으로 갈라진다.
+      // 실재하는 폴더를 직접 열거한다. 마크다운 파일의 부모만 모으면 비어 있는 폴더와
+      // 중간 조상 폴더가 빠진다 — `Projects/Client/a.md`만 있으면 `Projects`가 목록에
+      // 없고, 그러면 parseTriageReport가 실재하는 폴더로의 이동 제안을 거부한다.
+      const folders = this.app.vault
+        .getAllLoadedFiles()
+        .filter((f): f is TFolder => f instanceof TFolder)
+        .map((f) => f.path)
+        // 루트 폴더("/")와 Inbox 자신·그 하위는 이동 대상이 아니다.
+        .filter((d) => d !== "" && d !== "/" && d !== target && !d.startsWith(`${target}/`))
+        .sort();
+
+      const tagCounts = new Map<string, number>();
+      for (const entry of entries) {
+        for (const tag of entry.tags ?? []) {
+          tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+        }
+      }
+      const commonTags = [...tagCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 30)
+        .map(([tag]) => tag);
+
+      // 발췌는 인덱스가 아니라 **파일에서 직접** 읽는다. 방금 만들거나 고친 노트는
+      // 디바운스·임베딩 큐를 아직 통과하지 않았고, 플러그인이 꺼져 있는 동안 만든 노트는
+      // 인덱스에 아예 없다. 그러면 빈 문자열이나 이전 내용으로 이름 변경·이동을
+      // 제안하게 되는데, 그건 사용자가 검토를 맡긴 그 노트에 대한 제안이 아니다.
+      //
+      // 최대 MAX_TRIAGE_NOTES(12)개라 읽기 비용은 무시할 수 있다.
+      const excerpts = await Promise.all(
+        inboxFiles.map(async (f) => {
+          try {
+            const content = await this.app.vault.cachedRead(f);
+            // 프론트매터를 빼야 YAML이 발췌를 채워 LLM이 본문을 못 보는 일을 막는다.
+            // 경계는 **읽은 내용에서** 계산한다 — 방금 만든 노트는 metadataCache의 오프셋이
+            // 아직 없거나 낡아서, 캐시를 쓰면 YAML이 발췌에 들어가거나 본문 앞이 잘린다.
+            const body = stripFrontmatterFromContent(content);
+            return { path: f.path, excerpt: body.slice(0, TRIAGE_EXCERPT_CHARS).trim() };
+          } catch (error) {
+            // 읽기 실패는 인덱스 발췌로 폴백한다 — 한 파일 때문에 검토 전체를 막지 않는다.
+            console.error(`[Inbox 검토] 노트 읽기 실패 (${f.path}):`, error);
+            return { path: f.path, excerpt: byPath.get(f.path)?.excerpt ?? "" };
+          }
+        })
+      );
+
+      const prompt = buildTriagePrompt(excerpts, folders, commonTags);
+
+      const response = await this.aiClient.converseLight(
+        prompt,
+        "당신은 노트 정리를 제안하는 도구입니다. JSON 배열만 출력합니다.",
+        2500
+      );
+
+      // 프롬프트에 보여준 Inbox 노트만 대상으로 인정한다. 볼트 전체를 허용하면 LLM이
+      // 문맥에 없던 노트를 이름 변경·이동 대상으로 지어낼 수 있고, 그건 사용자가 검토를
+      // 요청하지도 않은 노트를 건드리는 것이다.
+      const candidatePaths = new Set(inboxFiles.map((f) => f.path));
+      const parsed = parseTriageReport(response.text, new Set(folders), candidatePaths);
+
+      if (!parsed.ok) {
+        new Notice(
+          "Inbox 검토 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림). 제안이 없다는 뜻이 아닙니다.",
+          10000
+        );
+        return;
+      }
+      if (parsed.items.length === 0) {
+        // 제안은 있었지만 전부 무효(지어낸 경로·폴더)였던 경우와 정말로 제안이 없는
+        // 경우를 구분한다. 전자를 "정리할 것 없음"으로 보고하면 오작동을 놓친다.
+        new Notice(
+          parsed.dropped > 0
+            ? `제안 ${parsed.dropped}건이 모두 유효하지 않아 버렸습니다(문맥에 없는 경로·폴더). 다시 실행해 보세요.`
+            : t.triageNone,
+          8000
+        );
+        return;
+      }
+
+      new TriageReviewModal(this.app, this, parsed.items, async (approved) => {
+        let moved = 0;
+        let tagged = 0;
+        let skipped = 0;
+
+        // 이번 배치에서 만들어질 경로도 충돌 검사에 포함한다. 두 노트에 같은 제목을
+        // 제안하면 뒤엣것이 앞엣것을 덮어쓸 수 있다.
+        const taken = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+        /** 반영이 끝난 뒤의 최종 경로. 이름이 바뀌었으면 새 경로다. */
+        const finalPaths = new Set<string>();
+
+        for (const plan of approved) {
+          const file = this.app.vault.getAbstractFileByPath(plan.path);
+          if (!(file instanceof TFile)) {
+            skipped++;
+            continue;
+          }
+
+          // 이동 대상을 먼저 계산한다. 태그를 붙인 뒤 이동을 건너뛰면 "무엇을 했는지"를
+          // 셀 수 없어져, 아무 일도 안 한 항목과 태그만 붙은 항목이 뒤섞인다.
+          const destination = resolveTargetPath(plan, taken);
+
+          // 태그는 이동보다 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
+          let tagsAdded = false;
+          if (plan.tags.length > 0) {
+            await this.app.fileManager.processFrontMatter(file, (fm) => {
+              // 비교 기준은 **정규화 후** 목록이다. 문자열 아닌 값이나 중복이 섞인
+              // `["work", "work"]`에서 원시 길이와 비교하면 태그가 실제로 늘었는데도
+              // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
+              const raw = Array.isArray(fm.tags)
+                ? fm.tags.filter((v: unknown): v is string => typeof v === "string")
+                : typeof fm.tags === "string"
+                  ? [fm.tags]
+                  : [];
+              // 중복 판정은 **제안 태그와 같은 정규화 기준**으로 한다. 기존 `Work`나
+              // `#work`가 있는데 제안 `work`를 별개로 추가하면 의미가 같은 태그가 둘
+              // 생긴다. 표시는 기존 원문을 그대로 살린다.
+              const seen = new Set<string>();
+              const existing: string[] = [];
+              for (const tag of raw) {
+                const key = sanitizeTag(tag);
+                if (key === "" || seen.has(key)) continue;
+                seen.add(key);
+                existing.push(tag);
+              }
+              const merged = [...existing];
+              for (const tag of plan.tags) {
+                if (seen.has(tag)) continue;
+                seen.add(tag);
+                merged.push(tag);
+              }
+              // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
+              // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
+              if (merged.length > existing.length) {
+                fm.tags = merged;
+                tagsAdded = true;
+              }
+            });
+            if (tagsAdded) {
+              tagged++;
+              finalPaths.add(plan.path);
+            }
+          }
+
+          if (destination !== null) finalPaths.add(plan.path);
+
+          if (destination === null) {
+            // 대상이 이미 있거나 바뀌는 것이 없다 — 덮어쓰지 않고 넘어간다.
+            // 태그도 안 붙었으면 이 항목은 아무것도 하지 못한 것이다.
+            if (!tagsAdded) skipped++;
+            continue;
+          }
+
+          // fileManager.renameFile은 이 노트를 가리키는 링크를 자동으로 갱신한다.
+          // vault.rename은 갱신하지 않아 볼트의 링크가 깨진다.
+          //
+          // 실패를 이 항목에 격리한다. 예약 이름·길이 제한·권한 등으로 한 건이 실패할 때
+          // 예외를 밖으로 던지면 같은 배치의 **뒤쪽 항목이 전부 반영되지 않는다** —
+          // 사용자는 무엇이 적용되고 무엇이 안 됐는지 알 수 없게 된다.
+          try {
+            await this.app.fileManager.renameFile(file, destination);
+          } catch (error) {
+            console.error(`[Inbox 검토] 이름 변경 실패 (${plan.path} → ${destination}):`, error);
+            if (!tagsAdded) skipped++;
+            continue;
+          }
+          taken.add(destination);
+          taken.delete(plan.path);
+          finalPaths.add(destination);
+          finalPaths.delete(plan.path);
+          moved++;
+        }
+
+        // 이름 변경·태그가 인덱스에 반영되게 한다. 디바운스만 믿으면 2초 안에 옵시디언을
+        // 닫거나 플러그인을 내렸을 때 예약이 취소된다 — 이름 변경은 구 경로를 즉시
+        // 제거하므로 이동된 노트가 재시작 후에도 검색에서 빠지고, 태그만 바뀐 노트는
+        // 낡은 태그로 남는다.
+        await this.syncIndexAfterApply(finalPaths);
+
+        return { moved, tagged, skipped };
+      }).open();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`Inbox 검토 실패: ${reason}`, 10000);
+    }
+  }
+
+  /**
+   * 주제 관련 노트에서 결정을 추출해 승인 화면을 띄우고, 승인분을 원장에 병합한다.
+   *
+   * 해석 실패("결정 없음"이 아니라 응답을 못 읽음)를 구분해 알린다 — 잘린 응답을
+   * "결정 없음"으로 보고하면 사용자가 문제를 놓친다.
+   */
+  private async openDecisionReview(topic: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const trimmed = topic.trim();
+    if (trimmed === "") {
+      new Notice("결정을 찾을 주제가 필요합니다.");
+      return;
+    }
+
+    try {
+      const search = await this.indexer.search(trimmed);
+      if (search.items.length === 0) {
+        new Notice(t.decisionNone, 8000);
+        return;
+      }
+
+      const prompt = buildDecisionPrompt(
+        trimmed,
+        // 적중 청크를 우선 준다. excerpt는 노트 앞 500자로 고정이라 결정이 뒤쪽에 있으면
+        // 검색은 성공해도 LLM에 결정 문장이 전달되지 않는다.
+        search.items.map((i) => ({ path: i.path, excerpt: i.matchedText || i.excerpt }))
+      );
+      const response = await this.aiClient.converseLight(
+        prompt,
+        "당신은 노트에서 결정을 정확히 추출하는 도구입니다. JSON 배열만 출력합니다.",
+        2000
+      );
+
+      // 근거는 이번 검색에 걸린 노트로 제한한다. 원장에 실재하지 않는 근거가 쌓이면
+      // "왜 이렇게 결정했나"를 되짚을 수 없고, 원장 전체를 믿을 수 없게 된다.
+      const parsed = parseDecisionReport(
+        response.text,
+        new Set(search.items.map((i) => i.path))
+      );
+      if (!parsed.ok) {
+        new Notice(
+          "결정 추출 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림). 결정이 없다는 뜻이 아닙니다.",
+          10000
+        );
+        return;
+      }
+      if (parsed.items.length === 0) {
+        new Notice(
+          parsed.dropped > 0
+            ? `결정 ${parsed.dropped}건이 모두 근거를 확인할 수 없어 버렸습니다(문맥에 없는 경로). 다시 실행해 보세요.`
+            : t.decisionNone,
+          8000
+        );
+        return;
+      }
+
+      new DecisionReviewModal(this.app, this, parsed.items, async (rawApproved) => {
+        // 검색 이후 근거 노트가 지워지거나 이름이 바뀔 수 있다. allowedPaths 검사는 검색
+        // 시점의 스냅샷만 봤으므로, 병합 직전에 다시 확인하지 않으면 원장에 확인할 수 없는
+        // 깨진 근거 링크가 남는다 — 원장의 가치는 근거를 되짚을 수 있다는 것뿐이다.
+        const approved = rawApproved
+          .map((entry) => ({
+            ...entry,
+            sources: entry.sources.filter(
+              (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile
+            ),
+          }))
+          .filter((entry) => entry.sources.length > 0);
+
+        if (approved.length === 0) {
+          return { merged: 0, total: 0 };
+        }
+
+        const wikiFolder = this.settings.secondBrain.wikiFolder;
+        const ledgerPath = normalizePath(`${wikiFolder}/${DECISION_LEDGER_FILE}`);
+        const existing = this.app.vault.getAbstractFileByPath(ledgerPath);
+
+        // 콜백 안에서 채워지는 값을 non-null 단정으로 꺼내면, 콜백이 불리지 않는 경우
+        // (파일이 그 사이 사라짐 등) 런타임에 터진다. 승인분만으로 계산한 값을 기본값으로
+        // 두고 콜백이 성공하면 갱신한다.
+        let merged = mergeLedger([], approved);
+
+        if (existing instanceof TFile) {
+          // 원장을 되읽어 병합한다. 사용자가 원장에서 직접 고친 값을 유지하려면
+          // 그 값을 읽어와야 한다.
+          await this.app.vault.process(existing, (content) => {
+            // **생성 블록만** 되읽는다. 문서 전체로 폴백하면, 마커 없는 기존 Decisions.md에
+            // 손으로 만든 표가 있을 때 그 항목을 읽어 생성 블록에 복사하고 원본 표는 그대로
+            // 남겨 같은 표가 두 번 보인다. 그리고 이후 실행은 생성 블록만 읽으므로 사용자가
+            // 원본 표를 고쳐도 반영되지 않는다.
+            //
+            // 해석하지 못한 행은 원문으로 되돌려 쓴다. 생성 블록 전체가 교체되므로
+            // 넘기지 않으면 사용자가 손으로 고친 행이 이 승인으로 삭제된다.
+            const parsed = parseLedgerDetailed(getGeneratedBlock(content, DECISION_BLOCK_KEY) ?? "");
+            merged = mergeLedger(parsed.entries, approved);
+            return upsertGeneratedBlock(
+              content,
+              DECISION_BLOCK_KEY,
+              formatLedger(merged, parsed.unparsed)
+            );
+          });
+        } else {
+          // 위키 폴더가 아직 없으면 create가 실패한다 — 첫 실행에서 항상 그렇다.
+          await ensureWikiFolders(this.app, wikiFolder);
+          await this.app.vault.create(
+            ledgerPath,
+            upsertGeneratedBlock("# 결정 원장\n", DECISION_BLOCK_KEY, formatLedger(merged))
+          );
+        }
+
+        // 원장 표의 근거 칸은 각 노트로 향하는 위키링크다 — 그 노트들의 백링크도 바뀐다.
+        await this.syncIndexAfterApply(
+          [ledgerPath],
+          merged.flatMap((entry) => entry.sources)
+        );
+
+        return { merged: approved.length, total: merged.length };
+      }).open();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`결정 추출 실패: ${reason}`, 10000);
+    }
+  }
+
+  /**
+   * 같은 대상을 다루는 중복 노트 군집을 찾아 승인 화면을 띄운다.
+   *
+   * LLM 호출이 없다. 제목 버킷으로 후보를 좁히고 인덱스의 임베딩으로 확증한다.
+   * 승인해도 노트를 지우거나 합치지 않는다 — 정본에 별칭과 후보 목록을 기록할 뿐이다.
+   */
+  private async openCanonicalize(): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const wikiFolder = this.settings.secondBrain.wikiFolder;
+    const clusters = findDuplicateClusters(this.indexer.getEntries(), { wikiFolder });
+
+    if (clusters.length === 0) {
+      new Notice(t.canonicalNone, 8000);
+      return;
+    }
+
+    new CanonicalizeModal(this.app, this, clusters, async (approved) => {
+      let notes = 0;
+      let aliases = 0;
+      /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
+      const touched = new Set<string>();
+      /** 정본이 링크한 중복 노트. 백링크가 바뀌므로 갱신 대상이다. */
+      const linkedDuplicates = new Set<string>();
+
+      for (const rawCluster of approved) {
+        const file = this.app.vault.getAbstractFileByPath(rawCluster.canonical.path);
+        if (!(file instanceof TFile)) continue;
+
+        // 승인 화면이 열려 있는 동안 중복 노트가 지워지거나 이름이 바뀔 수 있다. 군집은
+        // 인덱스 스냅샷에서 왔으므로 낡은 목록을 그대로 쓰면 존재하지 않는 노트의 별칭과
+        // 깨진 링크가 정본에 기록된다 — 살아 있는 후보만으로 다시 구성한다.
+        const liveDuplicates = rawCluster.duplicates.filter(
+          (d) => this.app.vault.getAbstractFileByPath(d.path) instanceof TFile
+        );
+        if (liveDuplicates.length === 0) continue;
+        const cluster = { ...rawCluster, duplicates: liveDuplicates };
+
+        // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
+        // 형식이 뭉개진다.
+        let addedAliases = 0;
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          // 원시 배열 길이가 아니라 **정규화 후** 개수와 비교한다. `[1, null, "old"]`처럼
+          // 잡음이 섞이면 정규화 후가 원시 길이보다 짧아, 별칭이 실제로 늘었는데도
+          // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
+          const before = normalizeAliases(fm.aliases).length;
+          const merged = mergeAliases(fm.aliases, cluster);
+          if (merged.length > before) {
+            fm.aliases = merged;
+            // 전체 목록 길이가 아니라 실제로 늘어난 개수를 센다. 재실행 시 0개
+            // 추가인데 "N개 추가"라고 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
+            addedAliases = merged.length - before;
+          }
+        });
+        aliases += addedAliases;
+
+        // 후보 목록은 Sentinel_Block으로 병합한다 — 사용자 텍스트 보존 + 재실행 멱등.
+        // 내용이 그대로면 쓰지 않는다. 같은 군집을 다시 승인할 때 같은 바이트를 써서
+        // mtime만 바뀌면 인덱서가 그 노트를 다시 임베딩한다(API 비용).
+        // 이전 블록이 가리켰던 노트도 갱신 대상이다. 후보가 군집에서 빠지면 블록에서
+        // 링크가 사라지는데, 그 노트의 파일은 바뀌지 않아 인덱스의 backlinks에 정본이
+        // 계속 남는다 — 합집합으로 갱신해야 그래프가 맞는다.
+        //
+        // 대입은 transform이 두 번 불려도 같은 값이므로 안전하다.
+        let previousTargets: string[] = [];
+        const blockChanged = await processIfChanged(this.app, file, (content) => {
+          previousTargets = wikiLinkTargets(
+            this.app,
+            getGeneratedBlock(content, CANONICAL_BLOCK_KEY) ?? "",
+            cluster.canonical.path
+          );
+          return upsertGeneratedBlock(content, CANONICAL_BLOCK_KEY, buildCanonicalBlock(cluster));
+        });
+        // 실제로 바뀐 노트만 센다.
+        if (blockChanged || addedAliases > 0) {
+          notes++;
+          touched.add(cluster.canonical.path);
+          for (const d of liveDuplicates) linkedDuplicates.add(d.path);
+          for (const path of previousTargets) linkedDuplicates.add(path);
+        }
+      }
+
+      // 중복 후보 블록은 각 중복 노트로 향하는 위키링크를 담는다 — 그 노트들의 백링크도
+      // 갱신 대상이다. 실제로 기록된(살아 있는) 대상만 넘긴다.
+      await this.syncIndexAfterApply(touched, linkedDuplicates);
+
+      return { notes, aliases };
+    }).open();
+  }
+
+  /**
+   * 고아·스텁 노트에 붙일 링크 후보를 계산해 승인 화면을 띄운다.
+   *
+   * LLM 호출이 없다 — 인덱스에 이미 있는 임베딩으로 답할 수 있는 질문이다.
+   * 링크는 그래프를 영구히 바꾸므로 Second Brain 활성 여부를 먼저 확인하고,
+   * 후보가 0건이면 화면을 띄우지 않는다.
+   */
+  private async openLinkSuggestions(): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
+    const entries = this.indexer.getEntries();
+    const wikiFolder = this.settings.secondBrain.wikiFolder;
+
+    // 연결이 필요한 노트 = 고아(연결 0) + 스텁(내용 부족). 둘 다 그래프 순회에서
+    // 사실상 도달 불가라 RAG 이웃 확장 혜택을 못 받는다.
+    const gapPaths = new Set([
+      ...findOrphanNotes(entries, wikiFolder).map((g) => g.path),
+      ...findStubNotes(entries, wikiFolder).map((g) => g.path),
+    ]);
+    const sources = entries.filter((e) => gapPaths.has(e.path));
+
+    const suggestions = suggestLinks(sources, entries, { wikiFolder });
+    if (suggestions.length === 0) {
+      new Notice(t.linkSuggestNone, 8000);
+      return;
+    }
+
+    new LinkSuggestionModal(this.app, this, suggestions, async (approved) => {
+      const grouped = groupBySource(approved);
+      let links = 0;
+      /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
+      const touched = new Set<string>();
+      /** 링크가 새로 향한 노트. 본문은 그대로이므로 백링크만 갱신한다. */
+      const linkTargets = new Set<string>();
+
+      for (const [sourcePath, group] of grouped) {
+        const file = this.app.vault.getAbstractFileByPath(sourcePath);
+        if (!(file instanceof TFile)) continue;
+
+        // 승인 화면이 열려 있는 동안 대상 노트가 지워지거나 이름이 바뀔 수 있다. 낡은
+        // 목록을 그대로 쓰면 깨진 링크를 만드는데, 이름 변경 시점에는 그 링크가 존재하지
+        // 않았으므로 옵시디언도 보정해주지 못한다 — 적용 직전에 다시 확인한다.
+        const live = group.filter(
+          (s) => this.app.vault.getAbstractFileByPath(s.targetPath) instanceof TFile
+        );
+        if (live.length === 0) continue;
+
+        // 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있고, 기존 블록의
+        // 링크를 읽어 합집합으로 써야 한다 — 새 승인분만으로 블록을 만들면 이전에
+        // 승인한 링크가 사라진다. 내용이 그대로면 쓰지 않아 불필요한 재임베딩을 막는다.
+        //
+        // added 대입은 transform이 두 번 불려도 안전하다(같은 값을 두 번 넣는다).
+        // 실제로 쓰인 것은 마지막 호출의 결과이므로 그 값이 남는 것이 맞다.
+        let added = 0;
+        const wrote = await processIfChanged(this.app, file, (content) => {
+          const existing = getGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY);
+          const merged = mergeRelatedLinksBlock(existing, live);
+          // 이미 붙어 있던 링크를 다시 세면 "N건 추가"가 사실과 달라진다.
+          added =
+            parseRelatedLinksBlock(merged).length - parseRelatedLinksBlock(existing).length;
+          return upsertGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY, merged);
+        });
+
+        if (!wrote) continue;
+        links += added;
+        touched.add(sourcePath);
+        // 링크 **대상**의 백링크도 갱신 대상이다. backlinks는 대상 엔트리에 역산해
+        // 저장되는데 대상의 mtime은 바뀌지 않으므로 indexFile이 즉시 반환한다 —
+        // 대상에서 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
+        for (const s of live) linkTargets.add(s.targetPath);
+      }
+
+      // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
+      await this.syncIndexAfterApply(touched, linkTargets);
+
+      // 모달이 열린 동안 소스가 사라졌거나 링크가 이미 붙어 있어 쓰기를 건너뛴 경우까지
+      // grouped.size에 들어간다. 실제로 바뀐 노트 수를 보고한다.
+      return { notes: touched.size, links };
+    }).open();
+  }
+
+  /**
+   * 주제로 모순을 점검하고, 발견되면 승인 화면을 띄운다.
+   *
+   * 점검(1단계)은 비파괴이므로 옵트인 검사 없이 실행할 수 있지만, 반영(2단계)은 노트를
+   * 고치므로 Second Brain 기능 활성 여부를 먼저 확인한다. 모순이 0건이거나 점검이
+   * 실패하면 리포트만 알리고 승인 화면을 띄우지 않는다 — 빈 목록을 보여줄 이유가 없다.
+   */
+  private async openReconcileReview(topic: string): Promise<void> {
+    if (!this.settings.secondBrain.enabled) {
+      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      return;
+    }
+
+    let outcome: Awaited<ReturnType<typeof runReconcileDetailed>>;
+    try {
+      outcome = await runReconcileDetailed(this.buildSecondBrainContext(), topic);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      new Notice(`모순 점검 실패: ${reason}`, 10000);
+      return;
+    }
+
+    if (outcome.contradictions.length === 0) {
+      new Notice(outcome.report, 10000);
+      return;
+    }
+
+    // 후보가 있어도 검색이 낡은 인덱스로 돌았다면 그 사실을 알린다. 리포트에만 담아
+    // 모달로 넘기면 사용자는 검색 품질이 떨어진 것을 모른 채 노트 수정을 승인한다.
+    if (outcome.staleWarning !== "") new Notice(outcome.staleWarning, 10000);
+
+    new ReconcileReviewModal(
+      this.app,
+      this,
+      outcome.contradictions,
+      async (approved) => {
+        // 항목별로 따로 반영하면 두 항목이 같은 노트를 가리킬 때 뒤엣것이 앞엣것을
+        // 덮어쓴다(둘 다 같은 Sentinel_Block 키를 쓴다). 노트 단위로 합쳐 한 번씩 쓴다.
+        const summary = await applyReconciliations(
+          this.buildSecondBrainContext(),
+          approved,
+          buildDateStr(new Date())
+        );
+
+        // 본문과 learned_at이 바뀌었으므로 인덱스를 맞춘다. 디바운스 재색인만 믿으면
+        // 그 전에 앱이 닫히면 갱신이 사라지고, 정정안에 위키링크가 있으면 대상 노트의
+        // mtime은 바뀌지 않아 백링크가 계속 낡는다.
+        await this.syncIndexAfterApply(
+          new Set(approved.flatMap((item) => item.notePaths)),
+          approved.flatMap((item) =>
+            item.notePaths.flatMap((notePath) =>
+              wikiLinkTargets(this.app, item.suggestion, notePath)
+            )
+          )
+        );
+
+        return summary;
+      }
+    ).open();
+  }
+
+  /**
+   * 승인 반영 후 인덱스를 볼트 상태에 맞춘다.
+   *
+   * 세 가지를 한다:
+   *  1. 본문이 바뀐 노트를 다시 색인한다(청크·임베딩이 달라진다).
+   *  2. 링크가 새로 향한 노트의 링크 정보만 갱신한다. 그 노트의 본문은 그대로이므로
+   *     재임베딩은 순수한 낭비이고, mtime도 안 바뀌어 indexFile은 즉시 반환한다.
+   *  3. metadataCache 해석이 끝난 뒤 링크 정보를 한 번 더 읽어 수렴시킨다. 쓰기 직후의
+   *     `resolvedLinks`는 아직 이전 상태일 수 있고, 그 값이 최신 mtime과 함께 굳으면
+   *     이후 증분 색인이 건너뛰어 그래프가 영구히 낡는다. 리스너는 (1)보다 먼저 등록한다 —
+   *     임베딩을 기다리는 동안 이벤트가 지나가면 놓친다.
+   *
+   * @param changed 본문이 바뀐 노트 경로
+   * @param linkedTo 링크가 새로 향한 노트 경로(생성된 블록의 위키링크 대상 등)
+   */
+  private async syncIndexAfterApply(
+    changed: Iterable<string>,
+    linkedTo: Iterable<string> = []
+  ): Promise<void> {
+    const changedPaths = [...changed];
+    const linkedPaths = [...linkedTo];
+
+    const refreshAll = (): void => {
+      for (const path of changedPaths) this.indexer.refreshGraphMetadata(path);
+      for (const path of linkedPaths) this.indexer.refreshGraphMetadata(path);
+    };
+
+    // 리스너는 재색인보다 **먼저 등록**하되 실행은 재색인이 끝난 **뒤**로 미룬다.
+    //  - 먼저 등록해야 하는 이유: indexFile은 임베딩 호출까지 기다리므로 그 사이에
+    //    resolved 이벤트가 지나가면 나중에 등록한 리스너는 그것을 놓친다.
+    //  - 실행을 미뤄야 하는 이유: indexFile의 commitEntry는 **캡처된 낡은 메타데이터로
+    //    엔트리를 통째로 교체**한다. 갱신이 먼저 일어나면 그 결과가 덮어써지고, 짧은 노트는
+    //    이후 디바운스 색인도 mtime 검사로 건너뛰어 링크·태그가 영구히 누락된다.
+    let reindexDone = false;
+    let resolvedSeen = false;
+    this.onceMetadataResolved(() => {
+      resolvedSeen = true;
+      if (reindexDone) refreshAll();
+    });
+
+    // 재색인을 **기존 직렬 큐**에 넣는다. 직접 실행하면 create/modify 이벤트로 예약된
+    // 디바운스 작업과 겹쳐 같은 파일을 두 번 임베딩하고(비용), 그 사이 사용자가 다시
+    // 편집하면 앞 작업이 나중에 끝나 낡은 내용으로 인덱스를 덮어쓴다.
+    for (const path of changedPaths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      this.indexQueue = this.indexQueue
+        .then(() => this.indexer.indexFile(file))
+        .catch((error) => {
+          console.error(`인덱스 갱신 실패: ${file.path}`, error);
+        });
+    }
+    // 큐가 이 작업까지 끝낸 뒤에 수렴 갱신을 해야 커밋에 덮어써지지 않는다.
+    await this.indexQueue;
+    reindexDone = true;
+
+    const changedSet = new Set(changedPaths);
+    for (const path of linkedPaths) {
+      if (!changedSet.has(path)) this.indexer.refreshGraphMetadata(path);
+    }
+
+    // 이벤트가 재색인 도중에 지나갔으면 지금 실행한다.
+    if (resolvedSeen) refreshAll();
+  }
+
+  /**
+   * metadataCache의 링크 해석이 끝난 다음 시점에 콜백을 **한 번** 실행한다.
+   *
+   * 볼트에 쓴 직후 `resolvedLinks`는 아직 이전 상태일 수 있다. 그 상태로 그래프 정보를
+   * 읽으면 낡은 링크가 인덱스에 굳는다. `resolved` 이벤트는 옵시디언이 해석을 마쳤을 때
+   * 발생하므로 그 뒤에 다시 읽는다.
+   */
+  private onceMetadataResolved(fn: () => void): void {
+    const ref = this.app.metadataCache.on("resolved", () => {
+      this.app.metadataCache.offref(ref);
+      try {
+        fn();
+      } catch (error) {
+        // 인덱스 갱신 실패가 승인 결과 보고를 막아선 안 된다.
+        console.error("메타데이터 해석 후 그래프 갱신 실패:", error);
+      }
+    });
+    // 이벤트가 오기 전에 플러그인이 내려가도 리스너가 남지 않게 한다.
+    this.registerEvent(ref);
+  }
+
   /** 현재 활성 노트의 제목(basename)을 반환한다. 없으면 빈 문자열. */
   private getActiveNoteTitle(): string {
     return this.app.workspace.getActiveFile()?.basename ?? "";
@@ -577,6 +1369,31 @@ export default class GeminiAssistantPlugin extends Plugin {
           ],
           onSubmit: (values) =>
             this.runSecondBrainTool("reconcile_topic", { topic: values.topic }),
+        }).open();
+      },
+    });
+
+    // 모순 검토·반영 — reconcile 2단계(applyReconciliations)의 유일한 진입점.
+    //
+    // 기존 "모순 점검"은 비파괴 리포트만 낸다(Req 8.2). 반영은 명시적 승인을 요구하도록
+    // 처음부터 별 함수로 분리돼 있었지만(Req 8.4) 승인 화면이 없어 도달할 수 없었다.
+    this.addCommand({
+      id: "second-brain-reconcile-review",
+      name: "모순 검토 및 반영 (reconcile → apply)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "모순 검토 및 반영",
+          submitLabel: "점검",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "모순을 점검할 주제",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) => this.openReconcileReview(values.topic),
         }).open();
       },
     });
@@ -712,6 +1529,60 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
+    this.addCommand({
+      id: "second-brain-inbox-triage",
+      name: "Inbox 검토 (제목·이동·태그 제안)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "Inbox 검토",
+          submitLabel: "검토",
+          fields: [
+            {
+              key: "folder",
+              label: "폴더",
+              type: "text",
+              placeholder: "정리할 폴더 (예: Inbox)",
+              defaultValue: "Inbox",
+            },
+          ],
+          onSubmit: (values) => this.openInboxTriage(values.folder),
+        }).open();
+      },
+    });
+
+    this.addCommand({
+      id: "second-brain-decisions",
+      name: "결정 추출 → 원장 (decisions)",
+      callback: () => {
+        new SecondBrainInputModal(this.app, {
+          title: "결정 추출",
+          submitLabel: "추출",
+          fields: [
+            {
+              key: "topic",
+              label: "주제",
+              type: "text",
+              placeholder: "결정을 찾을 주제",
+              defaultValue: this.getActiveNoteTitle(),
+            },
+          ],
+          onSubmit: (values) => this.openDecisionReview(values.topic),
+        }).open();
+      },
+    });
+
+    this.addCommand({
+      id: "second-brain-canonicalize",
+      name: "중복 후보 검토 (정본·별칭 정리)",
+      callback: () => void this.openCanonicalize(),
+    });
+
+    this.addCommand({
+      id: "second-brain-link-suggestions",
+      name: "링크 제안 (고아·스텁 노트 연결)",
+      callback: () => void this.openLinkSuggestions(),
+    });
+
     this.addCommand({
       id: "second-brain-review-queue",
       name: "복습 큐 (다시 볼 노트)",

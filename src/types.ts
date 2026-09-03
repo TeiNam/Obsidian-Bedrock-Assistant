@@ -366,6 +366,17 @@ export interface IndexChunk {
   embedding: number[];
   /** 임베딩 생성 실패 표시 (Req 3.6) */
   embedFailed?: boolean;
+
+  // === 스키마 v2: 출처 정보 (모두 optional — v1 인덱스는 이 필드 없이 그대로 로드된다) ===
+  /**
+   * 이 청크를 덮는 가장 가까운 앞선 마크다운 헤딩. 없으면 생략된다.
+   *
+   * 검색 결과에 실어 보내면 모델이 `[[노트#헤딩]]`으로 인용할 수 있다. 노트 단위 인용은
+   * "그 노트 어딘가"까지만 말해주므로 긴 노트에서는 사용자가 근거를 다시 찾아야 한다.
+   */
+  heading?: string;
+  /** 본문(프론트매터 제외) 내 시작 오프셋. 출처 추적에 쓴다. */
+  charStart?: number;
 }
 
 /**
@@ -406,8 +417,14 @@ export interface VaultIndexEntry {
   needsReindex?: boolean;
 }
 
-// 인덱스 직렬화 스키마 버전 (Req 8.1)
-export const CURRENT_INDEX_SCHEMA_VERSION = 1;
+/**
+ * 인덱스 직렬화 스키마 버전 (Req 8.1).
+ *
+ * v2: IndexChunk에 heading/charStart를 추가했다. 두 필드 모두 optional이므로 v1 인덱스는
+ * 재인덱싱 없이 그대로 로드되고, 출처 기능만 해당 청크에서 비활성된다. 임베딩을 다시
+ * 만들 이유가 없는 변경에 전체 재임베딩(= 볼트 크기만큼의 API 비용)을 요구하지 않는다.
+ */
+export const CURRENT_INDEX_SCHEMA_VERSION = 2;
 
 // 인덱스 직렬화 스키마 (버전 포함)
 export interface SerializedIndex {

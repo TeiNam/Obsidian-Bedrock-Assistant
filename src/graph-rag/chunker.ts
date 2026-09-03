@@ -41,10 +41,37 @@ export interface ChunkConfig {
  *               내부에서 maxSize/step 최소값을 방어적으로 보정한다.
  */
 export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
+  return splitIntoChunkSlices(body, config).map((slice) => slice.text);
+}
+
+/** 청크 하나와 그 출처 정보. */
+export interface ChunkSlice {
+  /** 청크 본문. */
+  text: string;
+  /** 본문(프론트매터 제외) 내 시작 오프셋. */
+  charStart: number;
+  /**
+   * 이 청크 시작 지점을 덮는 가장 가까운 앞선 마크다운 헤딩 텍스트. 없으면 null.
+   *
+   * 검색 결과에 실어 보내면 모델이 `[[노트#헤딩]]`으로 정확히 인용할 수 있다.
+   * 노트 단위 인용은 "그 노트 어딘가에 있다"까지만 말해주므로, 긴 노트에서는
+   * 사용자가 근거를 다시 찾아야 한다.
+   */
+  heading: string | null;
+}
+
+/**
+ * 본문을 청크로 분할하면서 각 청크의 시작 위치와 소속 헤딩을 함께 계산한다.
+ *
+ * 분할 규칙은 splitIntoChunks와 완전히 같다 — 텍스트만 필요한 호출부는 그 래퍼를 쓴다.
+ */
+export function splitIntoChunkSlices(body: string, config: ChunkConfig): ChunkSlice[] {
   // 빈 본문은 빈 텍스트 청크 1개로 정의한다 (순수 함수 경계 동작, Req 3.4).
   if (body.length === 0) {
-    return [""];
+    return [{ text: "", charStart: 0, heading: null }];
   }
+
+  const headings = extractHeadingPositions(body);
 
   // 무한 루프 방지를 위한 방어적 보정: maxSize는 최소 1, step은 최소 1을 보장한다.
   // (정상 호출 시 normalizeChunkConfig 로 maxSize>=1, 0<=overlap<maxSize 가 보장된다.)
@@ -64,7 +91,7 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
 
   // 본문 길이가 단일 청크 최대 크기 이하이면 청크 1개로 처리한다 (Req 3.3).
   if (body.length <= maxSize) {
-    return [body];
+    return [{ text: body, charStart: 0, heading: headingAt(headings, 0) }];
   }
 
   // 슬라이딩 윈도우 분할: start 위치에서 최대 maxSize 만큼 잘라 청크를 만들고,
@@ -74,7 +101,7 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
   // 단, 절단 위치는 findBreakPoint 로 마크다운 구조 경계(문단 → 줄 → 문장 → 공백)에
   // 맞춰 앞으로 당긴다. 문자 수로 기계적으로 자르면 코드펜스·표·문장이 중간에서
   // 끊겨 임베딩 품질이 떨어지기 때문이다. 경계를 찾지 못하면 maxSize 그대로 자른다.
-  const chunks: string[] = [];
+  const chunks: ChunkSlice[] = [];
   let start = 0;
   while (true) {
     const hardEnd = Math.min(start + maxSize, body.length);
@@ -91,7 +118,11 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
       end = alignChunkEnd(body, start, end, overlap);
     }
 
-    chunks.push(body.slice(start, end));
+    chunks.push({
+      text: body.slice(start, end),
+      charStart: start,
+      heading: headingAt(headings, start),
+    });
 
     // 본문 끝까지 도달했으면 종료한다.
     if (end >= body.length) break;
@@ -102,6 +133,43 @@ export function splitIntoChunks(body: string, config: ChunkConfig): string[] {
   }
 
   return chunks;
+}
+
+/** 본문에서 마크다운 ATX 헤딩의 위치와 텍스트를 오프셋 오름차순으로 뽑는다. */
+function extractHeadingPositions(body: string): Array<{ offset: number; text: string }> {
+  const out: Array<{ offset: number; text: string }> = [];
+  // 줄 시작의 # 1~6개 + 공백 + 제목. 코드펜스 안의 #은 헤딩이 아니지만, 잘못 잡아도
+  // 인용 앵커가 어긋나는 정도이므로 펜스 추적까지 하지 않는다.
+  //
+  // 닫는 ATX 표식(`## 제목 ##`)은 **앞에 공백이 있을 때만** 벗긴다. CommonMark 규약이
+  // 그렇고, 그러지 않으면 `## C#`의 제목이 `C`가 되어 검색 결과가 존재하지 않는 앵커를
+  // 제안한다(`C#`, `F#`, `## 태그#`가 전부 해당된다).
+  const pattern = /^[ \t]{0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/gm;
+  for (const m of body.matchAll(pattern)) {
+    if (m.index === undefined) continue;
+    const text = m[2].trim();
+    if (text !== "") out.push({ offset: m.index, text });
+  }
+  return out;
+}
+
+/**
+ * 오프셋을 덮는 가장 가까운 앞선 헤딩을 찾는다.
+ *
+ * 청크가 헤딩보다 앞에서 시작하면(문서 도입부) null이다. 헤딩이 청크 중간에 있어도
+ * 청크 시작 기준으로 판정한다 — 검색이 맞춘 지점은 청크 전체이고, 시작 지점의 소속
+ * 섹션이 그 청크의 대표 문맥이다.
+ */
+function headingAt(
+  headings: ReadonlyArray<{ offset: number; text: string }>,
+  offset: number
+): string | null {
+  let found: string | null = null;
+  for (const h of headings) {
+    if (h.offset > offset) break;
+    found = h.text;
+  }
+  return found;
 }
 
 /**

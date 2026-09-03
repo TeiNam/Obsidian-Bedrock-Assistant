@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPrompt, BASE_SYSTEM_PROMPT } from "./system-prompt";
+import {
+  buildSystemPrompt,
+  buildSystemPromptSegments,
+  BASE_SYSTEM_PROMPT,
+} from "./system-prompt";
 import type { GeminiAssistantSettings } from "./types";
 
 /** 시각 블록만 보기 위한 최소 설정. 커스텀 프롬프트·스킬은 비운다. */
@@ -83,5 +87,61 @@ describe("buildSystemPrompt 현재 시각 블록", () => {
     expect(prompt).toContain("## Additional instructions from the user");
     // 앞뒤 공백은 잘라서 넣는다.
     expect(prompt).toContain("\n간결하게 답한다.");
+  });
+});
+
+// ============================================
+// buildSystemPromptSegments — 캐시 경계 분리
+// ============================================
+/**
+ * 프롬프트 캐싱은 접두어가 바이트 단위로 같을 때만 적중한다. 시각은 분마다 변하므로
+ * 안정 조각과 같은 블록에 두면 매 요청 캐시가 깨진다.
+ */
+describe("buildSystemPromptSegments", () => {
+  it("두 조각을 이어붙이면 buildSystemPrompt와 같다", () => {
+    // 캐시 경계를 지원하지 않는 백엔드는 이어붙여 쓰므로 동작 차이가 없어야 한다.
+    const now = new Date(2026, 8, 3, 14, 5);
+    const settings = settingsOf({ systemPrompt: "간결하게." });
+
+    const { stable, volatile } = buildSystemPromptSegments(settings, now);
+
+    expect(stable + volatile).toBe(buildSystemPrompt(settings, now));
+  });
+
+  it("시각은 volatile에만, 기본 프롬프트와 추가 지침은 stable에만 있다", () => {
+    const now = new Date(2026, 8, 3, 14, 5);
+
+    const { stable, volatile } = buildSystemPromptSegments(
+      settingsOf({ systemPrompt: "언제나 한국어로." }),
+      now
+    );
+
+    expect(stable).toContain(BASE_SYSTEM_PROMPT);
+    expect(stable).toContain("언제나 한국어로.");
+    expect(stable).not.toContain("2026-09-03");
+    expect(stable).not.toContain("## Current date and time");
+
+    expect(volatile).toContain("2026-09-03");
+    expect(volatile).toContain("14:05");
+  });
+
+  it("시각이 달라도 stable은 바이트 단위로 동일하다", () => {
+    // 이게 캐시 적중의 전제다. stable이 흔들리면 경계를 둬도 의미가 없다.
+    const settings = settingsOf({ systemPrompt: "동일 설정" });
+
+    const a = buildSystemPromptSegments(settings, new Date(2026, 8, 3, 9, 0));
+    const b = buildSystemPromptSegments(settings, new Date(2026, 11, 25, 23, 59));
+
+    expect(a.stable).toBe(b.stable);
+    expect(a.volatile).not.toBe(b.volatile);
+  });
+
+  it("설정이 바뀌면 stable도 바뀐다", () => {
+    const now = new Date(2026, 8, 3);
+
+    const a = buildSystemPromptSegments(settingsOf({ systemPrompt: "A" }), now);
+    const b = buildSystemPromptSegments(settingsOf({ systemPrompt: "B" }), now);
+
+    expect(a.stable).not.toBe(b.stable);
   });
 });

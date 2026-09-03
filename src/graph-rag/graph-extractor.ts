@@ -124,17 +124,27 @@ export function extractMetadata(path: string, source: MetadataSource): Extracted
 /**
  * 원문에서 frontmatter를 제거한 본문을 반환한다 (Req 3 전제, Chunker 입력 생성용).
  *
- * - getFileCache().frontmatterEndOffset이 있으면 해당 오프셋 이후를 본문으로 사용
- * - 없으면 원문 전체를 본문으로 간주(frontmatter 없는 노트)
+ * **경계는 원문에서 계산한다.** metadataCache의 `frontmatterEndOffset`을 쓰면, 프론트매터를
+ * 방금 고친 직후(예: `processFrontMatter`로 aliases 추가) 캐시가 아직 갱신되지 않은 상태에서
+ * 낡은 오프셋으로 잘라 YAML 일부 또는 전체가 본문 청크와 발췌에 들어간다. 그 상태가 최신
+ * mtime과 함께 굳으면 디바운스 재색인도 건너뛰어 영구히 남는다.
+ *
+ * 계산 규칙은 옵시디언과 같다 — 문서가 `---` 줄로 시작하면 그다음 `---` 줄까지가
+ * 프론트매터다. 캐시 오프셋은 원문에서 경계를 못 찾았을 때의 폴백으로만 쓴다.
+ *
+ * - frontmatter가 없으면 원문 전체를 본문으로 간주
  * - 결과가 공백/빈 문자열이어도 그대로 반환(스킵 판단은 호출자 VaultIndexer 책임)
  * - 조회 중 오류가 발생하면 안전하게 원문 전체를 반환한다
  */
 export function stripFrontmatter(content: string, source: MetadataSource, path: string): string {
+  const fromContent = frontmatterEndFromContent(content);
+  if (fromContent !== null) return content.slice(fromContent);
+
   try {
     const cache = source.getFileCache(path);
     const offset = cache?.frontmatterEndOffset;
     // 유효한 오프셋(0 이상의 숫자)이 있을 때만 본문을 잘라낸다.
-    if (typeof offset === "number" && offset >= 0) {
+    if (typeof offset === "number" && offset >= 0 && offset <= content.length) {
       return content.slice(offset);
     }
     return content;
@@ -143,4 +153,37 @@ export function stripFrontmatter(content: string, source: MetadataSource, path: 
     console.error(`[GraphExtractor] frontmatter 분리 실패 (path=${path}):`, error);
     return content;
   }
+}
+
+/**
+ * 원문에서 frontmatter를 제거한 본문. 캐시 없이 쓸 수 있는 형태다.
+ *
+ * 발췌를 만드는 곳처럼 metadataCache를 거칠 이유가 없는 호출부가 쓴다 — 캐시를 쓰면
+ * 방금 만든 노트에서 오프셋이 낡아 YAML이 발췌를 채운다.
+ */
+/**
+ * 원문에서 frontmatter가 끝나는 오프셋(닫는 `---` 줄의 끝). 없으면 null.
+ *
+ * 옵시디언과 같은 규칙: 문서 첫 줄이 `---`이고, 그 뒤에 `---`만 있는 줄이 나오면 거기까지가
+ * frontmatter다. 닫는 줄을 찾지 못하면 frontmatter가 아니라고 본다(손상된 YAML).
+ */
+export function stripFrontmatterFromContent(content: string): string {
+  const end = frontmatterEndFromContent(content);
+  return end === null ? content : content.slice(end);
+}
+
+function frontmatterEndFromContent(content: string): number | null {
+  if (!/^---[ \t]*\r?\n/.test(content)) return null;
+
+  const lines = content.split("\n");
+  let offset = lines[0].length + 1; // 여는 줄 + 개행
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^---[ \t]*\r?$/.test(line) || line.trimEnd() === "---") {
+      // 닫는 줄과 그 뒤 개행까지 소비한다.
+      return Math.min(content.length, offset + line.length + 1);
+    }
+    offset += line.length + 1;
+  }
+  return null;
 }

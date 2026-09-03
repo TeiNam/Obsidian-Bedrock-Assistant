@@ -7,6 +7,7 @@ import * as fc from "fast-check";
 
 import {
   extractMetadata,
+  stripFrontmatter,
   MetadataSource,
 } from "./graph-extractor";
 
@@ -308,4 +309,110 @@ describe("graph-extractor: extractMetadata 추출 오류 격리", () => {
     expect(result).toEqual(EMPTY_RESULT);
     expect(errorSpy).toHaveBeenCalled();
   });
+});
+
+// ============================================
+// 프론트매터 경계는 원문에서 계산한다
+// ============================================
+/**
+ * 캐시의 `frontmatterEndOffset`을 쓰면 프론트매터를 방금 고친 직후(processFrontMatter로
+ * aliases 추가 등) 낡은 오프셋으로 잘라 YAML이 본문 청크와 발췌에 들어간다. 그 상태가
+ * 최신 mtime과 함께 굳으면 디바운스 재색인도 건너뛰어 영구히 남는다.
+ */
+describe("stripFrontmatter — 원문 기반 경계", () => {
+  /** 낡은(또는 없는) 오프셋을 돌려주는 캐시. */
+  function staleSource(offset?: number): MetadataSource {
+    return {
+      resolvedLinks: {},
+      getBacklinks: () => [],
+      getFileCache: () => (offset === undefined ? null : { frontmatterEndOffset: offset }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  it("캐시 오프셋이 낡아도 YAML을 본문에 남기지 않는다", () => {
+    const content = "---\naliases:\n  - 새 별칭\nlearned_at: 2026-09-03\n---\n\n# 노트\n본문\n";
+    // 캐시는 aliases 추가 이전의 짧은 오프셋을 갖고 있다.
+    const body = stripFrontmatter(content, staleSource(20), "a.md");
+
+    expect(body).not.toContain("aliases");
+    expect(body).not.toContain("learned_at");
+    expect(body).toContain("# 노트");
+  });
+
+  it("프론트매터가 없으면 원문 전체가 본문이다", () => {
+    const content = "# 노트\n본문\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("닫는 구분자가 없으면(손상된 YAML) 원문 전체를 본문으로 본다", () => {
+    const content = "---\naliases: x\n# 노트\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("본문에 나오는 --- 는 경계로 보지 않는다", () => {
+    // 여는 줄이 문서 첫 줄이 아니면 프론트매터가 아니다.
+    const content = "# 노트\n\n---\n\n구분선 아래 본문\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toBe(content);
+  });
+
+  it("CRLF 줄바꿈도 처리한다", () => {
+    const content = "---\r\ntitle: x\r\n---\r\n\r\n# 노트\r\n";
+    const body = stripFrontmatter(content, staleSource(), "a.md");
+    expect(body).not.toContain("title: x");
+    expect(body).toContain("# 노트");
+  });
+
+  it("빈 프론트매터도 벗긴다", () => {
+    const content = "---\n---\n\n# 노트\n";
+    expect(stripFrontmatter(content, staleSource(), "a.md")).toContain("# 노트");
+    expect(stripFrontmatter(content, staleSource(), "a.md").startsWith("---")).toBe(false);
+  });
+});
+
+// ============================================
+// Property: stripFrontmatter
+// ============================================
+/**
+ * 경계를 원문에서 계산하도록 바꿨으므로, 어떤 입력에도 지켜져야 하는 성질을 못박는다.
+ * 특히 "YAML이 본문에 새지 않는다"가 이번 수정의 목적이다.
+ */
+/** 캐시가 아예 없는 소스. 원문 계산만 검증한다. */
+const noCacheSource = {
+  resolvedLinks: {},
+  getBacklinks: () => [],
+  getFileCache: () => null,
+  fileExists: () => true,
+} as unknown as MetadataSource;
+
+describe("Property: stripFrontmatter", () => {
+  const line = fc.stringMatching(/^[가-힣A-Za-z0-9 :#-]{0,20}$/);
+
+  it("결과는 항상 원문의 접미사다", () => {
+    fc.assert(
+      fc.property(fc.array(line, { maxLength: 8 }), (lines) => {
+        const content = lines.join("\n");
+        const body = stripFrontmatter(content, noCacheSource, "a.md");
+        expect(content.endsWith(body)).toBe(true);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("프론트매터가 있으면 결과에 YAML 키가 남지 않는다", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.stringMatching(/^[a-z_]{1,8}: [가-힣A-Za-z0-9 ]{1,10}$/), { minLength: 1, maxLength: 5 }),
+        fc.array(line, { maxLength: 5 }),
+        (fmLines, bodyLines) => {
+          const content = `---\n${fmLines.join("\n")}\n---\n${bodyLines.join("\n")}`;
+          const body = stripFrontmatter(content, noCacheSource, "a.md");
+          for (const fmLine of fmLines) expect(body).not.toContain(fmLine);
+        }
+      ),
+      { numRuns: 400 }
+    );
+  });
+
+
 });

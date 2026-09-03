@@ -7,7 +7,7 @@
 //
 // 핵심 보장:
 // - runReconcile은 검색·LLM 호출·리포트 반환만 수행하며 "어떤 노트도 수정하지 않는다"
-//   (비파괴, Req 8.2). 승인 후 반영(applyReconciliation)은 별도 2단계로 분리한다(Task 7.3).
+//   (비파괴, Req 8.2). 승인 후 반영(applyReconciliations)은 별도 2단계로 분리한다(Task 7.3).
 // - parseContradictionReport는 순수 함수이며, 파싱에 실패해도 예외를 던지지 않고
 //   빈 배열을 반환한다(Req 8.3).
 // - 모순 후보를 하나도 추출하지 못하면 "모순 없음"을 안내하고 노트를 변경하지 않는다(Req 8.5).
@@ -22,8 +22,9 @@ import {
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
-import { parseAiFirstNote, buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
-import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
+import { parseJsonArray, toStringArray } from "./llm-json";
 
 /**
  * 모순 항목 — 상충하는 노트 집합, 상충 진술, 제안 정정안을 담는다 (Req 8.3).
@@ -66,6 +67,13 @@ export interface ContradictionParseResult {
   ok: boolean;
   /** 파싱된 모순 항목 (ok=false면 빈 배열) */
   items: Contradiction[];
+  /**
+   * 배열에는 있었지만 정규화를 통과하지 못해 버린 후보 수.
+   *
+   * 실재하지 않는 노트를 가리키는 후보가 대표적이다. `items`가 비었는데 이 값이 0보다
+   * 크면 "모순 없음"이 아니라 "후보가 전부 무효였음"이다.
+   */
+  dropped: number;
 }
 
 /**
@@ -75,52 +83,13 @@ export interface ContradictionParseResult {
  * 응답이 토큰 제한으로 잘렸을 때도 사용자에게 "발견된 모순이 없습니다"라고
  * 잘못 보고했다(거짓 음성). 호출부가 두 경우를 구분할 수 있도록 ok를 함께 준다.
  */
-export function parseContradictionResult(llmText: string): ContradictionParseResult {
-  if (typeof llmText !== "string") return { ok: false, items: [] };
-  const text = llmText.trim();
-  // 빈 응답은 "모순 없음"이 아니라 해석 실패로 본다(LLM은 최소 `[]`를 출력해야 한다).
-  if (text === "") return { ok: false, items: [] };
-
-  // 코드펜스 제거 + JSON 배열 구간만 추출
-  const jsonText = extractJsonArray(text);
-  if (jsonText === null) return { ok: false, items: [] };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    // 파싱 실패 시 throw 금지, 실패 표시와 함께 빈 배열 반환 (Req 8.3)
-    return { ok: false, items: [] };
-  }
-
-  if (!Array.isArray(parsed)) return { ok: false, items: [] };
-
-  const result: Contradiction[] = [];
-  for (const raw of parsed) {
-    const item = normalizeContradiction(raw);
-    if (item !== null) result.push(item);
-  }
-  // 빈 배열([])은 정상 응답이며 "모순 없음"을 의미한다 (Req 8.5).
-  return { ok: true, items: result };
-}
-
-/**
- * 텍스트에서 JSON 배열 구간을 추출한다.
- * - 코드펜스(```json ... ```)로 감싼 경우 내부만 취한다.
- * - 그 외에는 첫 '['부터 마지막 ']'까지를 배열 후보로 본다.
- * - 배열 구간을 찾지 못하면 null.
- */
-function extractJsonArray(text: string): string | null {
-  let t = text;
-  // 코드펜스가 있으면 내부 내용만 사용한다.
-  const fenceMatch = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch) {
-    t = fenceMatch[1].trim();
-  }
-  const start = t.indexOf("[");
-  const end = t.lastIndexOf("]");
-  if (start < 0 || end < 0 || end < start) return null;
-  return t.slice(start, end + 1);
+export function parseContradictionResult(
+  llmText: string,
+  allowedPaths?: ReadonlySet<string>
+): ContradictionParseResult {
+  // 파싱·실패 의미론은 llm-json이 단일 출처로 갖는다. 빈 배열([])은 정상 응답이며
+  // "모순 없음"을 의미하고(Req 8.5), ok=false는 해석 실패다(Req 8.3).
+  return parseJsonArray(llmText, (raw) => normalizeContradiction(raw, allowedPaths));
 }
 
 /**
@@ -128,14 +97,26 @@ function extractJsonArray(text: string): string | null {
  * - notePaths/statements는 문자열 배열만 취한다(문자열 아닌 원소는 제거).
  * - suggestion은 문자열만 취한다.
  * - 세 필드가 모두 비어 있으면(빈 항목) 유효하지 않은 것으로 보고 null을 반환한다.
+ *
+ * @param allowedPaths 주면 이 집합에 있는 노트 경로만 남기고, 남는 것이 없으면 항목을
+ *   버린다. 승인 시 정정안이 이 경로의 노트에 기록되므로(applyReconciliations), 지어낸
+ *   경로가 통과하면 사용자가 승인한 정정이 엉뚱한 노트에 가거나 조용히 사라진다.
  */
-function normalizeContradiction(raw: unknown): Contradiction | null {
+function normalizeContradiction(
+  raw: unknown,
+  allowedPaths?: ReadonlySet<string>
+): Contradiction | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
 
-  const notePaths = toStringArray(obj.notePaths);
+  const rawPaths = toStringArray(obj.notePaths);
+  const notePaths =
+    allowedPaths === undefined ? rawPaths : rawPaths.filter((p) => allowedPaths.has(p));
   const statements = toStringArray(obj.statements);
   const suggestion = typeof obj.suggestion === "string" ? obj.suggestion : "";
+
+  // 경로를 제한하는 중이라면, 걸러낸 뒤 남는 노트가 없는 항목은 적용할 대상이 없다.
+  if (allowedPaths !== undefined && notePaths.length === 0) return null;
 
   // 완전히 빈 항목은 모순으로 보지 않는다.
   if (notePaths.length === 0 && statements.length === 0 && suggestion.trim() === "") {
@@ -143,12 +124,6 @@ function normalizeContradiction(raw: unknown): Contradiction | null {
   }
 
   return { notePaths, statements, suggestion };
-}
-
-/** 값이 문자열 배열이면 문자열 원소만 추려 반환하고, 아니면 빈 배열을 반환한다. */
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
 }
 
 /**
@@ -245,15 +220,47 @@ function buildReconcilePrompt(topic: string, hits: SearchHit[]): string {
  * 7. 그 외에는 formatReconcileReport 리포트를 반환한다.
  *
  * ⚠️ 이 함수는 어떤 노트도 생성·수정·삭제하지 않는다(비파괴, Req 8.2). 정정안의 실제
- *    반영은 사용자 승인 후 별도 단계(applyReconciliation, Task 7.3)에서만 수행된다.
+ *    반영은 사용자 승인 후 별도 단계(applyReconciliations, Task 7.3)에서만 수행된다.
  *
  * @param ctx Second Brain 실행 컨텍스트
  * @param topic 모순을 점검할 주제
  */
-export async function runReconcile(ctx: SecondBrainContext, topic: string): Promise<string> {
+export interface ReconcileOutcome {
+  /** 도구 응답·알림에 그대로 쓰는 사람이 읽는 리포트. */
+  report: string;
+  /**
+   * 승인 UI에 넘길 구조화된 모순 목록. 주제가 비었거나 관련 노트가 없거나
+   * 응답 해석에 실패했거나 모순이 0건이면 빈 배열이다.
+   *
+   * 문자열 리포트만 돌려주면 승인 화면이 그것을 다시 파싱해야 한다 — LLM 응답을 한 번
+   * 파싱해 놓고 그 결과를 버리고 사람이 읽을 문장을 재파싱하는 것은 되돌릴 이유가 없는
+   * 정보 손실이다.
+   */
+  contradictions: Contradiction[];
+  /**
+   * 인덱스가 낡아 검색 품질이 떨어진 경우의 경고. 없으면 빈 문자열.
+   *
+   * 리포트 문자열에만 담으면 승인 화면 경로가 그것을 버린다 — 사용자는 검색이 낡은
+   * 인덱스로 돌았다는 사실을 모른 채 노트 수정을 승인하게 된다.
+   */
+  staleWarning: string;
+}
+
+/**
+ * runReconcile의 구조화된 형태. 리포트 문자열과 파싱된 모순 목록을 함께 돌려준다.
+ * 동작은 runReconcile과 동일하며 비파괴다 — 어떤 노트도 건드리지 않는다.
+ */
+export async function runReconcileDetailed(
+  ctx: SecondBrainContext,
+  topic: string
+): Promise<ReconcileOutcome> {
   const trimmedTopic = topic.trim();
   if (trimmedTopic === "") {
-    return "모순을 점검할 주제(topic)가 필요합니다.";
+    return {
+      report: "모순을 점검할 주제(topic)가 필요합니다.",
+      contradictions: [],
+      staleWarning: "",
+    };
   }
 
   // 1) 기존 Graph RAG 검색 재사용 (읽기 전용, 비파괴)
@@ -264,7 +271,11 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
 
   // 2) 관련 노트 없음 → 점검할 모순 없음 안내 (노트 미변경)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`;
+    return {
+      report: `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`,
+      contradictions: [],
+      staleWarning: staleNote.trim(),
+    };
   }
 
   // 3) 검색 히트 → 모순 점검 프롬프트
@@ -279,27 +290,63 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
   );
 
   // 5) 모순 항목 파싱 (실패 시 실패 표시, throw 금지 — Req 8.3)
-  const parsed = parseContradictionResult(response.text);
+  // 이번 검색에 걸린 노트만 모순 대상으로 인정한다. 프롬프트에 없던 경로를 LLM이
+  // 지어내면 승인된 정정안이 엉뚱한 노트로 간다.
+  const parsed = parseContradictionResult(response.text, new Set(hits.map((h) => h.path)));
 
   // 5-1) 응답 해석 실패 → "모순 없음"으로 오보고하지 않고 실패를 명시한다.
   //      응답이 토큰 제한으로 잘렸거나 JSON 형식이 아닌 경우가 여기에 해당한다.
   if (!parsed.ok) {
-    return [
-      "모순 점검 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림).",
-      "모순이 없다는 뜻이 아니므로, 다시 실행하거나 최대 토큰을 늘려 주세요.",
-      "어떤 노트도 변경하지 않았습니다.",
-    ].join("\n");
+    return {
+      report: [
+        "모순 점검 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림).",
+        "모순이 없다는 뜻이 아니므로, 다시 실행하거나 최대 토큰을 늘려 주세요.",
+        "어떤 노트도 변경하지 않았습니다.",
+      ].join("\n"),
+      contradictions: [],
+      staleWarning: staleNote.trim(),
+    };
   }
 
   const contradictions = parsed.items;
 
   // 6) 모순 0건 → 안내, 노트 미변경 (Req 8.5)
   if (contradictions.length === 0) {
-    return `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`;
+    // 후보는 있었지만 전부 실재하지 않는 노트를 가리켜 버린 경우와 정말로 모순이 없는
+    // 경우를 구분한다. 전자를 "모순 없음"으로 보고하면 LLM이 근거를 날조했다는 사실이
+    // 사용자에게 전달되지 않는다.
+    if (parsed.dropped > 0) {
+      return {
+        report: [
+          `모순 후보 ${parsed.dropped}건이 모두 문맥에 없는 노트를 가리켜 버렸습니다.`,
+          "모순이 없다는 뜻이 아니므로, 다시 실행해 주세요.",
+          `어떤 노트도 변경하지 않았습니다.${staleNote}`,
+        ].join("\n"),
+        contradictions: [],
+        staleWarning: staleNote.trim(),
+      };
+    }
+    return {
+      report: `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`,
+      contradictions: [],
+      staleWarning: staleNote.trim(),
+    };
   }
 
   // 7) 모순 리포트 반환 — 어떤 노트도 수정하지 않는다 (Req 8.2)
-  return `${formatReconcileReport(contradictions)}${staleNote}`;
+  return {
+    report: `${formatReconcileReport(contradictions)}${staleNote}`,
+    contradictions,
+    staleWarning: staleNote.trim(),
+  };
+}
+
+/**
+ * 모순해결 실행 래퍼 — 리포트 문자열만 필요한 호출부(LLM 도구)를 위한 얇은 감싸기.
+ * 동작은 runReconcileDetailed와 완전히 같다.
+ */
+export async function runReconcile(ctx: SecondBrainContext, topic: string): Promise<string> {
+  return (await runReconcileDetailed(ctx, topic)).report;
 }
 
 /**
@@ -309,10 +356,58 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
  */
 const RECONCILE_BLOCK_KEY = "reconcile";
 
-/** 노트 경로에서 제목 후보(확장자 제거한 파일명)를 추론한다. */
-function deriveTitleFromPath(notePath: string): string {
-  const base = notePath.slice(notePath.lastIndexOf("/") + 1);
-  return base.endsWith(".md") ? base.slice(0, -3) : base;
+/**
+ * 정정안 경계 표식.
+ *
+ * 번호 목록(`1. `)으로 나누면 항목 경계가 모호해진다 — 정정안이 여러 줄이거나 그 자체가
+ * `1. `로 시작하면 다음 실행에서 경계를 잃거나 진짜 접두어를 목록 번호로 지운다.
+ * HTML 주석은 미리보기에 보이지 않고 정정안 본문에 나타날 일이 없다.
+ */
+const RECONCILE_ITEM_MARKER = "<!-- @item -->";
+
+/**
+ * 기존 정정 블록과 새 정정안을 합친다 — 순수 함수.
+ *
+ * `upsertGeneratedBlock`은 Generated_Region **전체**를 교체한다. 그래서 이번 승인분만으로
+ * 블록을 만들면 이전 실행에서 승인한 정정이 사라진다. 사용자가 명시적으로 승인한 것을
+ * 다음 승인이 지우는 조용한 손실이므로 합집합으로 다시 쓴다.
+ *
+ * 한 건이면 문구 그대로 쓴다(표식 없음) — 대부분의 경우이고, 노트에 군더더기를 남길
+ * 이유가 없다. 두 건 이상이면 각 항목 앞에 경계 표식을 둔다.
+ */
+export function mergeReconcileBlock(
+  existingBlock: string | null,
+  incoming: readonly string[]
+): string {
+  const items = parseReconcileBlock(existingBlock);
+  for (const raw of incoming) {
+    const next = raw.trim();
+    // 표식을 포함한 정정안은 되읽기를 깨뜨린다. 표식만 지우고 받는다.
+    const safe = next.split(RECONCILE_ITEM_MARKER).join("").trim();
+    if (safe !== "" && !items.includes(safe)) items.push(safe);
+  }
+
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  return items.map((item) => `${RECONCILE_ITEM_MARKER}\n${item}`).join("\n\n");
+}
+
+/**
+ * 기록된 정정 블록에서 정정안 목록을 되읽는다.
+ *
+ * 표식이 없으면 블록 전체가 한 건이다 — 여러 줄짜리 정정안을 줄 단위로 쪼개면 문장이
+ * 조각난다.
+ */
+function parseReconcileBlock(block: string | null): string[] {
+  if (block === null) return [];
+  const text = block.trim();
+  if (text === "") return [];
+
+  if (!text.includes(RECONCILE_ITEM_MARKER)) return [text];
+  return text
+    .split(RECONCILE_ITEM_MARKER)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
 }
 
 /**
@@ -352,102 +447,105 @@ function updateLearnedAtMinimal(content: string, now: string): string {
 /**
  * 단일 노트에 승인된 정정안을 반영하고 `learned_at`을 갱신한 새 내용을 만든다 — 순수 보조.
  *
- * - AI-first 노트(parseAiFirstNote가 성공)면 메타데이터를 보존한 채 `learned_at`만 now로 바꾸고,
- *   본문에 정정안을 RECONCILE_BLOCK_KEY Sentinel_Block으로 병합한 뒤 buildAiFirstNote로 재직렬화한다.
- * - 그 외(비 AI-first)면 정정안을 Sentinel_Block으로 문서 끝에 병합하고 프론트매터 `learned_at`만
- *   최소 변경으로 갱신한다.
- * - 두 경로 모두 Generated_Region만 교체하므로 사람이 작성한 User_Region은 보존된다.
+ * 정정안을 Sentinel_Block으로 문서 끝에 병합하고 프론트매터 `learned_at`만 최소 변경으로
+ * 갱신한다. Generated_Region만 교체하므로 사람이 작성한 User_Region은 보존된다.
+ *
+ * **AI-first 형식으로 재직렬화하지 않는다.** 과거에는 `parseAiFirstNote`가 성공하면
+ * `buildAiFirstNote`로 다시 썼는데, 그 판정은 "프론트매터가 닫혀 있다" 뿐이라 **모든**
+ * 일반 노트가 통과한다. 그러면 재직렬화가 아는 키(title/recency/confidence/valid_from/
+ * learned_at/source/tags)만 남기고 `aliases`·`cssclasses`·사용자 정의 키·YAML 주석·목록형
+ * tags를 조용히 지운다. 모순 반영 대상은 검색에 걸린 **사용자 노트**이므로 실제 데이터
+ * 손실이다.
+ *
+ * 최소 갱신 경로가 AI-first 노트에도 똑같이 맞는다 — `learned_at` 줄만 바꾸고 나머지는
+ * 건드리지 않으므로 메타데이터 보존은 오히려 더 확실하다.
  *
  * @param current 원본 노트 내용
- * @param notePath 노트 경로(제목 추론용)
  * @param suggestion 승인된 정정안(빈 문자열이면 본문은 그대로 두고 learned_at만 갱신)
  * @param now YYYY-MM-DD 형식의 갱신 시점
  */
 function applyToNoteContent(
   current: string,
-  notePath: string,
-  suggestion: string,
-  now: string,
+  suggestions: readonly string[],
+  now: string
 ): string {
-  const hasSuggestion = suggestion.trim() !== "";
-  const parsed = parseAiFirstNote(current);
-
-  if (!parsed.parseFailed) {
-    // AI-first 노트: 본문에만 정정안을 병합(User_Region 보존)하고 메타의 learned_at을 갱신한다.
-    const newBody = hasSuggestion
-      ? upsertGeneratedBlock(parsed.body, RECONCILE_BLOCK_KEY, suggestion)
-      : parsed.body;
-    const meta: AiFirstMeta = {
-      title: parsed.meta.title ?? deriveTitleFromPath(notePath),
-      recency: parsed.meta.recency ?? "evergreen",
-      confidence: parsed.meta.confidence ?? "medium",
-      validFrom: parsed.meta.validFrom,
-      learnedAt: now, // Bi_Temporal: 정정을 알게 된 시점으로 갱신 (Req 8.4)
-      source: parsed.meta.source,
-      tags: parsed.meta.tags,
-    };
-    return buildAiFirstNote({ meta, body: newBody }, now);
-  }
-
-  // 비 AI-first 노트: 정정안 Sentinel_Block을 끝에 병합한 뒤 프론트매터 learned_at만 갱신한다.
-  const withSuggestion = hasSuggestion
-    ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, suggestion)
-    : current;
+  const merged = mergeReconcileBlock(
+    // 기존 블록과 합친다. upsertGeneratedBlock은 블록 **전체**를 교체하므로 이번
+    // 승인분만으로 만들면 다른 실행에서 승인한 정정이 조용히 사라진다.
+    getGeneratedBlock(current, RECONCILE_BLOCK_KEY),
+    suggestions
+  );
+  const withSuggestion =
+    merged !== "" ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, merged) : current;
   return updateLearnedAtMinimal(withSuggestion, now);
 }
 
+
 /**
- * 승인 후 반영 핸들러 (Req 8.4) — runReconcile과 분리된 명시적 2단계.
+ * 노트 하나에 정정안들을 **한 번의 쓰기로** 반영한다. 실제로 썼으면 true.
  *
- * 사용자가 모순 리포트의 특정 Contradiction(정정안)을 명시적으로 "승인"한 경우에만 호출된다.
- * 승인된 Contradiction의 대상 노트(approved.notePaths)만 다음과 같이 갱신한다.
- * - 기존 edit_note/sentinel 병합 경로(vault.read → upsert → vault.modify)로 정정안을 반영하되,
- *   Generated_Region만 교체하여 사람이 작성한 User_Region을 보존한다(비파괴 쓰기).
- * - 각 대상 노트의 Bi_Temporal `learned_at`을 갱신 시점(now)으로 업데이트한다.
- * - 존재하지 않는 경로는 건너뛴다(생성하지 않음). 승인되지 않은 노트는 일절 건드리지 않는다.
- *
- * ⚠️ 이 함수는 "명시적 사용자 승인" 경로에서만 호출되어야 한다. 스케줄러(자동) 경로는
- *    덮어쓰기성 작업에 사용자 확인을 유지하므로 이 함수를 절대 호출하지 않는다(Req 11.4, 8.4).
- *    그래서 runReconcile/scheduler와 분리된 별도 export 함수로 둔다.
- *
- * @param ctx Second Brain 실행 컨텍스트
- * @param approved 사용자가 승인한 단일 모순 항목(정정안 포함)
- * @param now YYYY-MM-DD 형식의 반영 시점(learned_at 갱신용, 주입)
- * @returns 반영 결과 요약 문자열
+ * 존재하지 않는 노트는 생성하지 않는다(비파괴, 승인 범위 한정). 내용이 그대로면 쓰지
+ * 않는다 — 같은 바이트를 써서 mtime만 바꾸면 인덱서가 그 노트를 다시 임베딩한다.
  */
-export async function applyReconciliation(
+async function writeSuggestions(
   ctx: SecondBrainContext,
-  approved: Contradiction,
+  notePath: string,
+  suggestions: readonly string[],
+  now: string,
+): Promise<boolean> {
+  const file = ctx.app.vault.getAbstractFileByPath(notePath);
+  if (!(file instanceof TFile)) return false;
+
+  return processIfChanged(ctx.app, file, (content) =>
+    applyToNoteContent(content, suggestions, now)
+  );
+}
+
+/**
+ * 승인된 정정안 여러 건을 **노트 단위로 합쳐** 한 번씩 반영한다 (Req 8.4).
+ *
+ * 왜 합치는가: 정정안은 대상 노트마다 고정 키 `reconcile` Sentinel_Block에 upsert된다.
+ * 한 배치에서 두 승인 항목의 `notePaths`가 같은 노트를 포함하면 두 번째 쓰기가 첫 번째를
+ * **교체**한다 — 요약은 둘 다 반영했다고 말하지만 노트에는 마지막 것만 남는다. 사용자가
+ * 명시적으로 승인한 정정이 조용히 사라지는 것이므로 노트별로 모아 한 번만 쓴다.
+ *
+ * 항목별 키를 쪼개지 않은 이유: 키가 항목 순서에 묶이면 다음 실행에서 순서가 바뀔 때
+ * 같은 노트에 낡은 블록이 남는다. 하나의 블록에 번호를 붙이는 쪽이 멱등하다.
+ *
+ * @param approved 사용자가 승인한 모순 항목들
+ * @param now YYYY-MM-DD 형식의 반영 시점(learned_at 갱신용, 주입)
+ */
+export async function applyReconciliations(
+  ctx: SecondBrainContext,
+  approved: readonly Contradiction[],
   now: string,
 ): Promise<string> {
-  const targets = Array.isArray(approved?.notePaths) ? approved.notePaths : [];
-  if (targets.length === 0) {
+  // 노트별 정정안. 같은 문구가 두 항목에 있으면 한 번만 넣는다.
+  const byNote = new Map<string, string[]>();
+
+  for (const item of approved) {
+    const suggestion = (item?.suggestion ?? "").trim();
+    const targets = Array.isArray(item?.notePaths) ? item.notePaths : [];
+    for (const rawPath of targets) {
+      const notePath = normalizePath(rawPath);
+      const list = byNote.get(notePath) ?? [];
+      if (suggestion !== "" && !list.includes(suggestion)) list.push(suggestion);
+      byNote.set(notePath, list);
+    }
+  }
+
+  if (byNote.size === 0) {
     return "반영할 대상 노트가 없습니다(승인된 모순 항목에 노트 경로가 없습니다).";
   }
 
   const updated: string[] = [];
   const skipped: string[] = [];
 
-  for (const rawPath of targets) {
-    const notePath = normalizePath(rawPath);
-    const file = ctx.app.vault.getAbstractFileByPath(notePath);
-
-    // 존재하지 않는 노트는 생성하지 않고 건너뛴다(비파괴, 승인 범위 한정).
-    if (!(file instanceof TFile)) {
-      skipped.push(notePath);
-      continue;
-    }
-
-    const current = await ctx.app.vault.read(file);
-    const next = applyToNoteContent(current, notePath, approved.suggestion ?? "", now);
-
-    // 실제 변경이 있을 때만 기록한다(멱등성 — 동일 내용이면 modify 생략).
-    if (next !== current) {
-      await ctx.app.vault.modify(file, next);
-      updated.push(notePath);
-    } else {
-      skipped.push(notePath);
-    }
+  for (const [notePath, suggestions] of byNote) {
+    // 노트당 한 번만 쓴다. 여러 번 쓰면 mtime이 그만큼 바뀌어 재임베딩을 부르고,
+    // 사용자가 편집 중일 때 겹칠 창도 그만큼 늘어난다.
+    if (await writeSuggestions(ctx, notePath, suggestions, now)) updated.push(notePath);
+    else skipped.push(notePath);
   }
 
   const parts: string[] = [];

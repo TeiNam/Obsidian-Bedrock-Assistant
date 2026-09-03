@@ -1,7 +1,11 @@
 import { App, TFile, Notice } from "obsidian";
 import type { IAiClient, VaultIndexEntry, IndexResult, IndexFailure, IndexChunk, SerializedIndex } from "./types";
 import { CURRENT_INDEX_SCHEMA_VERSION } from "./types";
-import { splitIntoChunks, normalizeChunkConfig, type ChunkConfig } from "./graph-rag/chunker";
+import {
+  splitIntoChunkSlices,
+  normalizeChunkConfig,
+  type ChunkConfig,
+} from "./graph-rag/chunker";
 import {
   extractMetadata,
   stripFrontmatter,
@@ -15,12 +19,191 @@ import {
 } from "./graph-rag/vector-search";
 import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { combineAndRank } from "./graph-rag/score-combiner";
+import { filterIndex, isFilterEmpty, type SearchFilter } from "./graph-rag/entry-filter";
+import { fuseRanks, reserveSlots } from "./graph-rag/rank-fusion";
 
 // === Graph_RAG_Search 결과 타입 (task 8.4) ===
 // 기존 search()의 반환 타입 Array<{path,title,excerpt,score}>을 대체하는 신규 API 시그니처.
 // 유일 호출처인 obsidian-tools.ts의 searchVault()는 task 9.1에서 함께 갱신된다.
 
 /** Graph_RAG_Search 단일 결과 항목 (시드/이웃 구분 및 관계 정보 포함, Req 7.2~7.4). */
+/**
+ * 검색 결과에 실을 적중 본문의 최대 길이.
+ *
+ * 청크 크기는 사용자 설정이고 상한이 MAX_CHUNK_SIZE(100만 자)다. 적중 본문은 그대로
+ * LLM 프롬프트에 들어가므로(toSearchHits → 종합·모순·결정 추출) 경계를 두지 않으면
+ * 설정 하나로 프롬프트가 무제한 커진다.
+ *
+ * 기본 청크 크기(2000)와 같게 잡아 기본 설정에서는 아무것도 잘리지 않는다.
+ */
+const MATCHED_TEXT_MAX_CHARS = 2000;
+
+/**
+ * 적중 청크에서 검색 결과에 실을 필드를 뽑는다.
+ *
+ * 본문이 빈 청크(레거시 폴백)에는 matchedText를 붙이지 않는다 — 빈 문자열을 실으면
+ * 소비자의 `matchedText || excerpt` 폴백이 의도대로 동작하지만, 필드가 있는데 비어
+ * 있는 상태는 "맞은 내용이 없다"와 구분되지 않아 읽는 쪽을 헷갈리게 한다.
+ */
+function matchedFields(
+  match: { heading: string | null; text: string } | null
+): { heading: string | null; matchedText?: string } {
+  if (match === null) return { heading: null };
+  const text = match.text.trim().slice(0, MATCHED_TEXT_MAX_CHARS);
+  return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
+}
+
+/**
+ * 발췌·앵커에 실을 청크를 고른다.
+ *
+ * 임베딩 청크가 질의어를 담고 있으면 그것을 쓴다(두 신호가 일치). 담고 있지 않고 어휘
+ * 청크가 있으면 어휘 청크를 쓴다 — 정확 문자열은 확인 가능하고, 사용자가 근거를 눈으로
+ * 확인할 수 있는 쪽이 낫다. 어휘 청크가 없으면(순수 의미 질의) 임베딩 청크를 쓴다.
+ */
+function pickMatchedChunk(
+  dense: { heading: string | null; text: string } | null,
+  lexical: { heading: string | null; text: string } | null,
+  terms: readonly string[]
+): { heading: string | null; text: string } | null {
+  if (dense === null) return lexical;
+  if (lexical === null) return dense;
+
+  const lower = dense.text.toLowerCase();
+  const denseHasTerm = terms.some((term) => lower.includes(term));
+  return denseHasTerm ? dense : lexical;
+}
+
+/**
+ * 텍스트에 질의어가 몇 번 나오는지.
+ *
+ * **라틴 토큰은 단어 경계로 센다.** 부분문자열로 세면 `is`가 `this`·`list`·`history`에
+ * 걸려 무관한 노트가 어휘 상위로 올라가고, 예약 슬롯이 그 노트를 결과에 밀어넣어 관련
+ * 있는 dense 결과를 밀어낸다.
+ *
+ * CJK는 경계 규칙을 그대로 쓸 수 없다(띄어쓰기 없이 붙는다). 그쪽은 부분문자열로 센다 —
+ * 한글 2자 토큰은 그 자체로 의미 단위인 경우가 많다.
+ *
+ * ponytail: 흔한 단어가 단독으로 여러 번 나오는 노트는 여전히 점수가 오른다. 그것까지
+ * 걸러내려면 볼트 전체 문서빈도(IDF)가 필요하고, 그건 인덱스 스키마를 늘리는 일이다.
+ */
+function countTerm(text: string, term: string): number {
+  if (term === "") return 0;
+
+  const boundary = boundaryPattern(term);
+  if (boundary !== null) {
+    const matches = text.match(boundary);
+    return matches === null ? 0 : matches.length;
+  }
+
+  return text.split(term).length - 1;
+}
+
+/**
+ * 질의어가 텍스트에서 처음 나오는 위치. 없으면 -1.
+ *
+ * `countTerm`과 **같은 규칙**을 쓴다. `indexOf`로 찾으면 라틴 토큰에서 부분문자열 위치가
+ * 나온다 — 청크 앞에 `this`가 있고 실제 `is`가 500자 뒤에 있으면 발췌 창이 엉뚱한 곳을
+ * 잘라 정작 적중어가 빠진다.
+ */
+function firstTermIndex(text: string, term: string): number {
+  if (term === "") return -1;
+
+  const boundary = boundaryPattern(term);
+  if (boundary !== null) {
+    const match = boundary.exec(text);
+    return match === null ? -1 : match.index;
+  }
+
+  return text.indexOf(term);
+}
+
+/** 라틴 토큰의 단어 경계 정규식. 라틴이 아니면 null(부분문자열로 센다). */
+function boundaryPattern(term: string): RegExp | null {
+  if (!/^[a-z0-9]+$/.test(term)) return null;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g");
+}
+
+/** 질의를 어휘 검색용 토큰으로 쪼갠다. */
+function splitQueryTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * 어휘 질의어가 가장 많이 나온 청크를 찾는다.
+ *
+ * dense 검색과 달리 어휘 검색은 노트 단위 `searchText`로 점수를 낸다. 그래서 "어느 절이
+ * 맞았는가"를 따로 찾아야 하고, 그러지 않으면 인용 앵커를 붙일 근거도 LLM에 줄 본문도
+ * 도입부밖에 없다.
+ *
+ * 청크가 없거나 어느 청크에도 질의어가 없으면 null — 그때는 excerpt로 폴백한다.
+ */
+function bestLexicalChunk(
+  entry: VaultIndexEntry | undefined,
+  terms: readonly string[]
+): { heading: string | null; text: string } | null {
+  let best: { heading: string | null; text: string; hits: number; at: number } | null = null;
+
+  for (const chunk of entry?.chunks ?? []) {
+    const lower = chunk.text.toLowerCase();
+    let hits = 0;
+    let first = -1;
+    for (const term of terms) {
+      // 점수 규칙은 keywordSearch와 같아야 한다 — 다르면 "어휘가 맞은 청크"가 실제로
+      // 순위를 올린 근거와 어긋난다. 위치도 같은 규칙으로 찾는다.
+      const count = countTerm(lower, term);
+      if (count === 0) continue;
+      const at = firstTermIndex(lower, term);
+      hits += count;
+      if (at >= 0 && (first < 0 || at < first)) first = at;
+    }
+    if (hits === 0) continue;
+    if (best === null || hits > best.hits) {
+      const at = Math.max(0, first);
+      best = {
+        // 청크의 heading은 **청크 시작 지점**의 헤딩이다. 한 청크가 `# 개요`와 `## 결정`을
+        // 함께 담고 적중어가 결정 절에 있으면, 발췌는 결정 절을 보여주면서 앵커는 개요를
+        // 가리킨다. 적중 오프셋 앞쪽에서 마지막 헤딩을 찾아 그것을 쓴다.
+        heading: headingAtOffset(chunk.text, at) ?? chunk.heading ?? null,
+        text: chunk.text,
+        hits,
+        at,
+      };
+    }
+  }
+
+  if (best === null) return null;
+  // 적중어 **주변**을 자른다. 청크 전체를 돌려주면 소비자가 앞부분만 잘라 쓸 때
+  // (obsidian-tools는 500자) 정작 맞은 문자열이 사라진다.
+  return { heading: best.heading, text: windowAround(best.text, best.at) };
+}
+
+/**
+ * 청크 안에서 주어진 오프셋보다 앞에 있는 마지막 ATX 헤딩. 없으면 null.
+ *
+ * 청크 텍스트에는 헤딩 줄이 그대로 들어 있다(청커는 크기로 자른다). 그래서 청크 안에서
+ * 절이 바뀌는 경우가 있고, 그때 청크 시작 헤딩을 앵커로 쓰면 다른 절을 가리킨다.
+ */
+function headingAtOffset(text: string, offset: number): string | null {
+  const before = text.slice(0, offset);
+  let found: string | null = null;
+  // chunker와 같은 규칙 — 닫는 표식은 앞에 공백이 있을 때만 벗긴다.
+  for (const m of before.matchAll(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/gm)) {
+    const heading = m[1].trim();
+    if (heading !== "") found = heading;
+  }
+  return found;
+}
+
+/** 적중 위치가 보이도록 앞뒤 문맥을 남기고 자른다. 문단 경계는 맞추지 않는다(단순함 우선). */
+function windowAround(text: string, at: number, size = LEXICAL_WINDOW_CHARS): string {
+  if (text.length <= size) return text;
+  // 적중어가 창의 앞 1/4 지점에 오게 해서 뒤쪽 문맥을 더 남긴다.
+  const start = Math.max(0, Math.min(at - Math.floor(size / 4), text.length - size));
+  const slice = text.slice(start, start + size);
+  return (start > 0 ? "… " : "") + slice + (start + size < text.length ? " …" : "");
+}
+
 export interface GraphRagSearchItem {
   /** 노트의 볼트 루트 기준 경로 */
   path: string;
@@ -32,6 +215,15 @@ export interface GraphRagSearchItem {
   combinedScore: number;
   /** 0.0~1.0 으로 정규화된 벡터 유사도 */
   vectorScore: number;
+  /**
+   * 질의와 가장 잘 맞은 청크의 본문. 어휘로만 잡힌 노트와 v1 인덱스는 없다.
+   *
+   * `excerpt`는 본문 **맨 앞 500자로 고정**된 값이다(buildEntry). 검색은 뒤쪽 청크가
+   * 맞아서 노트를 반환할 수 있는데, 그때 excerpt만 LLM에 주면 정작 맞은 내용이 전달되지
+   * 않는다 — 결정 추출·모순 점검·종합이 모두 "검색은 찾았는데 근거는 못 본" 상태로
+   * 답하게 된다. 맞은 청크를 함께 실어 소비자가 그것을 우선 쓰게 한다.
+   */
+  matchedText?: string;
   /** 시드로부터의 그래프 거리(hop). 0이면 시드 (Req 7.4) */
   hop: number;
   /** 시드 여부 (hop 0) (Req 7.3) */
@@ -40,6 +232,13 @@ export interface GraphRagSearchItem {
   seedPath: string | null;
   /** 연결된 시드의 제목. 이웃 결과의 표현용으로 인덱스 조회로 채운다 (Req 7.4) */
   seedTitle?: string | null;
+  /**
+   * 질의와 가장 잘 맞은 청크가 속한 헤딩. 스키마 v1 인덱스나 도입부 청크는 null이다.
+   *
+   * 모델이 `[[노트#헤딩]]`으로 인용할 수 있게 하려고 싣는다. 노트 단위 인용은 긴
+   * 노트에서 "어딘가에 있다"까지만 말해주므로 사용자가 근거를 다시 찾아야 한다.
+   */
+  heading?: string | null;
 }
 
 /** Graph_RAG_Search 반환 결과. */
@@ -55,7 +254,47 @@ export interface GraphRagResult {
    * 없는 경우 true. 호출부는 사용자에게 재인덱싱을 안내해야 한다.
    */
   staleEmbeddings?: boolean;
+  /**
+   * 필터가 제외한 노트 수. 필터 때문에 결과가 줄었다는 사실을 호출부가 알려면 필요하다.
+   * 이 값이 크고 items가 비면 "인덱싱이 필요함"이 아니라 "조건이 좁음"이 원인이다.
+   */
+  filteredOutCount?: number;
+  /** 어휘 검색 결과를 벡터 결과와 융합해 순위를 만든 경우 true. */
+  usedHybrid?: boolean;
 }
+
+/**
+ * 융합에 넣을 어휘 검색 후보의 **최소** 수. limit보다 넉넉히 뽑아야 융합에 쓸 재료가
+ * 생긴다 — limit=5로 요청했을 때 어휘 후보도 5개만 뽑으면 정답이 어휘 6위인 경우를
+ * 못 살린다. limit이 이 값보다 크면 limit을 쓴다(그러지 않으면 limit=100 요청에서
+ * 31위 이후가 어휘 신호를 아예 받지 못한다).
+ */
+const LEXICAL_POOL_SIZE = 30;
+
+/**
+ * 어휘 목록에만 있는 후보에게 보장할 결과 자리 수.
+ *
+ * 2로 둔 이유: 정확 문자열 질의의 정답은 보통 한두 개다. 더 늘리면 어휘 상위권이 dense
+ * 결과를 밀어내기 시작하고, dense가 이 플러그인의 주 신호다.
+ */
+const LEXICAL_RESERVED_SLOTS = 2;
+
+/**
+ * 어휘 적중 구간의 길이(문자).
+ *
+ * 소비자가 앞부분만 잘라 쓰는 가장 짧은 경계(obsidian-tools의 500자)에 맞춘다. 청크 전체를
+ * 돌려주면 적중어가 그 경계 밖으로 밀려 모델이 정작 맞은 문자열을 못 본다.
+ */
+const LEXICAL_WINDOW_CHARS = 500;
+
+/**
+ * 융합에서 어휘 목록에 주는 가중치. dense가 이 플러그인의 주 신호이므로 보조로 둔다.
+ *
+ * 1.0으로 두면 어떤 단어를 여러 번 반복한 노트가 의미적으로 더 맞는 노트를 밀어낼 수
+ * 있다. 0.5면 어휘 1위가 dense 4위권 정답을 상위로 끌어올리기에는 충분하면서
+ * (0.5/61 + 1/64 > 1/61), dense 1위를 뒤집지는 못한다.
+ */
+const LEXICAL_FUSION_WEIGHT = 0.5;
 
 /** 발췌(excerpt) 최대 길이. 검색 결과 미리보기와 LLM 컨텍스트에 사용된다. */
 const EXCERPT_MAX_CHARS = 500;
@@ -89,7 +328,14 @@ export class VaultIndexer {
   // 로드한 인덱스의 임베딩 구성이 현재 설정과 달라 벡터를 신뢰할 수 없는 상태
   private staleIndex = false;
   // buildEntry 진행 중에 삭제·이동된 경로. 완료 시 기록을 취소해 부활을 막는다.
-  private removedDuringIndexing: Set<string> = new Set();
+  /**
+   * 경로별 삭제 세대. `removeFile`마다 1 증가한다.
+   *
+   * 불린 표식으로는 "삭제 후 같은 경로로 복원"을 구분할 수 없었다. 복원 후 새로 시작한
+   * indexFile의 결과까지 표식에 걸려 폐기되고, 그 노트는 다음 수정이 있을 때까지 검색에서
+   * 사라졌다. 작업 시작 시점의 세대를 기억해 **그 이후 삭제가 있었을 때만** 폐기한다.
+   */
+  private removalGeneration: Map<string, number> = new Map();
 
   constructor(app: App, client: IAiClient) {
     this.app = app;
@@ -266,8 +512,10 @@ export class VaultIndexer {
 
     // lastModified 체크 없이 강제 인덱싱
     private async forceIndexFile(file: TFile): Promise<void> {
-      // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+      // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다(indexFile과 같은 이유 — 세대를
+      // 첫 await 뒤에 잡으면 cachedRead 도중 삭제된 노트를 되살린다).
       const readMtime = file.stat.mtime;
+      const generation = this.currentGeneration(file.path);
       const content = await this.app.vault.cachedRead(file);
       // 내용이 비워진 노트는 인덱스에서 제거한다. 그냥 반환하면 이전 본문과 임베딩이
       // 계속 검색되어, 사용자가 지운 내용이 LLM에 노출된다.
@@ -278,7 +526,7 @@ export class VaultIndexer {
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
       const entry = await this.buildEntry(file, content, readMtime);
       // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-      this.commitEntry(file.path, entry);
+      this.commitEntry(file.path, entry, generation);
     }
 
     /**
@@ -323,12 +571,12 @@ export class VaultIndexer {
       const excerpt = body.slice(0, EXCERPT_MAX_CHARS).trim();
 
       // 본문을 청크로 분할 (무손실 커버리지 보장, Req 3.7)
-      const chunkTexts = splitIntoChunks(body, this.chunkConfig);
+      const slices = splitIntoChunkSlices(body, this.chunkConfig);
 
       // 4) 청크별 임베딩 생성. 단일 청크 임베딩 실패는 격리한다 (Req 3.6)
       const chunks: IndexChunk[] = [];
-      for (let i = 0; i < chunkTexts.length; i++) {
-        const text = chunkTexts[i];
+      for (let i = 0; i < slices.length; i++) {
+        const { text, charStart, heading } = slices[i];
         let embedding: number[] = [];
         let embedFailed = false;
         if (this.useEmbeddings) {
@@ -344,7 +592,9 @@ export class VaultIndexer {
             );
           }
         }
-        const chunk: IndexChunk = { index: i, text, embedding };
+        const chunk: IndexChunk = { index: i, text, embedding, charStart };
+        // 헤딩이 없는 청크(문서 도입부)는 필드를 생략해 직렬화 크기를 늘리지 않는다.
+        if (heading !== null) chunk.heading = heading;
         if (embedFailed) chunk.embedFailed = true;
         chunks.push(chunk);
       }
@@ -407,6 +657,47 @@ export class VaultIndexer {
     }
   }
 
+  /**
+   * 노트의 **그래프 메타데이터만** 갱신한다(아웃링크·백링크·태그·프론트매터).
+   *
+   * 왜 indexFile이 아닌가: `indexFile`은 `lastModified >= mtime`이면 즉시 반환한다.
+   * A에 `[[B]]`를 추가하면 B의 mtime은 바뀌지 않으므로 B의 `backlinks`가 영구히 낡는다 —
+   * B에서 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
+   *
+   * 그리고 B의 **본문은 바뀌지 않았다**. 재임베딩은 순수한 낭비(API 비용 + 시간)이므로
+   * 청크와 임베딩은 그대로 두고 링크 정보만 다시 뽑는다.
+   *
+   * 인덱스에 없는 노트는 아무것도 하지 않는다 — 임베딩 없는 반쪽 엔트리를 만들면
+   * 검색에서 비교 불가 후보로 섞인다. 그 경우는 호출부가 indexFile을 쓰면 된다.
+   *
+   * ponytail: 옵시디언의 링크 해석(resolvedLinks)은 파일 쓰기 직후 한 틱 늦을 수 있다.
+   * 그러면 이번 갱신이 직전 상태를 읽고, 다음 증분 인덱싱에서 수렴한다. 이벤트를 기다리는
+   * 장치는 값을 못 할 만큼 복잡하다.
+   */
+  refreshGraphMetadata(path: string): void {
+    const existing = this.index.get(path);
+    if (!existing || !this.metadataSource) return;
+
+    const metadata = extractMetadata(path, this.metadataSource);
+
+    // 태그가 바뀌었으면 searchText도 낡는다(태그가 그 안에 들어 있다). 여기서 다시 만들 수는
+    // 없다 — searchText는 프론트매터를 포함한 **원문**으로 만들어지고 인덱스에는 그 원문이
+    // 없다. 대신 재색인 대상으로 표시해 다음 인덱싱이 제대로 다시 만들게 한다. 그러지 않으면
+    // 지운 태그로 키워드 검색이 계속 그 노트를 반환한다.
+    const tagsChanged =
+      metadata.tags.length !== (existing.tags?.length ?? 0) ||
+      metadata.tags.some((tag, i) => tag !== existing.tags?.[i]);
+
+    this.index.set(path, {
+      ...existing,
+      outlinks: metadata.outlinks,
+      backlinks: metadata.backlinks,
+      tags: metadata.tags,
+      frontmatter: metadata.frontmatter,
+      ...(tagsChanged ? { needsReindex: true } : {}),
+    });
+  }
+
   // 단일 파일 인덱싱
   // 전체 인덱싱 중이면 대기열에 추가 후 즉시 리턴
   async indexFile(file: TFile): Promise<void> {
@@ -421,8 +712,12 @@ export class VaultIndexer {
       return;
     }
 
-    // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+    // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다.
+    // - mtime: 임베딩 완료 후 읽으면 TOCTOU 발생
+    // - 세대: **첫 await 전에** 잡아야 한다. cachedRead 도중 삭제되면 이미 증가한 값을
+    //   잡게 되고, commitEntry가 정상 작업으로 판단해 삭제된 노트를 되살린다.
     const readMtime = file.stat.mtime;
+    const generation = this.currentGeneration(file.path);
     const content = await this.app.vault.cachedRead(file);
     // 내용이 비워진 노트는 인덱스에서 제거한다(이전 본문이 계속 검색되는 것을 방지).
     if (!content.trim()) {
@@ -433,7 +728,7 @@ export class VaultIndexer {
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
     const entry = await this.buildEntry(file, content, readMtime);
     // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-    this.commitEntry(file.path, entry);
+    this.commitEntry(file.path, entry, generation);
   }
 
   /**
@@ -451,7 +746,7 @@ export class VaultIndexer {
     // 진행 중인 인덱싱 작업이 완료 후 이 경로를 다시 써넣지 못하게 표시한다.
     // buildEntry(임베딩 호출 포함)는 수 초가 걸리므로, 그 사이 삭제·이동된 노트가
     // 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남을 수 있다.
-    this.removedDuringIndexing.add(path);
+    this.removalGeneration.set(path, (this.removalGeneration.get(path) ?? 0) + 1);
     // 대기열에 남은 예약도 취소한다(삭제된 파일을 다시 인덱싱할 이유가 없다).
     this.pendingFiles.delete(path);
   }
@@ -460,12 +755,16 @@ export class VaultIndexer {
    * buildEntry 완료 후 인덱스에 기록한다. 작업 중 해당 경로가 삭제·이동됐으면
    * 기록을 취소해 삭제된 노트가 부활하지 않게 한다.
    */
-  private commitEntry(path: string, entry: VaultIndexEntry): void {
-    if (this.removedDuringIndexing.has(path)) {
-      this.removedDuringIndexing.delete(path);
-      return;
-    }
+  private commitEntry(path: string, entry: VaultIndexEntry, generation: number): void {
+    // 작업이 시작된 뒤 삭제가 있었으면 기록하지 않는다. 그 이전 삭제(같은 경로로 복원된
+    // 경우)는 이 작업과 무관하므로 기록해야 한다.
+    if ((this.removalGeneration.get(path) ?? 0) !== generation) return;
     this.index.set(path, entry);
+  }
+
+  /** 현재 삭제 세대. buildEntry를 시작하기 **전에** 읽어야 한다. */
+  private currentGeneration(path: string): number {
+    return this.removalGeneration.get(path) ?? 0;
   }
 
   /**
@@ -496,7 +795,7 @@ export class VaultIndexer {
    * @param query 검색 쿼리
    * @param limit 결과 개수 상한 (기본 10, 1~100). 범위 밖이면 오류 throw (Req 6.7)
    */
-  async search(query: string, limit = 10): Promise<GraphRagResult> {
+  async search(query: string, limit = 10, filter: SearchFilter = {}): Promise<GraphRagResult> {
     // 1) limit 범위 검증 (Req 6.7) — 범위를 벗어나면 결과 없이 오류를 던진다
     if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
       throw new Error(`limit은 1 이상 100 이하여야 합니다 (입력값: ${limit}).`);
@@ -512,14 +811,26 @@ export class VaultIndexer {
       return { items: [] };
     }
 
+    // 3-1) 필터 프리적용 — 시드·그래프 순회·키워드 폴백이 모두 같은 후보 집합을 쓴다.
+    //      한 곳이라도 원본 인덱스를 보면 필터가 새어 조건 밖 노트가 이웃으로 들어온다.
+    //      임베딩 비교 전에 줄이므로 결과 정확도와 속도를 함께 얻는다.
+    const candidates = filterIndex(this.index, filter);
+    const filteredOutCount = this.index.size - candidates.size;
+    const filterInfo = isFilterEmpty(filter) ? {} : { filteredOutCount };
+
+    if (candidates.size === 0) {
+      return { items: [], ...filterInfo };
+    }
+
     // 4) 임베딩이 인덱스에 하나도 없으면 키워드 검색으로 폴백 (Req 4.6)
     //    임베딩 구성 변경으로 벡터를 폐기한 경우도 이 경로를 타므로 stale 표시를 함께 전달한다.
-    if (!this.useEmbeddings || !this.hasEmbeddings()) {
-      const items = this.keywordSearch(query, limit);
+    if (!this.useEmbeddings || !this.hasEmbeddings(candidates.values())) {
+      const items = this.keywordSearch(query, limit, candidates);
       return {
         items,
         usedKeywordFallback: true,
         ...(this.staleIndex ? { staleEmbeddings: true } : {}),
+        ...filterInfo,
       };
     }
 
@@ -527,7 +838,7 @@ export class VaultIndexer {
     //    시드 수를 limit에 맞춰 확장한다. 과거에는 10으로 고정돼 limit 11~100이
     //    무의미했다(11위 이후는 그래프 이웃만 채울 수 있었다).
     const queryEmbedding = await this.client.getEmbedding(query);
-    const entries = Array.from(this.index.values());
+    const entries = Array.from(candidates.values());
     const seedCount = Math.max(SEED_MIN_COUNT, Math.min(limit, entries.length));
     const diag = searchWithDiagnostics(queryEmbedding, entries, seedCount);
     const seeds: NoteVectorScore[] = diag.results;
@@ -536,8 +847,8 @@ export class VaultIndexer {
     //      비교 가능한 노트가 하나도 없으면 벡터 검색 결과가 무의미하므로 키워드 검색으로
     //      폴백하고, 사용자에게 재인덱싱이 필요함을 알린다.
     if (diag.comparableCount === 0 && diag.dimensionMismatchCount > 0) {
-      const items = this.keywordSearch(query, limit);
-      return { items, usedKeywordFallback: true, staleEmbeddings: true };
+      const items = this.keywordSearch(query, limit, candidates);
+      return { items, usedKeywordFallback: true, staleEmbeddings: true, ...filterInfo };
     }
     // 일부만 불일치하는 경우(재인덱싱 진행 중 등)는 비교 가능한 후보로 검색을 계속하되
     // 인덱스가 낡았음을 함께 보고한다.
@@ -545,13 +856,13 @@ export class VaultIndexer {
 
     // 시드가 없으면 후보 0개 → 빈 결과 (Req 6.9)
     if (seeds.length === 0) {
-      return { items: [], ...(staleEmbeddings ? { staleEmbeddings } : {}) };
+      return { items: [], ...(staleEmbeddings ? { staleEmbeddings } : {}), ...filterInfo };
     }
 
     // 6) Graph_Traversal — depth=0이면 순회를 생략하고 시드만 후보로 사용한다 (Req 5.1, 5.2)
     const neighbors =
       this.traversalDepth >= 1
-        ? traverseGraph(seeds, this.index, this.traversalDepth, MAX_GRAPH_CANDIDATES)
+        ? traverseGraph(seeds, candidates, this.traversalDepth, MAX_GRAPH_CANDIDATES)
         : [];
 
     // 6-1) 이웃 자신의 벡터 유사도를 계산해 결합 점수에 반영한다.
@@ -564,36 +875,110 @@ export class VaultIndexer {
     }
 
     // 7) ScoreCombiner — 통합 점수 산출 및 재정렬 (Req 6.1~6.4, 6.8)
-    const combined = combineAndRank(seeds, neighbors, this.index, { neighborScores });
+    const combined = combineAndRank(seeds, neighbors, candidates, { neighborScores });
 
     // 7-1) 최소 관련성 임계값으로 후보가 전부 걸러진 경우 키워드 검색으로 폴백한다.
     //      인덱스는 정상인데 "검색 결과 없음"만 반환하면 사용자가 불필요한 재인덱싱을
     //      하게 되고, Second Brain 기능들(synthesize/reconcile/challenge/connect)이
     //      조용히 no-op이 된다. 임베딩 점수가 낮아도 키워드로는 찾을 수 있는 경우가 많다.
     if (combined.length === 0) {
-      const items = this.keywordSearch(query, limit);
+      const items = this.keywordSearch(query, limit, candidates);
       return {
         items,
         usedKeywordFallback: true,
         ...(staleEmbeddings ? { staleEmbeddings } : {}),
+        ...filterInfo,
       };
     }
 
-    // 8) limit 적용 (Req 6.5) 후 GraphRagSearchItem으로 매핑
-    const items: GraphRagSearchItem[] = combined.slice(0, limit).map((r) => ({
-      path: r.path,
-      title: r.title,
-      excerpt: r.excerpt,
-      combinedScore: r.combinedScore,
-      vectorScore: r.vectorScore,
-      hop: r.hop,
-      isSeed: r.isSeed,
-      seedPath: r.seedPath,
-      // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
-      seedTitle: r.seedPath ? this.index.get(r.seedPath)?.title ?? null : null,
-    }));
+    // 8) 어휘 검색과 순위 융합 (RRF).
+    //
+    //    dense 검색은 정확한 문자열에 약하다 — 에러 코드, 함수명, 버전 문자열, 사람
+    //    이름처럼 "그 문자열이 그대로 들어 있는 노트 한 개"를 임베딩 유사도가 상위권
+    //    밖으로 밀어내는 일이 흔하다. 어휘 검색은 그걸 정확히 잡는다.
+    //
+    //    과거에는 어휘 검색을 "임베딩이 아예 없을 때"의 폴백으로만 썼다. 즉 dense가
+    //    아무것도 못 찾을 때만 쓰고, dense가 엉뚱한 것을 찾을 때는 쓰지 않았다.
+    //    점수를 더하지 않고 순위만 섞는 이유는 rank-fusion.ts 주석에 있다.
+    const lexical = this.keywordSearch(
+      query,
+      Math.max(LEXICAL_POOL_SIZE, limit),
+      candidates
+    );
+    // 어휘로만 잡힌 결과의 적중 청크를 찾을 때 쓴다. keywordSearch와 같은 분리 규칙이다.
+    const lexicalTerms = splitQueryTerms(query);
+    const fused = fuseRanks([
+      { name: "dense", paths: combined.map((r) => r.path) },
+      { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
+    ]);
 
-    return { items, ...(staleEmbeddings ? { staleEmbeddings } : {}) };
+    // 8-1) 어휘 전용 상위 후보의 자리를 보장한다.
+    //
+    //      가중치를 곱한 어휘 1위(0.5/61)는 dense 10위(1/70)보다도 낮다. 두 목록에 다
+    //      있는 노트는 합산되어 올라가지만, 어휘에만 있는 노트는 limit으로 자를 때 항상
+    //      사라진다 — 하이브리드를 넣은 이유가 바로 그 경우다(자세한 산수는 reserveSlots).
+    const densePaths = new Set(combined.map((r) => r.path));
+    // 예약은 limit - 1을 넘지 않는다. limit=1에서 하나를 예약하면 dense 1위가 밀려나고,
+    // limit=2에서 둘을 예약하면 dense 결과가 전부 사라진다 — dense를 주 신호로 두는
+    // 규약이 뒤집힌다.
+    const reserveCount = Math.max(0, Math.min(LEXICAL_RESERVED_SLOTS, limit - 1));
+    const lexicalOnly = lexical
+      .filter((l) => !densePaths.has(l.path))
+      .slice(0, reserveCount)
+      .map((l) => l.path);
+
+    // 융합 순위로 항목을 재구성한다. dense 쪽 메타데이터(hop/isSeed/시드 정보)는
+    // 있으면 그대로 살리고, 어휘로만 잡힌 노트는 시드로 취급한다(그래프 경로가 없다).
+    const denseByPath = new Map(combined.map((r) => [r.path, r]));
+    const lexicalByPath = new Map(lexical.map((r) => [r.path, r]));
+
+    // RRF 점수는 절대값에 의미가 없으므로 최고점을 1.0으로 상대 정규화한다.
+    // combinedScore는 화면과 LLM에 백분율로 표시되는 값이어서 0.016 같은 원점수를
+    // 그대로 실으면 "관련도 1.6%"로 오해를 만든다. 키워드 폴백 경로도 같은 규칙이다.
+    const maxFused = fused.length > 0 ? fused[0].score : 0;
+
+    const fusedByPath = new Map(fused.map((f) => [f.path, f]));
+    const finalPaths = reserveSlots(fused.map((f) => f.path), lexicalOnly, limit);
+
+    const items: GraphRagSearchItem[] = finalPaths.map((path) => {
+      const f = fusedByPath.get(path);
+      const d = denseByPath.get(path);
+      const l = lexicalByPath.get(path);
+      const base = d ?? l;
+      const score = f?.score ?? 0;
+      return {
+        path,
+        title: base?.title ?? path,
+        excerpt: base?.excerpt ?? "",
+        combinedScore: maxFused > 0 ? score / maxFused : 0,
+        vectorScore: d?.vectorScore ?? 0,
+        hop: d?.hop ?? 0,
+        isSeed: d?.isSeed ?? true,
+        seedPath: d?.seedPath ?? null,
+        // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
+        seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
+        // 적중 본문·헤딩의 출처를 고른다.
+        //
+        // 기본은 임베딩이 맞은 청크다. 다만 그 청크에 질의어가 **하나도 없고** 질의어가
+        // 있는 청크가 따로 있으면 그쪽을 쓴다 — 에러 코드가 B절에 있는데 임베딩이 A절을
+        // 골랐으면, 발췌에서 그 코드가 사라지고 인용 앵커도 A를 가리켜 하이브리드 검색의
+        // 근거가 잘못 전달된다. 정확 문자열은 확인 가능한 신호이므로 그때는 그것을 따른다.
+        ...matchedFields(
+          pickMatchedChunk(
+            d ? this.bestChunkMatch(queryEmbedding, path) : null,
+            bestLexicalChunk(candidates.get(path), lexicalTerms),
+            lexicalTerms
+          )
+        ),
+      };
+    });
+
+    return {
+      items,
+      ...(staleEmbeddings ? { staleEmbeddings } : {}),
+      ...filterInfo,
+      ...(lexical.length > 0 ? { usedHybrid: true } : {}),
+    };
   }
 
   /**
@@ -601,36 +986,58 @@ export class VaultIndexer {
    * 그래프 이웃의 관련성을 결합 점수에 반영하기 위해 사용한다.
    */
   private bestChunkSimilarity(queryEmbedding: number[], path: string): number | null {
+    return this.bestChunkMatch(queryEmbedding, path)?.score ?? null;
+  }
+
+  /**
+   * 질의와 가장 잘 맞는 청크의 유사도와 소속 헤딩을 함께 찾는다.
+   *
+   * 반환 대상은 limit개(최대 100)뿐이라 이 재계산은 인덱스 전체 스캔이 아니다 —
+   * NoteVectorScore에 청크 인덱스를 추가해 검색 경로 전체를 바꾸는 것보다 좁은 변경이다.
+   */
+  private bestChunkMatch(
+    queryEmbedding: number[],
+    path: string
+  ): { score: number; heading: string | null; text: string } | null {
     const entry = this.index.get(path);
     if (!entry) return null;
 
-    let best: number | null = null;
+    let best: { score: number; heading: string | null; text: string } | null = null;
     for (const chunk of entry.chunks ?? []) {
       const sim = compareVectors(queryEmbedding, chunk.embedding);
-      if (sim !== null && (best === null || sim > best)) best = sim;
+      if (sim === null) continue;
+      if (best === null || sim > best.score) {
+        best = { score: sim, heading: chunk.heading ?? null, text: chunk.text };
+      }
     }
-    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다.
-    if (best === null) best = compareVectors(queryEmbedding, entry.embedding);
+    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다(헤딩·본문 정보는 없다).
+    if (best === null) {
+      const legacy = compareVectors(queryEmbedding, entry.embedding);
+      if (legacy !== null) best = { score: legacy, heading: null, text: "" };
+    }
     return best;
   }
 
   // 키워드 검색 (임베딩이 0개일 때 폴백, Req 4.6)
   // 결과는 GraphRagSearchItem 형태로 반환하며, 모든 항목을 시드(hop 0)로 표시한다.
   // combinedScore는 최고 점수를 1.0으로 하는 상대 정규화 값으로 산출한다(0.0~1.0 보장, Req 7.2).
-  private keywordSearch(query: string, limit: number): GraphRagSearchItem[] {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  private keywordSearch(
+    query: string,
+    limit: number,
+    candidates: Map<string, VaultIndexEntry> = this.index
+  ): GraphRagSearchItem[] {
+    const terms = splitQueryTerms(query);
     const scored: Array<{ entry: VaultIndexEntry; score: number }> = [];
 
-    for (const entry of this.index.values()) {
+    for (const entry of candidates.values()) {
       const text = entry.searchText || `${entry.title}\n${entry.excerpt}`.toLowerCase();
       let score = 0;
 
       for (const term of terms) {
         // 제목 매치는 가중치 3배
-        if (entry.title.toLowerCase().includes(term)) score += 3;
+        if (countTerm(entry.title.toLowerCase(), term) > 0) score += 3;
         // 본문 매치 횟수 (최대 10점)
-        const matches = text.split(term).length - 1;
-        score += Math.min(matches, 10);
+        score += Math.min(countTerm(text, term), 10);
       }
 
       if (score > 0) {
@@ -647,21 +1054,35 @@ export class VaultIndexer {
     // 0.0~1.0 정규화 기준값 (최고 점수)
     const maxScore = scored.length > 0 ? scored[0].score : 0;
 
-    return scored.slice(0, limit).map(({ entry, score }) => ({
-      path: entry.path,
-      title: entry.title,
-      excerpt: entry.excerpt,
-      combinedScore: maxScore > 0 ? score / maxScore : 0,
-      vectorScore: 0,
-      hop: 0,
-      isSeed: true,
-      seedPath: null,
-      seedTitle: null,
-    }));
+    return scored.slice(0, limit).map(({ entry, score }) => {
+      // 어휘가 맞힌 청크를 찾아 적중 본문·헤딩으로 싣는다. excerpt(앞 500자)만 주면
+      // Second Brain 경로들이 정확 문자열을 못 보고 도입부로 답한다.
+      const hit = bestLexicalChunk(entry, terms);
+      return {
+        path: entry.path,
+        title: entry.title,
+        excerpt: entry.excerpt,
+        combinedScore: maxScore > 0 ? score / maxScore : 0,
+        vectorScore: 0,
+        hop: 0,
+        isSeed: true,
+        seedPath: null,
+        seedTitle: null,
+        ...matchedFields(hit),
+      };
+    });
   }
 
-  private hasEmbeddings(): boolean {
-    for (const entry of this.index.values()) {
+  /**
+   * 임베딩을 가진 엔트리가 하나라도 있는지.
+   *
+   * @param entries 검사 대상. 생략하면 인덱스 전체를 본다. 검색 경로는 **필터를 통과한
+   *   후보**를 넘겨야 한다 — 인덱스 전체를 보면 "필터 결과가 전부 미색인 노트"인 경우
+   *   임베딩이 있다고 판정하고 벡터 검색으로 들어가서, 비교 가능한 노트가 없어 빈 결과가
+   *   나온다. 그 상황에서 필요한 건 키워드 폴백이다.
+   */
+  private hasEmbeddings(entries: Iterable<VaultIndexEntry> = this.index.values()): boolean {
+    for (const entry of entries) {
       if (entry.embedding.length > 0) return true;
     }
     return false;

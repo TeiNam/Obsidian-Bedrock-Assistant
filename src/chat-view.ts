@@ -11,7 +11,18 @@ import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 // 모델 변경 시 effort 허용 집합 보정에 사용
-import { clampEffort } from "./provider-utils";
+import {
+  clampEffort,
+  supportsAttachmentFormat,
+  attachmentKindOf,
+  backendsSupportingFormat,
+} from "./provider-utils";
+import {
+  citationMatchesPath,
+  extractCitations,
+  findUnresolvedCitations,
+  buildHeadingIndex,
+} from "./citation-check";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
@@ -443,6 +454,54 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * 저장된 어시스턴트 메시지 하나를 그린다.
+   *
+   * 세션 불러오기와 사이드바 복원이 같은 것을 각자 그리다가 갈라졌다 — 한쪽은 라벨과
+   * 재생성 버튼이 없고, 한쪽은 인용 검증이 없었다. 두 경로가 이 함수를 함께 쓴다.
+   *
+   * @param showRegenerate 마지막 어시스턴트 메시지에만 true. 중간 메시지에 붙이면
+   *   어느 것을 다시 만드는지 모호해진다.
+   */
+  private async renderStoredAssistantMessage(
+    content: string,
+    showRegenerate: boolean
+  ): Promise<void> {
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+    await MarkdownRenderer.render(this.app, content, contentEl, "", this);
+
+    // 경고는 저장되지 않으므로 복원할 때 다시 검증한다. 그러지 않으면 같은 허위 인용이
+    // 아무 표시 없이 근거처럼 보인다.
+    this.appendCitationWarning(msgEl, content);
+
+    if (!showRegenerate) return;
+
+    const footer = msgEl.createDiv({ cls: "ba-response-footer" });
+    const regenBtn = footer.createEl("button", {
+      cls: "ba-regenerate-btn",
+      attr: { "aria-label": this.t.regenerate },
+    });
+    setIcon(regenBtn, "refresh-cw");
+    regenBtn.createSpan({ text: this.t.regenerate });
+    regenBtn.addEventListener("click", () => {
+      if (!this.isGenerating) this.regenerateLastResponse();
+    });
+  }
+
+  /**
+   * 재생성 버튼을 붙일 메시지의 인덱스. 없으면 -1.
+   *
+   * **마지막 메시지가 어시스턴트일 때만** 준다. `prepareRegeneration`은 배열의 마지막
+   * 역할이 assistant일 때만 동작하므로, 사용자 메시지로 끝난 세션에서 앞선 어시스턴트
+   * 메시지에 버튼을 붙이면 눌러도 아무 일이 없다.
+   */
+  private lastAssistantIndex(messages: readonly { role: string }[]): number {
+    const last = messages.length - 1;
+    return last >= 0 && messages[last].role === "assistant" ? last : -1;
+  }
+
+  /**
    * 채팅 기반 회고 처리.
    * 어시스턴트 메시지 컨테이너를 생성하고, 진행 상태를 표시하며,
    * RetrospectiveService를 호출하여 결과를 채팅에 렌더링한다.
@@ -559,17 +618,33 @@ export class ChatView extends ItemView {
           : m.content }],
       }));
 
-      // 바이너리 첨부 파일을 마지막 user 메시지에 추가
+      // 바이너리 첨부 파일을 마지막 user 메시지에 추가.
+      //
+      // 첨부 후 백엔드를 전환했을 수 있으므로 전송 시점에 한 번 더 확인한다.
+      // addLocalFile의 게이팅만으로는 "Bedrock에서 이미지 첨부 → Gemini로 전환 → 전송"
+      // 경로를 막지 못하고, 그 경로에서 블록은 변환기에서 조용히 사라진다.
       if (this.attachedBinaryFiles.size > 0 && converseMessages.length > 0) {
+        const backend = this.plugin.settings.aiBackend;
         const lastUserIdx = converseMessages.length - 1;
-        if (converseMessages[lastUserIdx].role === "user") {
-          for (const [path, data] of this.attachedBinaryFiles) {
-            const ext = path.split(".").pop()?.toLowerCase() || "";
-            const block = this.buildBinaryContentBlock(path, ext, data);
-            if (block) {
-              (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
-            }
+        const dropped: string[] = [];
+
+        for (const [path, data] of this.attachedBinaryFiles) {
+          const ext = path.split(".").pop()?.toLowerCase() || "";
+          // 첨부 후 백엔드를 전환했을 수 있다. 전환 경로는 첨부 게이팅을 이미 통과한
+          // 상태이므로 전송 시점에 형식별로 다시 판정해야 한다.
+          if (!supportsAttachmentFormat(backend, ext)) {
+            dropped.push(path);
+            continue;
           }
+          if (converseMessages[lastUserIdx].role !== "user") continue;
+          const block = this.buildBinaryContentBlock(path, ext, data);
+          if (block) {
+            (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
+          }
+        }
+
+        if (dropped.length > 0) {
+          new Notice(this.t.binaryDropped(dropped.join(", ")));
         }
       }
 
@@ -724,6 +799,9 @@ export class ChatView extends ItemView {
           const nextThinking = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
           this.scrollToBottom();
         }
+
+        // 인용 검증 — 모델이 지어낸 노트 경로를 표시한다.
+        this.appendCitationWarning(msgEl, fullText);
 
         // 응답 시간 표시
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1285,17 +1363,26 @@ export class ChatView extends ItemView {
     // 로컬 File 객체를 컨텍스트에 추가
     private async addLocalFile(file: File): Promise<void> {
       const ext = file.name.split(".").pop()?.toLowerCase() || "";
-      const supportedExts = [
-        "png", "jpg", "jpeg", "gif", "webp",
-        "pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt",
-      ];
+      // 텍스트로 읽어 프롬프트에 인라인하는 형식 — 모든 백엔드에서 동작한다.
+      const textExts = ["txt", "csv", "html"];
+      // 바이너리로 전달하는 형식 목록은 provider-utils가 단일 출처로 갖고 있다.
+      const isBinary = attachmentKindOf(ext) !== null;
 
-      if (!supportedExts.includes(ext)) {
+      if (!textExts.includes(ext) && !isBinary) {
         new Notice(this.t.unsupportedExt(ext));
         return;
       }
 
-      const textExts = ["txt", "csv", "html"];
+      const backend = this.plugin.settings.aiBackend;
+      // 종류가 아니라 형식 단위로 판정한다 — Gemini는 PDF는 받지만 docx는 못 받는다.
+      // 붙이게 놔두면 전송 시점에 조용히 버려지므로 여기서 거절해 이유를 알린다.
+      if (isBinary && !supportsAttachmentFormat(backend, ext)) {
+        new Notice(
+          this.t.binaryUnsupported(ext, backend, backendsSupportingFormat(ext).join(", "))
+        );
+        return;
+      }
+
       if (textExts.includes(ext)) {
         const text = await file.text();
         this.attachedFiles.set(file.name, text);
@@ -1739,14 +1826,11 @@ export class ChatView extends ItemView {
     this.messages = [...session.messages];
     this.messagesEl.empty();
     this.attachedBinaryFiles.clear();
-    for (const msg of this.messages) {
-      if (msg.role === "user") {
-        this.renderUserMessage(msg);
-      } else {
-        const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-        const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-        await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
-      }
+    const lastAssistant = this.lastAssistantIndex(this.messages);
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+      if (msg.role === "user") this.renderUserMessage(msg);
+      else await this.renderStoredAssistantMessage(msg.content, i === lastAssistant);
     }
     this.plugin.saveChatHistory(this.messages);
     this.scrollToBottom();
@@ -1765,6 +1849,67 @@ export class ChatView extends ItemView {
     }
   }
 
+  /**
+   * 응답이 인용한 노트 경로 중 볼트에서 찾을 수 없는 것을 경고로 덧붙인다.
+   *
+   * 시스템 프롬프트가 근거 경로를 밝히라고 지시하므로 모델은 경로를 쓴다. 그런데 그
+   * 경로가 실재하는지는 아무도 확인하지 않았다 — 지어낸 인용을 잡지 못하면 사용자는
+   * 클릭해봐야 알고, 그때까지 답변을 근거 있는 것으로 믿는다.
+   *
+   * 볼트에 노트가 하나도 없으면 경고하지 않는다. 실패는 삼킨다 — 검증이
+   * 응답 표시를 막아선 안 된다.
+   */
+  private appendCitationWarning(container: HTMLElement, text: string): void {
+    try {
+      if (!text) return;
+
+      const citations = extractCitations(text);
+      if (citations.length === 0) return;
+
+      // 존재 판정은 볼트에서 직접 한다. 인덱스 스냅샷을 쓰면 플러그인이 꺼져 있는 동안
+      // 만든 노트가 "없는 노트"로 경고되고, 인덱싱 전에는 모든 인용이 경고 대상이 된다.
+      //
+      // 마크다운만이 아니라 **볼트 전체 파일**과 대조한다. 모델이 `[[Images/chart.png]]`
+      // 처럼 첨부를 근거로 링크하면, 마크다운 목록에는 그 파일이 없어 실재하는데도 항상
+      // 경고가 붙는다.
+      const paths = this.app.vault.getFiles().map((f) => f.path);
+      // 헤딩은 마크다운에만 있다.
+      const files = this.app.vault.getMarkdownFiles();
+
+      // 앵커 검증도 metadataCache가 출처다. 인덱스 청크의 heading은 청크 하나를 대표하는
+      // 헤딩 한 개일 뿐이어서, `# A ... ## B`가 한 청크에 들어간 노트는 B를 인용하면
+      // 없는 절이라고 잘못 경고한다.
+      //
+      // 인용된 노트만 훑는다. 응답 한 건마다 볼트 전체에 getFileCache를 돌리면 수천 개
+      // 볼트에서 메시지마다 수천 번 조회가 된다 — 인용은 보통 한 자리 수다.
+      // 인용 대상과 **같은 규칙으로** 파일을 고른다. 존재 판정은 경로 접미사를 인정하는데
+      // (옵시디언이 그렇게 해석한다) 여기서 정확 일치만 보면 접미사로 맞은 노트가 헤딩
+      // 인덱스에 빠지고, 앵커 검증이 "헤딩 정보 없음 → 통과"로 지어낸 절을 놓친다.
+      const citedTargets = citations.map((c) => c.target.toLowerCase());
+      const headings = buildHeadingIndex(
+        files
+          .filter((f) => citedTargets.some((target) => citationMatchesPath(target, f.path)))
+          .map((f) => [
+            f.path,
+            (this.app.metadataCache.getFileCache(f)?.headings ?? []).map((h) => h.heading),
+          ])
+      );
+
+      const unresolved = findUnresolvedCitations(citations, paths, headings);
+      if (unresolved.length === 0) return;
+
+      const box = container.createDiv({ cls: "ba-citation-warning" });
+      const icon = box.createDiv({ cls: "ba-citation-warning-icon" });
+      setIcon(icon, "alert-triangle");
+      // 앵커가 있으면 함께 보여준다 — "노트는 있는데 그 절이 없다"를 구분해야
+      // 사용자가 무엇을 확인할지 안다.
+      const labels = unresolved.map((c) => (c.anchor ? `${c.target}#${c.anchor}` : c.target));
+      box.createSpan({ text: this.t.citationsUnresolved(labels.join(", ")) });
+    } catch (e) {
+      console.error("인용 검증 실패:", e);
+    }
+  }
+
   private scrollToBottom(): void {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
@@ -1774,42 +1919,11 @@ export class ChatView extends ItemView {
       const history = await this.plugin.loadChatHistory();
       if (history.length > 0) {
         this.messages = history;
-        // 마지막 어시스턴트 메시지 인덱스를 찾아 재생성 버튼 추가 대상 결정
-        let lastAssistantIdx = -1;
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (history[i].role === "assistant") {
-            lastAssistantIdx = i;
-            break;
-          }
-        }
-
+        const lastAssistant = this.lastAssistantIndex(history);
         for (let i = 0; i < history.length; i++) {
           const msg = history[i];
-          if (msg.role === "user") {
-            this.renderUserMessage(msg);
-          } else {
-            // 어시스턴트 메시지는 마크다운 렌더링
-            const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-            this.addAssistantLabel(msgEl);
-            const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-            await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
-
-            // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
-            if (i === lastAssistantIdx) {
-              const footer = msgEl.createDiv({ cls: "ba-response-footer" });
-              const regenBtn = footer.createEl("button", {
-                cls: "ba-regenerate-btn",
-                attr: { "aria-label": this.t.regenerate },
-              });
-              setIcon(regenBtn, "refresh-cw");
-              regenBtn.createSpan({ text: this.t.regenerate });
-              regenBtn.addEventListener("click", () => {
-                if (!this.isGenerating) {
-                  this.regenerateLastResponse();
-                }
-              });
-            }
-          }
+          if (msg.role === "user") this.renderUserMessage(msg);
+          else await this.renderStoredAssistantMessage(msg.content, i === lastAssistant);
         }
         this.scrollToBottom();
       } else {

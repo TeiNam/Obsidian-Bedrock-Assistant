@@ -276,6 +276,7 @@ import type { SecondBrainContext } from "./scheduler";
 import { SECOND_BRAIN_SYSTEM_PROMPT } from "./search-adapter";
 import { buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { processIfChanged } from "./vault-write";
 import { ensureWikiFolders } from "./wiki-structure";
 
 /** 아키텍처 노트 파일명(Wiki_Folder 루트에 작성). */
@@ -412,14 +413,13 @@ export async function runArchitect(ctx: SecondBrainContext, scanPath?: string): 
   const existing = ctx.app.vault.getAbstractFileByPath(notePath);
   if (existing instanceof TFile) {
     // 기존 노트: 각 섹션 블록만 교체하여 프론트매터·프리앰블·사용자 메모를 보존한다.
-    const current = await ctx.app.vault.read(existing);
-    let updated = current;
-    for (const key of ARCHITECTURE_SECTION_KEYS) {
-      updated = upsertGeneratedBlock(updated, key, summaries[key]);
-    }
-    if (updated !== current) {
-      await ctx.app.vault.modify(existing, updated);
-    }
+    await processIfChanged(ctx.app, existing, (content) => {
+      let updated = content;
+      for (const key of ARCHITECTURE_SECTION_KEYS) {
+        updated = upsertGeneratedBlock(updated, key, summaries[key]);
+      }
+      return updated;
+    });
     return `아키텍처 노트를 갱신했습니다: ${notePath}`;
   }
 

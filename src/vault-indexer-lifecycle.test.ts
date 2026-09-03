@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { VaultIndexer } from "./vault-indexer";
 import { TFile } from "obsidian";
+import type { MetadataSource } from "./graph-rag/graph-extractor";
 
 // ============================================
 // 인덱스 수명주기 회귀 테스트 (교차 리뷰 2차)
@@ -120,20 +121,228 @@ describe("인덱싱 도중 삭제: 삭제된 노트가 부활하지 않는다", 
     expect(indexer.size).toBe(0);
   });
 
-  it("삭제 표시는 1회만 소비되어 이후 정상 인덱싱을 막지 않는다", async () => {
+  it("삭제 후 같은 경로로 복원하면 즉시 인덱싱된다", async () => {
+    // 삭제 표식을 불린으로 두면 복원 후 첫 indexFile 결과까지 폐기되고, 그 노트는 다음
+    // 수정이 있을 때까지 검색에서 사라진다. 삭제는 **이 작업이 시작된 뒤**에 일어났을
+    // 때만 폐기 사유다.
     const file = makeTFile("note.md");
     const contents = new Map([["note.md", "# 노트\n본문"]]);
     const indexer = new VaultIndexer(makeApp([file], contents), makeClient());
 
-    // 삭제 → 재생성 시나리오
     indexer.removeFile("note.md");
     await indexer.indexFile(file);
-    // 첫 인덱싱은 삭제 표시에 걸려 취소된다(진행 중 삭제로 간주).
-    expect(indexer.size).toBe(0);
 
-    // 표시가 소비됐으므로 다음 인덱싱은 정상 기록되어야 한다.
+    expect(indexer.size).toBe(1);
+  });
+
+  it("인덱싱 도중 삭제되면 기록하지 않는다", async () => {
+    // 삭제된 노트가 임베딩 완료 시점의 index.set으로 부활해 민감 내용이 검색에 남는 것을
+    // 막는 것이 원래 목적이다. 그 보장은 유지돼야 한다.
+    const file = makeTFile("note.md");
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+
+    let indexer: VaultIndexer;
+    const client = {
+      // buildEntry가 임베딩을 기다리는 사이에 삭제가 들어온 상황을 만든다.
+      getEmbedding: vi.fn(async () => {
+        indexer.removeFile("note.md");
+        return [0.5, 0.5, 0.5];
+      }),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    indexer = new VaultIndexer(makeApp([file], contents), client);
+    await indexer.indexFile(file);
+
+    expect(indexer.size).toBe(0);
+  });
+
+  it("본문을 읽는 도중 삭제되면 기록하지 않는다", async () => {
+    // 세대를 첫 await **뒤에** 잡으면 cachedRead 도중 삭제된 노트를 되살린다 — 삭제된
+    // 민감 내용이 검색에 남는다. 임베딩 도중 삭제와 같은 보장이어야 한다.
+    const file = makeTFile("note.md");
+
+    let indexer: VaultIndexer;
+    const app = {
+      vault: {
+        getMarkdownFiles: () => [file],
+        cachedRead: async () => {
+          indexer.removeFile("note.md");
+          return "# 노트\n본문";
+        },
+        getAbstractFileByPath: (p: string) => (p === file.path ? file : null),
+      },
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[0];
+
+    indexer = new VaultIndexer(app, makeClient());
+    await indexer.indexFile(file);
+
+    expect(indexer.size).toBe(0);
+  });
+
+  it("복원 후 다시 삭제되면 그 작업도 취소된다", async () => {
+    // 세대 번호가 누적되므로 두 번째 사이클도 같게 동작해야 한다.
+    const file = makeTFile("note.md");
+    const contents = new Map([["note.md", "# 노트\n본문"]]);
+    const indexer = new VaultIndexer(makeApp([file], contents), makeClient());
+
+    indexer.removeFile("note.md");
+    await indexer.indexFile(file);
+    expect(indexer.size).toBe(1);
+
+    indexer.removeFile("note.md");
+    expect(indexer.size).toBe(0);
     file.stat = { ...file.stat, mtime: 2000 } as TFile["stat"];
     await indexer.indexFile(file);
     expect(indexer.size).toBe(1);
+  });
+});
+
+// ============================================
+// 그래프 메타데이터만 갱신
+// ============================================
+/**
+ * A에 `[[B]]`를 추가하면 B의 mtime은 바뀌지 않는다. `indexFile`은 `lastModified >= mtime`
+ * 이면 즉시 반환하므로 B의 backlinks가 영구히 낡고, B에서 시작한 그래프 순회와 고아·스텁
+ * 판정이 새 링크를 계속 못 본다. 그리고 B의 본문은 그대로이므로 재임베딩은 낭비다.
+ */
+describe("VaultIndexer.refreshGraphMetadata", () => {
+  /** A → B 링크가 이미 해석된 MetadataSource. */
+  function makeSource(): MetadataSource {
+    return {
+      resolvedLinks: { "A.md": { "B.md": 1 } },
+      getBacklinks: (path: string) => (path === "B.md" ? ["A.md"] : []),
+      getFileCache: () => ({ tags: ["#work"], frontmatter: { k: "v" } }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  /** 링크 정보가 비어 있는 기존 엔트리를 심는다. */
+  function seed(indexer: VaultIndexer): void {
+    indexer.deserialize(
+      JSON.stringify({
+        schemaVersion: 2,
+        entries: [
+          {
+            path: "B.md",
+            embedding: [1, 2, 3],
+            lastModified: 5000,
+            title: "B",
+            excerpt: "발췌",
+            searchText: "b 본문",
+            chunks: [{ index: 0, text: "본문", embedding: [1, 2, 3], charStart: 0 }],
+            outlinks: [],
+            backlinks: [],
+            tags: [],
+            frontmatter: {},
+          },
+        ],
+      })
+    );
+  }
+
+  it("백링크·태그·프론트매터를 다시 뽑는다", () => {
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries().find((e) => e.path === "B.md");
+    expect(entry?.backlinks).toEqual(["A.md"]);
+    expect(entry?.tags).toEqual(["work"]);
+    expect(entry?.frontmatter).toEqual({ k: "v" });
+  });
+
+  it("임베딩·청크·mtime은 건드리지 않는다", () => {
+    // 본문이 그대로인 노트를 다시 임베딩하는 것은 순수한 비용이다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries().find((e) => e.path === "B.md");
+    expect(entry?.embedding).toEqual([1, 2, 3]);
+    expect(entry?.chunks?.[0].embedding).toEqual([1, 2, 3]);
+    expect(entry?.lastModified).toBe(5000);
+  });
+
+  it("인덱스에 없는 노트는 만들지 않는다", () => {
+    // 임베딩 없는 반쪽 엔트리를 만들면 검색에서 비교 불가 후보로 섞인다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("없는노트.md");
+
+    expect(indexer.size).toBe(0);
+  });
+
+  it("metadataSource가 없으면 아무것도 하지 않는다", () => {
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+
+    indexer.refreshGraphMetadata("B.md");
+
+    expect(indexer.getEntries()[0].backlinks).toEqual([]);
+  });
+});
+
+describe("refreshGraphMetadata — 태그 변경", () => {
+  /** 지정한 태그를 돌려주는 MetadataSource. */
+  function sourceWithTags(tags: string[]): MetadataSource {
+    return {
+      resolvedLinks: {},
+      getBacklinks: () => [],
+      getFileCache: () => ({ tags: tags.map((t) => `#${t}`), frontmatter: {} }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  function seedWithTags(indexer: VaultIndexer, tags: string[]): void {
+    indexer.deserialize(
+      JSON.stringify({
+        schemaVersion: 2,
+        entries: [
+          {
+            path: "B.md",
+            embedding: [1, 2, 3],
+            lastModified: 5000,
+            title: "B",
+            excerpt: "발췌",
+            searchText: `b 본문 ${tags.join(" ")}`,
+            chunks: [{ index: 0, text: "본문", embedding: [1, 2, 3], charStart: 0 }],
+            outlinks: [],
+            backlinks: [],
+            tags,
+            frontmatter: {},
+          },
+        ],
+      })
+    );
+  }
+
+  it("태그가 바뀌면 재색인 대상으로 표시한다", () => {
+    // searchText에 태그가 들어 있고 여기서 다시 만들 수 없다(원문이 인덱스에 없다).
+    // 표시하지 않으면 지운 태그로 키워드 검색이 계속 그 노트를 반환한다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seedWithTags(indexer, ["work", "old"]);
+    indexer.setMetadataSource(sourceWithTags(["work"]));
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries()[0];
+    expect(entry.tags).toEqual(["work"]);
+    expect(entry.needsReindex).toBe(true);
+  });
+
+  it("태그가 그대로면 표시하지 않는다", () => {
+    // 재색인은 임베딩 비용이 든다. 바뀌지 않았으면 부를 이유가 없다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seedWithTags(indexer, ["work"]);
+    indexer.setMetadataSource(sourceWithTags(["work"]));
+
+    indexer.refreshGraphMetadata("B.md");
+
+    expect(indexer.getEntries()[0].needsReindex).toBeUndefined();
   });
 });

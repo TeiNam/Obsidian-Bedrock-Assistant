@@ -229,6 +229,462 @@ describe("VaultIndexer 키워드 폴백 검증 (임베딩 0개)", () => {
   });
 });
 
+// ============================================
+// 필터 통과 후보 기준 임베딩 판정
+// ============================================
+/**
+ * 임베딩 유무는 **필터를 통과한 후보** 기준으로 봐야 한다. 인덱스 전체를 보면
+ * "임베딩 있는 노트가 어딘가에 있다"는 이유로 벡터 검색에 들어가고, 후보 중에는 비교
+ * 가능한 벡터가 없어 빈 결과가 나온다. 그 상황에서 필요한 건 키워드 폴백이다.
+ */
+// ============================================
+// 어휘 후보 풀은 limit보다 작아지면 안 된다
+// ============================================
+/**
+ * 어휘 후보를 30개로 고정하면 limit=40 요청에서 어휘 31위 이후는 융합에 아예 참여하지
+ * 못한다. dense가 임계값으로 걸러낸 노트를 어휘가 되살릴 수 있는데, 그 통로가 상위
+ * 30개로 막혀 있으면 결과에 들어올 방법이 없다.
+ */
+// ============================================
+// 적중 청크 본문을 결과에 싣는다
+// ============================================
+/**
+ * excerpt는 노트 맨 앞 500자로 고정이다. 검색이 뒤쪽 청크로 노트를 찾아냈을 때 그
+ * 사실을 결과가 전달하지 않으면, LLM은 "찾긴 찾았는데 근거는 못 본" 상태로 답한다.
+ */
+describe("VaultIndexer 적중 청크 본문", () => {
+  /** 도입부와 뒤쪽 문단이 서로 다른 벡터를 갖는 노트. */
+  function makeTwoChunkPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "long.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "긴 노트",
+          excerpt: "도입부 문장입니다",
+          searchText: "도입부 문장입니다 뒤쪽 결정 문단입니다",
+          chunks: [
+            { index: 0, text: "도입부 문장입니다", embedding: [1, 0, 0], charStart: 0 },
+            {
+              index: 1,
+              text: "뒤쪽 결정 문단입니다",
+              embedding: [0, 1, 0],
+              charStart: 100,
+              heading: "결정",
+            },
+          ],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("질의와 맞은 청크의 본문을 matchedText로 싣는다", async () => {
+    // 쿼리 벡터를 두 번째 청크에 맞춘다.
+    const client = {
+      getEmbedding: vi.fn(async () => [0, 1, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeTwoChunkPayload());
+
+    const result = await indexer.search("결정");
+
+    expect(result.items[0].matchedText).toBe("뒤쪽 결정 문단입니다");
+    // 헤딩도 그 청크에서 온다.
+    expect(result.items[0].heading).toBe("결정");
+    // excerpt는 도입부 그대로 남는다 — 소비자가 무엇을 쓸지 고를 수 있어야 한다.
+    expect(result.items[0].excerpt).toBe("도입부 문장입니다");
+  });
+
+  it("적중 본문에 상한을 둔다", async () => {
+    // 청크 크기는 사용자 설정이고 상한이 100만 자다. 적중 본문은 그대로 프롬프트에
+    // 들어가므로 경계가 없으면 설정 하나로 프롬프트가 무제한 커진다.
+    const huge = "가".repeat(5000);
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "huge.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "큰 노트",
+          excerpt: "도입부",
+          searchText: huge,
+          chunks: [{ index: 0, text: huge, embedding: [1, 0, 0], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("가");
+
+    expect(result.items[0].matchedText?.length).toBe(2000);
+  });
+
+  it("도입부가 맞으면 도입부 본문을 싣는다", async () => {
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeTwoChunkPayload());
+
+    const result = await indexer.search("도입부");
+
+    expect(result.items[0].matchedText).toBe("도입부 문장입니다");
+    // 도입부 청크에는 헤딩이 없다.
+    expect(result.items[0].heading).toBeNull();
+  });
+});
+
+// ============================================
+// 어휘 적중어 주변 발췌
+// ============================================
+/**
+ * 청크 전체(최대 2000자)를 돌려주면 소비자가 앞부분만 잘라 쓸 때(obsidian-tools는 500자)
+ * 정작 맞은 문자열이 사라진다. 검색 결과에는 들어 있는데 모델 입력에는 없는 상태다.
+ */
+describe("VaultIndexer 어휘 적중 구간", () => {
+  it("적중어가 청크 뒤쪽에 있어도 발췌에 포함된다", async () => {
+    const filler = "가".repeat(1500);
+    const body = `${filler}\n특이한식별자XYZ 가 여기 있다`;
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "long.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "긴 노트",
+          excerpt: filler.slice(0, 500),
+          searchText: body.toLowerCase(),
+          chunks: [{ index: 0, text: body, embedding: [], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("특이한식별자xyz");
+
+    expect(result.usedKeywordFallback).toBe(true);
+    const matched = result.items[0].matchedText ?? "";
+    expect(matched).toContain("특이한식별자XYZ");
+    // 소비자가 앞 500자만 잘라도 적중어가 남아야 한다.
+    expect(matched.slice(0, 500)).toContain("특이한식별자XYZ");
+    // 잘렸음을 표시한다.
+    expect(matched.startsWith("… ")).toBe(true);
+  });
+
+  it("청크가 짧으면 그대로 싣는다", async () => {
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "short.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "짧은 노트",
+          excerpt: "키워드 본문",
+          searchText: "키워드 본문",
+          chunks: [{ index: 0, text: "키워드 본문", embedding: [], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("키워드");
+    expect(result.items[0].matchedText).toBe("키워드 본문");
+  });
+});
+
+// ============================================
+// 어휘 점수의 단어 경계
+// ============================================
+/**
+ * 부분문자열로 세면 `is`가 `this`·`list`·`history`에 걸려 무관한 노트가 어휘 상위로
+ * 올라가고, 예약 슬롯이 그 노트를 결과에 밀어넣어 관련 있는 dense 결과를 밀어낸다.
+ */
+describe("VaultIndexer 어휘 점수 — 단어 경계", () => {
+  function makePayload(entries: Array<{ path: string; body: string }>): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: entries.map((e) => ({
+        path: e.path,
+        embedding: [],
+        lastModified: 1000,
+        title: e.path.replace(/\.md$/, ""),
+        excerpt: e.body.slice(0, 100),
+        searchText: e.body.toLowerCase(),
+        chunks: [{ index: 0, text: e.body, embedding: [], charStart: 0 }],
+        outlinks: [],
+        backlinks: [],
+        tags: [],
+        frontmatter: {},
+      })),
+    });
+  }
+
+  it("라틴 토큰은 단어 안에서 세지 않는다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(
+      makePayload([
+        { path: "substring.md", body: "this list history exists" },
+        { path: "standalone.md", body: "it is here" },
+      ])
+    );
+
+    const result = await indexer.search("is");
+
+    // `this`·`list`·`history`에 든 "is"는 세지 않는다.
+    expect(result.items.map((i) => i.path)).toEqual(["standalone.md"]);
+  });
+
+  it("한글은 부분문자열로 센다", async () => {
+    // 띄어쓰기 없이 붙는 언어에서는 경계 규칙을 쓸 수 없다.
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makePayload([{ path: "ko.md", body: "쿠버네티스배포전략" }]));
+
+    const result = await indexer.search("배포");
+
+    expect(result.items.map((i) => i.path)).toEqual(["ko.md"]);
+  });
+
+  it("정규식 특수문자가 든 토큰도 안전하게 센다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makePayload([{ path: "code.md", body: "error c++ 발생" }]));
+
+    // 이스케이프하지 않으면 정규식이 깨지거나 다른 것을 맞힌다.
+    const result = await indexer.search("c++");
+    expect(result.items.map((i) => i.path)).toEqual(["code.md"]);
+  });
+});
+
+// ============================================
+// 적중 위치와 절의 일치
+// ============================================
+/**
+ * `indexOf`로 위치를 찾으면 라틴 토큰에서 부분문자열 위치가 나온다. 발췌 창이 엉뚱한 곳을
+ * 잘라 정작 적중어가 빠지고, 앵커도 다른 절을 가리킨다.
+ */
+describe("VaultIndexer 적중 위치·절", () => {
+  function makeSingleChunk(body: string): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "note.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "노트",
+          excerpt: body.slice(0, 100),
+          searchText: body.toLowerCase(),
+          chunks: [{ index: 0, text: body, embedding: [], charStart: 0, heading: "개요" }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("부분문자열이 아니라 단어 위치에서 발췌한다", async () => {
+    // 앞쪽 `this`에 든 "is"가 아니라 뒤쪽 독립 단어 "is"를 기준으로 잘라야 한다.
+    const body = `this ${"가".repeat(1200)} it is here`;
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("is");
+
+    expect(result.items[0].matchedText).toContain("it is here");
+  });
+
+  it("적중 오프셋의 절을 앵커로 쓴다", async () => {
+    // 한 청크가 두 절을 담으면 청크 시작 헤딩(개요)이 아니라 적중 절(결정)을 가리켜야 한다.
+    const body = ["# 개요", "개요 문단", "", "## 결정", "특이한식별자ZZ 를 쓴다"].join("\n");
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("특이한식별자zz");
+
+    expect(result.items[0].heading).toBe("결정");
+  });
+
+  it("적중 앞에 헤딩이 없으면 청크 헤딩을 쓴다", async () => {
+    const body = "도입부에 특이한식별자ZZ 가 있다";
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeSingleChunk(body));
+
+    const result = await indexer.search("특이한식별자zz");
+
+    expect(result.items[0].heading).toBe("개요");
+  });
+});
+
+describe("VaultIndexer 어휘 후보 풀과 limit", () => {
+  /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
+  function makeAlignedClient() {
+    return {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+  }
+
+  /**
+   * dense 상위 32개 + dense가 버리는 1개.
+   *
+   * 어휘 점수는 전부 동점("키워드" 2회, 제목 매치 없음)이라 순위는 경로 오름차순으로
+   * 정해진다 → 대상 노트(zzz.md)는 어휘 33위다.
+   */
+  function makeWidePayload(): string {
+    const body = "키워드 그리고 키워드";
+    const dense = Array.from({ length: 32 }, (_, i) => ({
+      path: `n${String(i).padStart(2, "0")}.md`,
+      // 쿼리와 정렬 → 코사인 1
+      embedding: [1, 0, 0],
+      lastModified: 1000,
+      title: `노트 ${i}`,
+      excerpt: "발췌",
+      searchText: body,
+      chunks: [{ index: 0, text: body, embedding: [1, 0, 0] }],
+      outlinks: [],
+      backlinks: [],
+      tags: [],
+      frontmatter: {},
+    }));
+
+    return JSON.stringify({
+      schemaVersion: 1,
+      entries: [
+        ...dense,
+        {
+          path: "zzz.md",
+          // 쿼리와 직교 → 정규화 0.5로 최소 관련성 임계값에 못 미쳐 dense가 버린다.
+          embedding: [0, 1, 0],
+          lastModified: 1000,
+          title: "어휘로만 잡히는 노트",
+          excerpt: "발췌",
+          searchText: body,
+          chunks: [{ index: 0, text: body, embedding: [0, 1, 0] }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("limit이 기본 풀보다 크면 어휘 31위 이후도 융합에 참여한다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeAlignedClient());
+    indexer.deserialize(makeWidePayload());
+
+    const result = await indexer.search("키워드", 40);
+
+    // 어휘 33위 노트다. 풀이 30으로 고정돼 있으면 결과에 들어올 통로가 없다.
+    expect(result.items.map((i) => i.path)).toContain("zzz.md");
+  });
+
+  it("limit이 기본 풀보다 작으면 기본 풀을 유지한다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeAlignedClient());
+    indexer.deserialize(makeWidePayload());
+
+    // limit=5여도 어휘는 넉넉히 뽑아야 융합에 쓸 재료가 생긴다.
+    const result = await indexer.search("키워드", 5);
+
+    expect(result.items).toHaveLength(5);
+  });
+});
+
+describe("VaultIndexer 필터 후 임베딩 0개 → 키워드 폴백", () => {
+  /** 임베딩 있는 노트와 없는 노트를 폴더로 나눠 담은 페이로드. */
+  function makeMixedPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 1,
+      entries: [
+        {
+          path: "Dense/a.md",
+          embedding: [0.1, 0.2, 0.3],
+          lastModified: 1000,
+          title: "벡터 있는 노트",
+          excerpt: "발췌",
+          searchText: "키워드 본문",
+          chunks: [{ index: 0, text: "키워드 본문", embedding: [0.1, 0.2, 0.3] }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+        {
+          path: "Sparse/b.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "벡터 없는 노트",
+          excerpt: "발췌",
+          searchText: "키워드 본문",
+          chunks: [],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("필터가 미색인 노트만 남기면 키워드 폴백으로 결과를 낸다", async () => {
+    const client = makeClient();
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeMixedPayload());
+
+    client.getEmbedding.mockClear();
+
+    const result = await indexer.search("키워드", 10, { folder: "Sparse" });
+
+    // 빈 결과가 아니라 키워드로 찾아야 한다.
+    expect(result.usedKeywordFallback).toBe(true);
+    expect(result.items.map((i) => i.path)).toEqual(["Sparse/b.md"]);
+    // 폴백 경로는 쿼리 임베딩을 만들지 않는다.
+    expect(client.getEmbedding).not.toHaveBeenCalled();
+  });
+
+  it("필터가 색인된 노트를 남기면 벡터 경로를 그대로 쓴다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeMixedPayload());
+
+    const result = await indexer.search("키워드", 10, { folder: "Dense" });
+
+    expect(result.usedKeywordFallback).toBeUndefined();
+    expect(result.items.map((i) => i.path)).toEqual(["Dense/a.md"]);
+  });
+});
+
 describe("VaultIndexer limit 기본값 검증", () => {
   // limit 인자를 생략하면 기본 10이 적용되어 결과는 최대 10개로 제한된다 (Req 6.6).
   it("limit 미지정 시 기본 10이 적용되어 후보가 10개를 초과해도 최대 10개만 반환한다", async () => {
@@ -302,5 +758,184 @@ describe("VaultIndexer 빈 그래프/청크 엔트리 검색 무예외 검증", 
     );
 
     await expect(indexer.search("노트")).resolves.toBeDefined();
+  });
+});
+
+// ============================================
+// 하이브리드 융합: dense가 놓친 정확 일치를 어휘가 살린다
+// ============================================
+/**
+ * dense 검색의 알려진 실패를 인덱서 수준에서 재현한다.
+ *
+ * 시나리오: 질의 문자열이 그대로 들어 있는 노트가 딱 하나 있는데, 임베딩 유사도는
+ * 낮아서 MIN_COMBINED_SCORE(0.55) 임계값에서 아예 탈락한다. 에러 코드·함수명처럼
+ * 표기가 특이한 문자열에서 실제로 일어나는 일이다.
+ *
+ * 융합 전에는 이 노트가 결과에 없었다 — 어휘 검색은 "임베딩이 아예 없을 때"의
+ * 폴백으로만 돌았기 때문이다.
+ */
+describe("VaultIndexer 하이브리드 융합", () => {
+  const TERM = "CrashLoopBackOff";
+  /** 이 표시가 있는 본문만 질의 벡터와 직교하는 임베딩을 받는다. */
+  const FAR_MARKER = "쿠버네티스";
+
+  const CONTENTS: Record<string, string> = {
+    "ops/k8s.md": `# 운영\n${FAR_MARKER} 파드가 ${TERM} 상태로 재시작을 반복합니다.`,
+    "misc/a.md": "# 메모 A\n일반적인 메모입니다.",
+    "misc/b.md": "# 메모 B\n또 다른 메모입니다.",
+    "misc/c.md": "# 메모 C\n세 번째 메모입니다.",
+  };
+
+  function makeMultiApp(): ConstructorParameters<typeof VaultIndexer>[0] {
+    const files = Object.keys(CONTENTS).map((p) => makeTFile(p));
+    return {
+      vault: {
+        getMarkdownFiles: () => files,
+        cachedRead: async (f: TFile) => CONTENTS[f.path] ?? "",
+        getAbstractFileByPath: (p: string) => files.find((f) => f.path === p) ?? null,
+      },
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[0];
+  }
+
+  /**
+   * FAR_MARKER가 있는 본문은 [0,1], 나머지는 [1,0]을 준다.
+   * 질의 "CrashLoopBackOff"에는 마커가 없으므로 [1,0] — 즉 정답 노트와 코사인 0이다.
+   * 정규화하면 (0+1)/2 = 0.5로 MIN_COMBINED_SCORE(0.55) 아래라 dense에서 탈락한다.
+   */
+  function makeSplitClient(): ConstructorParameters<typeof VaultIndexer>[1] {
+    return {
+      getEmbedding: vi.fn(async (text: string) =>
+        text.includes(FAR_MARKER) ? [0, 1] : [1, 0]
+      ),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+  }
+
+  async function buildIndexer(): Promise<VaultIndexer> {
+    const indexer = new VaultIndexer(makeMultiApp(), makeSplitClient());
+    for (const path of Object.keys(CONTENTS)) {
+      const file = makeTFile(path);
+      await indexer.indexFile(file);
+    }
+    expect(indexer.size).toBe(4);
+    return indexer;
+  }
+
+  it("정확 일치 노트를 결과에 올리고 하이브리드를 표시한다", async () => {
+    const indexer = await buildIndexer();
+
+    const result = await indexer.search(TERM, 5);
+
+    // 융합 전이라면 이 노트는 임계값 탈락으로 결과에 없었다.
+    expect(result.items.map((i) => i.path)).toContain("ops/k8s.md");
+    expect(result.usedHybrid).toBe(true);
+    // 임베딩이 정상이므로 폴백 경로를 탄 것이 아니다.
+    expect(result.usedKeywordFallback).toBeUndefined();
+  });
+
+  it("어휘로만 잡힌 노트는 시드로 표기되고 벡터 점수는 0이다", async () => {
+    const indexer = await buildIndexer();
+
+    const hit = (await indexer.search(TERM, 5)).items.find((i) => i.path === "ops/k8s.md");
+
+    expect(hit).toBeDefined();
+    expect(hit?.isSeed).toBe(true);
+    expect(hit?.hop).toBe(0);
+    expect(hit?.seedPath).toBeNull();
+    expect(hit?.vectorScore).toBe(0);
+  });
+
+  it("combinedScore는 최고점을 1.0으로 정규화한다", async () => {
+    const indexer = await buildIndexer();
+
+    const items = (await indexer.search(TERM, 5)).items;
+
+    // RRF 원점수(0.016 등)를 그대로 실으면 "관련도 1.6%"로 오해를 만든다.
+    expect(items[0].combinedScore).toBeCloseTo(1);
+    for (const item of items) {
+      expect(item.combinedScore).toBeGreaterThan(0);
+      expect(item.combinedScore).toBeLessThanOrEqual(1);
+    }
+    // 내림차순이 유지된다.
+    for (let i = 1; i < items.length; i++) {
+      expect(items[i - 1].combinedScore).toBeGreaterThanOrEqual(items[i].combinedScore);
+    }
+  });
+
+  it("어휘 일치가 없는 질의는 dense 결과와 순서가 같다(융합이 무해하다)", async () => {
+    const indexer = await buildIndexer();
+
+    // 어떤 노트에도 없는 단어 → 어휘 목록이 비고 융합은 통과 동작이 된다.
+    const result = await indexer.search("존재하지않는단어xyz", 5);
+
+    expect(result.usedHybrid).toBeUndefined();
+  });
+
+  it("limit을 초과해 반환하지 않는다", async () => {
+    const indexer = await buildIndexer();
+
+    expect((await indexer.search(TERM, 2)).items).toHaveLength(2);
+  });
+});
+
+// ============================================
+// 융합 결과의 적중 청크 선택
+// ============================================
+/**
+ * dense와 lexical 양쪽에 있는 노트에서 임베딩이 고른 청크에 질의어가 없으면, 발췌와 인용
+ * 앵커가 정확 문자열이 없는 절을 가리킨다 — 하이브리드 검색의 근거가 잘못 전달된다.
+ */
+describe("VaultIndexer 융합 결과의 적중 청크", () => {
+  /** A절은 임베딩이 가깝고 B절에만 질의어가 있다. */
+  function makeSplitPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "note.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "노트",
+          excerpt: "개요 문단",
+          searchText: "개요 문단 오류코드x99 가 여기 있다",
+          chunks: [
+            { index: 0, text: "개요 문단입니다", embedding: [1, 0, 0], charStart: 0, heading: "개요" },
+            { index: 1, text: "오류코드x99 가 여기 있다", embedding: [0, 1, 0], charStart: 50, heading: "오류" },
+          ],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("임베딩 청크에 질의어가 없으면 어휘 청크를 쓴다", async () => {
+    // 쿼리 벡터는 개요 청크에 가깝지만 질의어는 오류 청크에만 있다.
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeSplitPayload());
+
+    const result = await indexer.search("오류코드x99");
+
+    expect(result.items[0].matchedText).toContain("오류코드x99");
+    // 인용 앵커도 그 절을 가리킨다.
+    expect(result.items[0].heading).toBe("오류");
+  });
+
+  it("임베딩 청크에 질의어가 있으면 그것을 쓴다", async () => {
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeSplitPayload());
+
+    const result = await indexer.search("개요");
+
+    expect(result.items[0].heading).toBe("개요");
   });
 });

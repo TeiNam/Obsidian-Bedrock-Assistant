@@ -1776,3 +1776,298 @@ body.theme-light .ba-message-content pre {
   width: 1em;
   height: 1em;
 }
+
+/* 인용 검증 경고 — 응답이 밝힌 노트 경로를 볼트에서 찾지 못한 경우 */
+.ba-citation-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--background-modifier-error-hover);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ba-citation-warning-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-warning);
+  flex-shrink: 0;
+}
+
+.ba-citation-warning-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 모순 검토·반영 모달 */
+.ba-reconcile-modal {
+  max-width: 720px;
+}
+
+.ba-reconcile-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-reconcile-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-reconcile-paths {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.ba-reconcile-body {
+  margin-top: 8px;
+  padding-inline-start: 24px;
+}
+
+.ba-reconcile-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.ba-reconcile-statements {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ba-reconcile-suggestion {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+
+/* 링크 제안 검토 모달 */
+.ba-link-suggest-modal {
+  max-width: 640px;
+}
+
+.ba-link-suggest-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-link-suggest-source {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.ba-link-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.ba-link-suggest-target {
+  font-size: 13px;
+  color: var(--text-accent);
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.ba-link-suggest-score {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+
+/* 승인 목록 모달 공통 골격 */
+.ba-approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+
+.ba-approval-btn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 중복 후보 검토 모달 */
+.ba-canonical-modal {
+  max-width: 720px;
+}
+
+.ba-canonical-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-canonical-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ba-canonical-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ba-canonical-path {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.ba-canonical-evidence {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.ba-canonical-body {
+  margin-top: 8px;
+  padding-inline-start: 24px;
+}
+
+.ba-canonical-list-items {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+  font-family: var(--font-monospace);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* 결정 검토 모달 */
+.ba-decision-modal {
+  max-width: 720px;
+}
+
+.ba-decision-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-decision-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-decision-text {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.ba-decision-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ba-decision-body {
+  margin-top: 6px;
+  padding-inline-start: 24px;
+}
+
+.ba-decision-field {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ba-decision-sources {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+/* Inbox 검토 모달 */
+.ba-triage-modal {
+  max-width: 680px;
+}
+
+.ba-triage-card {
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+
+.ba-triage-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ba-triage-path {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.ba-triage-body {
+  margin-top: 6px;
+  padding-inline-start: 24px;
+}
+
+.ba-triage-change {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-normal);
+}
+
+.ba-triage-split {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-warning);
+  margin-top: 2px;
+}
+
+.ba-triage-reason {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}

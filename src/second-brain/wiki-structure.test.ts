@@ -183,7 +183,8 @@ describe("writeIndexCatalog — 카탈로그 갱신 시 사용자 메모 보존 
     // sentinel 블록으로 감싸여 있고 카탈로그 본문을 포함한다
     expect(createdContent).toContain("<!-- @generated:catalog -->");
     expect(createdContent).toContain("<!-- @end:catalog -->");
-    expect(createdContent).toContain("[[Second Brain/concepts/A.md|A]]");
+    // 링크 대상은 확장자를 뗀 경로다(formatNoteLink 규약, 다른 생성 블록과 동일).
+    expect(createdContent).toContain("[[Second Brain/concepts/A|A]]");
   });
 
   it("기존 index.md의 사용자 메모(User_Region)를 보존하고 catalog 블록만 교체한다", async () => {
@@ -200,13 +201,16 @@ describe("writeIndexCatalog — 카탈로그 갱신 시 사용자 메모 보존 
     await writeIndexCatalog(makeApp(vault), "Second Brain", newCatalog);
 
     expect(vault.create).not.toHaveBeenCalled();
-    expect(vault.modify).toHaveBeenCalledTimes(1);
-    const written = vault.modify.mock.calls[0][1] as string;
+    // 원자적 쓰기(process)를 써야 한다. read→modify 왕복은 읽은 뒤 쓰기 전에 들어온
+    // 사용자 편집을 덮어쓰고, 30분 주기 tick이 붙은 뒤로는 그 창이 계속 열려 있다.
+    expect(vault.process).toHaveBeenCalledTimes(1);
+    expect(vault.modify).not.toHaveBeenCalled();
+    const written = (indexFile as unknown as { content: string }).content;
 
     // 사용자 메모는 그대로 보존된다
     expect(written).toContain(userMemo);
     // 새 카탈로그 항목이 반영되고, 옛 카탈로그 본문은 사라진다
-    expect(written).toContain("[[Second Brain/entities/X.md|X]]");
+    expect(written).toContain("[[Second Brain/entities/X|X]]");
     expect(written).not.toContain("_옛 카탈로그_");
   });
 });

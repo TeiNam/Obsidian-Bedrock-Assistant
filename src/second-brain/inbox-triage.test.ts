@@ -1,0 +1,509 @@
+import { describe, it, expect } from "vitest";
+import fc from "fast-check";
+import {
+  sanitizeTitle,
+  sanitizeTag,
+  normalizeTriagePlan,
+  hasActionableSuggestion,
+  parseTriageReport,
+  resolveTargetPath,
+  buildTriagePrompt,
+  MAX_TRIAGE_NOTES,
+  type TriagePlan,
+} from "./inbox-triage";
+
+const FOLDERS = new Set(["Projects", "Areas", "Areas/Work"]);
+const PATHS = new Set(["Inbox/무제 1.md", "Inbox/메모.md"]);
+
+function plan(overrides: Partial<TriagePlan> = {}): TriagePlan {
+  return {
+    path: "Inbox/무제 1.md",
+    suggestedTitle: "쿠버네티스 배포 정리",
+    suggestedFolder: "Projects",
+    tags: ["k8s"],
+    splitHint: "",
+    reason: "내용이 배포 절차다",
+    ...overrides,
+  };
+}
+
+describe("sanitizeTitle", () => {
+  it("경로 구분자와 링크 문법 문자를 제거한다", () => {
+    // LLM이 "폴더/제목" 형태로 돌려주면 의도치 않은 하위 폴더가 생긴다.
+    expect(sanitizeTitle("Projects/배포 [정리]")).toBe("Projects 배포 정리");
+    expect(sanitizeTitle('a:b*c?d"e<f>g|h#i^j')).toBe("a b c d e f g h i j");
+  });
+
+  it("공백을 정리한다", () => {
+    expect(sanitizeTitle("  여러   공백  ")).toBe("여러 공백");
+  });
+});
+
+describe("sanitizeTag", () => {
+  it("선행 #을 떼고 소문자로 만든다", () => {
+    expect(sanitizeTag("#Work")).toBe("work");
+  });
+
+  it("내부 공백을 하이픈으로 바꾼다", () => {
+    expect(sanitizeTag("machine learning")).toBe("machine-learning");
+  });
+
+  it("태그에 쓸 수 없는 문자를 버린다", () => {
+    expect(sanitizeTag("a!b@c")).toBe("abc");
+  });
+
+  it("계층 태그의 슬래시는 유지한다", () => {
+    expect(sanitizeTag("#work/project")).toBe("work/project");
+  });
+});
+
+describe("normalizeTriagePlan", () => {
+  it("실재하는 노트와 폴더만 받는다", () => {
+    const out = normalizeTriagePlan(
+      { path: "Inbox/무제 1.md", suggestedFolder: "Projects", tags: ["#K8s"] },
+      FOLDERS,
+      PATHS
+    );
+
+    expect(out?.suggestedFolder).toBe("Projects");
+    expect(out?.tags).toEqual(["k8s"]);
+  });
+
+  it("실재하지 않는 노트 경로는 버린다", () => {
+    // 경로를 지어낸 응답을 걸러낸다.
+    expect(
+      normalizeTriagePlan({ path: "없는노트.md", suggestedTitle: "제목" }, FOLDERS, PATHS)
+    ).toBeNull();
+  });
+
+  it("실재하지 않는 폴더 제안은 버리고 나머지는 살린다", () => {
+    // LLM이 그럴듯한 폴더를 지어내면 새 폴더가 조용히 생기고 볼트 구조가 어긋난다.
+    const out = normalizeTriagePlan(
+      { path: "Inbox/메모.md", suggestedFolder: "지어낸폴더", suggestedTitle: "괜찮은 제목" },
+      FOLDERS,
+      PATHS
+    );
+
+    expect(out?.suggestedFolder).toBe("");
+    expect(out?.suggestedTitle).toBe("괜찮은 제목");
+  });
+
+  it("볼트를 벗어나는 폴더 제안을 거부한다", () => {
+    for (const folder of ["../밖", "/etc", "C:/temp", "Projects/../../밖"]) {
+      const out = normalizeTriagePlan(
+        { path: "Inbox/메모.md", suggestedFolder: folder, suggestedTitle: "제목" },
+        FOLDERS,
+        PATHS
+      );
+      expect(out?.suggestedFolder).toBe("");
+    }
+  });
+
+  it("중복 태그를 합친다", () => {
+    const out = normalizeTriagePlan(
+      { path: "Inbox/메모.md", tags: ["#Work", "work", "WORK"] },
+      FOLDERS,
+      PATHS
+    );
+
+    expect(out?.tags).toEqual(["work"]);
+  });
+
+  it("바꿀 것이 하나도 없으면 버린다", () => {
+    // 보여줄 이유가 없는 항목이 목록을 채우면 검토가 어려워진다.
+    expect(
+      normalizeTriagePlan({ path: "Inbox/메모.md", reason: "이유만 있음" }, FOLDERS, PATHS)
+    ).toBeNull();
+  });
+
+  it("객체가 아니면 버린다", () => {
+    for (const bad of [null, "문자열", 42, []]) {
+      expect(normalizeTriagePlan(bad, FOLDERS, PATHS)).toBeNull();
+    }
+  });
+});
+
+describe("hasActionableSuggestion", () => {
+  it("제목·폴더·태그 중 하나라도 있으면 true다", () => {
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "", tags: [] }))).toBe(
+      false
+    );
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "x", suggestedFolder: "", tags: [] }))).toBe(
+      true
+    );
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "y", tags: [] }))).toBe(
+      true
+    );
+    expect(hasActionableSuggestion(plan({ suggestedTitle: "", suggestedFolder: "", tags: ["a"] }))).toBe(
+      true
+    );
+  });
+
+  it("분할 힌트만 있으면 false다", () => {
+    // 적용 루프는 태그·이름·폴더만 처리한다. 힌트만 있는 계획을 승인 가능으로 보이면
+    // 사용자가 승인해도 아무 일이 없고 힌트도 저장되지 않는다.
+    expect(
+      hasActionableSuggestion(
+        plan({ suggestedTitle: "", suggestedFolder: "", tags: [], splitHint: "나누세요" })
+      )
+    ).toBe(false);
+  });
+
+  it("다른 변경이 있으면 힌트가 함께 있어도 true다", () => {
+    // 힌트 자체는 승인 화면의 참고 정보로 보여준다.
+    expect(
+      hasActionableSuggestion(plan({ suggestedTitle: "x", splitHint: "나누세요" }))
+    ).toBe(true);
+  });
+});
+
+describe("parseTriageReport", () => {
+  it("코드펜스 응답에서 유효한 제안만 뽑는다", () => {
+    const text = [
+      "```json",
+      JSON.stringify([
+        { path: "Inbox/무제 1.md", suggestedTitle: "좋은 제목" },
+        { path: "없는노트.md", suggestedTitle: "버려짐" },
+      ]),
+      "```",
+    ].join("\n");
+
+    const out = parseTriageReport(text, FOLDERS, PATHS);
+    expect(out.ok).toBe(true);
+    expect(out.items).toHaveLength(1);
+  });
+
+  it("해석 실패는 '제안 없음'과 구분된다", () => {
+    expect(parseTriageReport("잘린 응답", FOLDERS, PATHS).ok).toBe(false);
+    expect(parseTriageReport("[]", FOLDERS, PATHS).ok).toBe(true);
+  });
+});
+
+describe("resolveTargetPath", () => {
+  it("제목과 폴더를 합쳐 대상 경로를 만든다", () => {
+    expect(resolveTargetPath(plan(), new Set(["Inbox/무제 1.md"]))).toBe(
+      "Projects/쿠버네티스 배포 정리.md"
+    );
+  });
+
+  it("제목만 제안되면 현재 폴더를 유지한다", () => {
+    const out = resolveTargetPath(plan({ suggestedFolder: "" }), new Set());
+    expect(out).toBe("Inbox/쿠버네티스 배포 정리.md");
+  });
+
+  it("폴더만 제안되면 현재 제목을 유지한다", () => {
+    const out = resolveTargetPath(plan({ suggestedTitle: "" }), new Set());
+    expect(out).toBe("Projects/무제 1.md");
+  });
+
+  it("결과가 현재 경로와 같으면 null이다", () => {
+    // 같은 경로로 rename을 호출하면 옵시디언이 오류를 낸다.
+    const out = resolveTargetPath(
+      plan({ suggestedTitle: "무제 1", suggestedFolder: "Inbox" }),
+      new Set()
+    );
+    expect(out).toBeNull();
+  });
+
+  it("대상이 이미 있으면 null이다(덮어쓰지 않는다)", () => {
+    // 이름이 겹치는 다른 노트를 덮어쓰는 것이 최악이다.
+    const taken = new Set(["Projects/쿠버네티스 배포 정리.md"]);
+    expect(resolveTargetPath(plan(), taken)).toBeNull();
+  });
+
+  it("루트로 이동하는 경우도 처리한다", () => {
+    const out = resolveTargetPath(
+      { ...plan({ suggestedFolder: "" }), path: "메모.md", suggestedTitle: "새 제목" },
+      new Set()
+    );
+    expect(out).toBe("새 제목.md");
+  });
+});
+
+describe("buildTriagePrompt", () => {
+  it("폴더 목록과 자주 쓰는 태그를 함께 준다", () => {
+    // 주지 않으면 매번 새 폴더·태그 체계를 지어내 볼트가 갈라진다.
+    const prompt = buildTriagePrompt(
+      [{ path: "Inbox/a.md", excerpt: "내용" }],
+      ["Projects", "Areas"],
+      ["work", "idea"]
+    );
+
+    expect(prompt).toContain("Projects, Areas");
+    expect(prompt).toContain("work, idea");
+    expect(prompt).toContain("새 폴더를 만들지 마세요");
+  });
+
+  it("폴더가 없으면 이동 제안을 금지한다", () => {
+    const prompt = buildTriagePrompt([{ path: "a.md", excerpt: "x" }], [], []);
+    expect(prompt).toContain("이동 제안 금지");
+  });
+
+  it("경로를 지어내지 말라고 지시한다", () => {
+    expect(buildTriagePrompt([], [], [])).toContain("경로를 지어내면 안 됩니다");
+  });
+});
+
+describe("MAX_TRIAGE_NOTES", () => {
+  it("한 번에 검토할 양을 판단 가능한 수준으로 제한한다", () => {
+    // 50건이 한꺼번에 올라오면 전부 체크하거나 전부 무시하게 되고 어느 쪽도 검토가 아니다.
+    expect(MAX_TRIAGE_NOTES).toBeGreaterThan(0);
+    expect(MAX_TRIAGE_NOTES).toBeLessThanOrEqual(20);
+  });
+});
+
+// ============================================
+// Property: 대상 경로 안전성
+// ============================================
+/**
+ * resolveTargetPath의 결과는 파일시스템에 직접 쓰인다(fileManager.renameFile). LLM이
+ * 만든 제목·폴더가 그 입력이므로, 어떤 입력에도 지켜져야 하는 성질을 못박는다.
+ */
+describe("Property: resolveTargetPath 안전성", () => {
+  /** 경로·제목을 흔들 만한 조각을 섞은 생성기. */
+  const nasty = fc
+    .array(
+      fc.constantFrom(
+        "가",
+        "A",
+        "..",
+        "/",
+        "\\",
+        ":",
+        "*",
+        "?",
+        '"',
+        "<",
+        ">",
+        "|",
+        "#",
+        "^",
+        "[",
+        "]",
+        " ",
+        ".md"
+      ),
+      { minLength: 1, maxLength: 8 }
+    )
+    .map((parts) => parts.join(""));
+
+  const planArb = fc.record({
+    path: fc.constantFrom("Inbox/a.md", "Inbox/sub/b.md", "c.md"),
+    suggestedTitle: fc.oneof(fc.constant(""), nasty.map(sanitizeTitle)),
+    suggestedFolder: fc.constantFrom("", "Projects", "Areas/Work"),
+    tags: fc.constant([] as string[]),
+    splitHint: fc.constant(""),
+    reason: fc.constant(""),
+  });
+
+  it("결과는 항상 .md로 끝나고 볼트를 벗어나지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out === null) return;
+
+        expect(out.endsWith(".md")).toBe(true);
+        // 상위 디렉터리 세그먼트·절대경로·드라이브 문자가 없어야 한다.
+        expect(out.split("/").includes("..")).toBe(false);
+        expect(out.startsWith("/")).toBe(false);
+        expect(/^[A-Za-z]:/.test(out)).toBe(false);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("이미 존재하는 경로를 결과로 내지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        // 무엇을 내놓든 그것이 이미 있다고 하면 null이어야 한다.
+        const first = resolveTargetPath(p, new Set());
+        if (first === null) return;
+
+        expect(resolveTargetPath(p, new Set([first]))).toBeNull();
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("결과가 현재 경로와 같지 않다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out !== null) expect(out).not.toBe(p.path);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("빈 파일명을 만들지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out === null) return;
+
+        const base = out.split("/").pop() ?? "";
+        expect(base).not.toBe(".md");
+        expect(base.length).toBeGreaterThan(3);
+      }),
+      { numRuns: 400 }
+    );
+  });
+});
+
+// ============================================
+// 확장자와 대소문자
+// ============================================
+describe("resolveTargetPath — 확장자·대소문자", () => {
+  it("제목에 붙은 .md를 다시 붙이지 않는다", () => {
+    // LLM이 `Report.md`를 돌려주면 `Report.md.md`가 생기고, 승인 화면에 보인 제목과도
+    // 달라진다. 프롬프트가 금지하지 않는 형태다.
+    const out = resolveTargetPath(plan({ suggestedTitle: "Report.md" }), new Set());
+    expect(out).toBe("Projects/Report.md");
+  });
+
+  it("대소문자만 다른 기존 경로도 충돌로 본다", () => {
+    // macOS·Windows에서는 같은 파일이다. 구분해서 통과시키면 renameFile이 오류를 내고
+    // 이미 일부 반영된 승인 배치가 중간에 끊긴다.
+    const taken = new Set(["projects/쿠버네티스 배포 정리.MD".toLowerCase()]);
+    expect(resolveTargetPath(plan(), taken)).toBeNull();
+
+    expect(
+      resolveTargetPath(plan({ suggestedTitle: "Foo" }), new Set(["Projects/foo.md"]))
+    ).toBeNull();
+  });
+
+  it("확장자를 떼면 제목이 비는 경우를 거부한다", () => {
+    // `.md`만 돌려주면 파일명이 `.md`가 된다.
+    expect(resolveTargetPath(plan({ suggestedTitle: ".md" }), new Set())).toBe(
+      "Projects/무제 1.md"
+    );
+  });
+});
+
+describe("sanitizeTitle — 확장자", () => {
+  it("후행 .md를 떼고 대소문자를 가리지 않는다", () => {
+    expect(sanitizeTitle("Report.md")).toBe("Report");
+    expect(sanitizeTitle("Report.MD")).toBe("Report");
+  });
+
+  it("중간의 .md는 건드리지 않는다", () => {
+    expect(sanitizeTitle("Report.md 초안")).toBe("Report.md 초안");
+  });
+});
+
+describe("resolveTargetPath — 폴더만 이동", () => {
+  it("기존 파일명을 그대로 유지한다", () => {
+    // sanitizeTitle이 손대는 이름도 이미 볼트에 있는 유효한 파일명이다. 폴더만 옮기는
+    // 승인에서 이름까지 바꾸면 사용자가 승인하지 않은 변경이 된다.
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "" }), path: "Inbox/foo#bar.md" },
+      new Set()
+    );
+
+    expect(out).toBe("Projects/foo#bar.md");
+  });
+
+  it("이름에 든 .md도 건드리지 않는다", () => {
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "" }), path: "Inbox/foo.md.md" },
+      new Set()
+    );
+
+    expect(out).toBe("Projects/foo.md.md");
+  });
+
+  it("제목을 제안했을 때만 정리한다", () => {
+    expect(resolveTargetPath(plan({ suggestedTitle: "a#b" }), new Set())).toBe("Projects/a b.md");
+  });
+});
+
+describe("resolveTargetPath — 대소문자만 바꾸는 이름 변경", () => {
+  it("자기 자신은 충돌이 아니다", () => {
+    // taken에는 이 노트의 현재 경로도 들어 있다. 제외하지 않으면 승인해도 건너뛴다.
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "Foo", suggestedFolder: "Inbox" }), path: "Inbox/foo.md" },
+      new Set(["Inbox/foo.md"])
+    );
+
+    expect(out).toBe("Inbox/Foo.md");
+  });
+
+  it("다른 파일과의 대소문자 충돌은 여전히 막는다", () => {
+    const out = resolveTargetPath(
+      { ...plan({ suggestedTitle: "Foo", suggestedFolder: "Projects" }), path: "Inbox/bar.md" },
+      new Set(["Inbox/bar.md", "Projects/foo.md"])
+    );
+
+    expect(out).toBeNull();
+  });
+});
+
+describe("sanitizeTitle — 파일시스템 규칙", () => {
+  it("윈도우 예약 이름을 피한다", () => {
+    // 통과시키면 renameFile이 실패하고 같은 배치의 뒤쪽 항목까지 반영되지 않는다.
+    expect(sanitizeTitle("CON")).toBe("CON 노트");
+    expect(sanitizeTitle("nul")).toBe("nul 노트");
+    expect(sanitizeTitle("COM1")).toBe("COM1 노트");
+    expect(sanitizeTitle("LPT9")).toBe("LPT9 노트");
+  });
+
+  it("예약 이름이 아닌 유사 이름은 그대로 둔다", () => {
+    expect(sanitizeTitle("CONTROL")).toBe("CONTROL");
+    expect(sanitizeTitle("COM10")).toBe("COM10");
+    expect(sanitizeTitle("CON 회의록")).toBe("CON 회의록");
+  });
+
+  it("후행 마침표·공백을 없앤다", () => {
+    // 윈도우에서 파일명으로 쓸 수 없다.
+    expect(sanitizeTitle("보고서...")).toBe("보고서");
+    expect(sanitizeTitle("보고서 . ")).toBe("보고서");
+  });
+
+  it("길이를 바이트 기준으로 제한한다", () => {
+    // 한글은 UTF-8에서 한 자 3바이트다. 문자 수로 재면 파일시스템 한계를 넘는다.
+    const long = "가".repeat(200);
+    const out = sanitizeTitle(long);
+
+    expect(new TextEncoder().encode(out).length).toBeLessThanOrEqual(200);
+    // 문자 중간에서 끊지 않는다.
+    expect(out).toBe("가".repeat(Math.floor(200 / 3)));
+  });
+
+  it("짧은 제목은 그대로 둔다", () => {
+    expect(sanitizeTitle("쿠버네티스 배포 정리")).toBe("쿠버네티스 배포 정리");
+  });
+});
+
+describe("sanitizeTitle — 확장자가 붙은 예약 이름", () => {
+  it("확장자가 붙어도 예약 이름을 피한다", () => {
+    // 윈도우는 확장자와 무관하게 장치 이름을 예약한다. 접미사를 전체 뒤에 붙이면
+    // (`CON.txt 노트`) 첫 점 앞이 여전히 `CON`이라 거부된다 — stem 자체를 바꿔야 한다.
+    expect(sanitizeTitle("CON.txt")).toBe("CON 노트.txt");
+    expect(sanitizeTitle("LPT1.csv")).toBe("LPT1 노트.csv");
+    expect(sanitizeTitle("nul.log")).toBe("nul 노트.log");
+  });
+
+  it("확장자가 없으면 그대로 접미사를 붙인다", () => {
+    expect(sanitizeTitle("CON")).toBe("CON 노트");
+  });
+
+  it("예약 이름을 포함하기만 한 것은 그대로 둔다", () => {
+    expect(sanitizeTitle("CONTROL.txt")).toBe("CONTROL.txt");
+    expect(sanitizeTitle("회의 CON 정리")).toBe("회의 CON 정리");
+  });
+});
+
+describe("sanitizeTitle — 후행 구두점 뒤의 확장자", () => {
+  it("`Report.md.`도 확장자를 제거한다", () => {
+    // 순서를 뒤집으면 확장자 제거가 먼저 실패한 뒤 마지막 점만 사라져 `Report.md`가 되고,
+    // 경로를 만들 때 확장자가 다시 붙어 `Report.md.md`가 된다.
+    expect(sanitizeTitle("Report.md.")).toBe("Report");
+    expect(sanitizeTitle("Report.md ")).toBe("Report");
+    expect(sanitizeTitle("Report.MD..")).toBe("Report");
+  });
+
+  it("대상 경로에 확장자가 두 번 붙지 않는다", () => {
+    const out = resolveTargetPath(plan({ suggestedTitle: "Report.md." }), new Set());
+    expect(out).toBe("Projects/Report.md");
+  });
+});

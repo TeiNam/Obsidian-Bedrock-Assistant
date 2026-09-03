@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { splitIntoChunks, normalizeChunkConfig, ChunkConfig } from "./chunker";
+import { splitIntoChunks, normalizeChunkConfig, ChunkConfig, splitIntoChunkSlices } from "./chunker";
 
 /**
  * 불변식(maxSize >= 1, 0 <= overlap < maxSize)을 만족하는 유효 청크 설정 생성기.
@@ -260,5 +260,99 @@ describe("splitIntoChunks - 엣지 단위 테스트 (Task 2.7)", () => {
     // overlap=0 이므로 reassemble 은 단순 연결과 같고, 원본을 무손실 복원한다.
     expect(reassemble(chunks, overlap)).toBe(body);
     expect(chunks.join("")).toBe(body);
+  });
+});
+
+// ============================================
+// 청크 출처 (스키마 v2)
+// ============================================
+/**
+ * 노트 단위 인용은 긴 노트에서 "어딘가에 있다"까지만 말해준다. 청크가 어느 헤딩에
+ * 속하는지 알면 모델이 `[[노트#헤딩]]`으로 인용할 수 있다.
+ */
+describe("splitIntoChunkSlices — 출처 정보", () => {
+  it("splitIntoChunks와 같은 텍스트를 만든다", () => {
+    // 분할 규칙이 달라지면 기존 인덱스와 새 인덱스의 청크 경계가 어긋난다.
+    const body = "가".repeat(5000);
+    const config = { maxSize: 2000, overlap: 200 };
+
+    expect(splitIntoChunkSlices(body, config).map((s) => s.text)).toEqual(
+      splitIntoChunks(body, config)
+    );
+  });
+
+  it("빈 본문은 빈 청크 1개다", () => {
+    expect(splitIntoChunkSlices("", { maxSize: 100, overlap: 10 })).toEqual([
+      { text: "", charStart: 0, heading: null },
+    ]);
+  });
+
+  it("헤딩보다 앞에서 시작하는 도입부 청크는 heading이 null이다", () => {
+    const slices = splitIntoChunkSlices("도입부 문장입니다.\n\n# 첫 절\n내용", {
+      maxSize: 1000,
+      overlap: 0,
+    });
+
+    expect(slices[0].heading).toBeNull();
+  });
+
+  it("청크 시작 지점을 덮는 가장 가까운 앞선 헤딩을 붙인다", () => {
+    const body = ["# 개요", "가".repeat(300), "## 세부 사항", "나".repeat(300)].join("\n");
+
+    const slices = splitIntoChunkSlices(body, { maxSize: 250, overlap: 0 });
+
+    // 첫 청크는 "개요" 아래에서 시작한다.
+    expect(slices[0].heading).toBe("개요");
+    // 뒤쪽 청크 중 최소 하나는 "세부 사항"에 속해야 한다.
+    expect(slices.some((s) => s.heading === "세부 사항")).toBe(true);
+  });
+
+  it("헤딩 수준(#~######)과 후행 #을 모두 처리한다", () => {
+    for (const line of ["# 제목", "###### 제목", "## 제목 ##"]) {
+      const slices = splitIntoChunkSlices(`${line}\n본문`, { maxSize: 1000, overlap: 0 });
+      expect(slices[0].heading).toBe("제목");
+    }
+  });
+
+  it("charStart가 본문 내 실제 위치를 가리킨다", () => {
+    const body = "가".repeat(1000);
+
+    for (const slice of splitIntoChunkSlices(body, { maxSize: 300, overlap: 50 })) {
+      expect(body.slice(slice.charStart, slice.charStart + slice.text.length)).toBe(slice.text);
+    }
+  });
+
+  it("빈 헤딩(#만 있는 줄)은 헤딩으로 세지 않는다", () => {
+    const slices = splitIntoChunkSlices("#\n본문", { maxSize: 1000, overlap: 0 });
+    expect(slices[0].heading).toBeNull();
+  });
+});
+
+// ============================================
+// 닫는 ATX 표식과 제목 안의 #
+// ============================================
+/**
+ * 닫는 표식(`## 제목 ##`)은 앞에 공백이 있을 때만 표식이다(CommonMark). 그러지 않으면
+ * `## C#`의 제목이 `C`가 되고, 검색 결과가 존재하지 않는 앵커를 제안한다.
+ */
+describe("헤딩 추출 — 제목 끝의 #", () => {
+  /** 각 절이 자기 청크를 갖도록 충분히 긴 본문을 만들고 heading을 모은다. */
+  function headings(secondHeading: string): (string | null)[] {
+    const filler = "가".repeat(400);
+    const body = `# 문서\n\n${filler}\n\n${secondHeading}\n\n${filler}\n`;
+    return splitIntoChunkSlices(body, { maxSize: 300, overlap: 0 }).map((s) => s.heading);
+  }
+
+  it("공백 없는 후행 #은 제목의 일부다", () => {
+    expect(headings("## C#")).toContain("C#");
+    expect(headings("## foo##")).toContain("foo##");
+  });
+
+  it("공백이 있는 닫는 표식은 벗긴다", () => {
+    expect(headings("## 제목 ##")).toContain("제목");
+  });
+
+  it("제목 중간의 #도 보존한다", () => {
+    expect(headings("## F# 과 C#")).toContain("F# 과 C#");
   });
 });
