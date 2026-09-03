@@ -228,13 +228,20 @@ export class GeminiClient {
     }
 
     const model = this.settings.chatModel;
+    let streamedText = false;
+    const handleTextDelta = (text: string): void => {
+      streamedText = true;
+      onTextDelta?.(text);
+    };
 
     // 스트리밍 시도
     try {
-      return await this.streamGenerate(model, body, onTextDelta, abortSignal);
+      return await this.streamGenerate(model, body, handleTextDelta, abortSignal);
     } catch (error) {
       // 사용자 중지(abort)는 폴백(nonStreamGenerate)으로 흘려보내지 않고 즉시 전파
       if (isAbortError(error, abortSignal)) throw error;
+      // 이미 화면에 일부 텍스트를 보낸 뒤 전체 응답을 다시 요청하면 같은 답이 중복된다.
+      if (streamedText) throw error;
       return await this.nonStreamGenerate(model, body, onTextDelta);
     }
   }

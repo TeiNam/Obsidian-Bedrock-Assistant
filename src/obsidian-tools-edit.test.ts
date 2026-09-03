@@ -119,3 +119,34 @@ describe("editNote() replaceAll 동작", () => {
     });
   });
 });
+
+describe("applyTemplate() 변수 치환", () => {
+  it("변수명 정규식 문자와 값의 달러 기호를 그대로 치환한다", async () => {
+    const template = new TFile();
+    template.path = "templates/sample.md";
+    template.basename = "sample";
+    template.extension = "md";
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn((path: string) =>
+          path === template.path ? template : null
+        ),
+        cachedRead: vi.fn(async () => "{{a[}} / {{price.$}}"),
+        createFolder: vi.fn(),
+        create: vi.fn(),
+      },
+      workspace: {
+        getLeaf: vi.fn(() => ({ openFile: vi.fn() })),
+      },
+    };
+    const executor = new ToolExecutor(app as any, makeIndexer(), () => "templates");
+
+    await executor.execute("apply_template", {
+      template_name: "sample",
+      output_path: "result.md",
+      variables: { "a[": "$&", "price.$": "$1" },
+    });
+
+    expect(app.vault.create).toHaveBeenCalledWith("result.md", "$& / $1");
+  });
+});

@@ -59,8 +59,42 @@ export function stripCode(markdown: string): string {
   // 닫히지 않은 펜스는 위 루프에서 문서 끝까지 코드로 처리된다 — 스트리밍이 끊긴
   // 응답에서 뒤쪽 전부가 오탐이 되는 걸 막는다.
 
-  // 인라인 코드. 백틱 개수가 같은 쌍만 묶는다.
-  return lines.join("\n").replace(/(`+)(?:(?!\1)[\s\S])*?\1/g, blank);
+  // 인라인 코드. 더 긴 백틱 묶음의 일부를 닫는 기호로 쓰지 않고 정확히 같은 길이만 찾는다.
+  const text = lines.join("\n");
+  let output = "";
+  let cursor = 0;
+
+  for (let i = 0; i < text.length; ) {
+    if (text[i] !== "`") {
+      i++;
+      continue;
+    }
+
+    const open = i;
+    while (i < text.length && text[i] === "`") i++;
+    const markerLength = i - open;
+    let searchAt = i;
+    let close = -1;
+
+    while (searchAt < text.length) {
+      const runStart = text.indexOf("`", searchAt);
+      if (runStart === -1) break;
+      let runEnd = runStart;
+      while (runEnd < text.length && text[runEnd] === "`") runEnd++;
+      if (runEnd - runStart === markerLength) {
+        close = runEnd;
+        break;
+      }
+      searchAt = runEnd;
+    }
+
+    if (close === -1) continue;
+    output += text.slice(cursor, open) + blank(text.slice(open, close));
+    cursor = close;
+    i = close;
+  }
+
+  return output + text.slice(cursor);
 }
 
 /**

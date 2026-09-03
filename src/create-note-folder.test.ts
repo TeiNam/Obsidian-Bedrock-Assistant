@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TFile } from "obsidian";
 import { ToolExecutor } from "./obsidian-tools";
 
 /**
@@ -155,6 +156,42 @@ describe("createNote() 폴더 자동 생성", () => {
       // 파일이 이미 존재하므로 create와 createFolder 모두 호출되지 않아야 함
       expect(app.vault.create).not.toHaveBeenCalled();
       expect(app.vault.createFolder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("볼트 경로 안전성과 링크 보존 이동", () => {
+    it("상위 디렉터리 탈출 경로는 쓰기 전에 거부한다", async () => {
+      const result = await executor.execute("create_note", {
+        path: "../outside.md",
+        content: "쓰이면 안 됨",
+      });
+
+      expect(result).toContain("볼트를 벗어나는 경로");
+      expect(app.vault.create).not.toHaveBeenCalled();
+    });
+
+    it("move_file은 링크를 갱신하는 fileManager.renameFile을 사용한다", async () => {
+      const file = new TFile();
+      file.path = "old.md";
+      const renameFile = vi.fn(async () => {});
+      const moveApp = {
+        vault: {
+          getAbstractFileByPath: vi.fn((path: string) => path === "old.md" ? file : null),
+          createFolder: vi.fn(),
+          rename: vi.fn(),
+        },
+        fileManager: { renameFile },
+      } as any;
+      const moveExecutor = new ToolExecutor(moveApp, makeIndexer(), () => "templates");
+
+      const result = await moveExecutor.execute("move_file", {
+        source_path: "old.md",
+        destination_path: "Archive/old.md",
+      });
+
+      expect(result).toContain("이동했습니다");
+      expect(renameFile).toHaveBeenCalledWith(file, "Archive/old.md");
+      expect(moveApp.vault.rename).not.toHaveBeenCalled();
     });
   });
 });

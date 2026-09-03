@@ -185,6 +185,21 @@ function reassemble(chunks: string[], overlap: number): string {
   return result;
 }
 
+/** 단독 high/low surrogate가 없는지 확인한다. */
+function hasOnlyCompleteSurrogatePairs(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) return false;
+      i++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
 describe("splitIntoChunks - 엣지 단위 테스트 (Task 2.7)", () => {
   it("빈 본문은 빈 텍스트 청크 1개를 반환한다 (Req 3.4)", () => {
     const config: ChunkConfig = { maxSize: 10, overlap: 3 };
@@ -260,6 +275,23 @@ describe("splitIntoChunks - 엣지 단위 테스트 (Task 2.7)", () => {
     // overlap=0 이므로 reassemble 은 단순 연결과 같고, 원본을 무손실 복원한다.
     expect(reassemble(chunks, overlap)).toBe(body);
     expect(chunks.join("")).toBe(body);
+  });
+
+  it("고정 overlap으로 정렬할 수 없는 이모지 배열도 깨진 서로게이트를 만들지 않는다", () => {
+    // UTF-16 폭: [2, 1, 2, 2]. maxSize=6, overlap=4이면 첫 끝/다음 시작을
+    // 동시에 안전하게 만드는 고정 겹침이 없어 실제 겹침을 3으로 한 칸 줄여야 한다.
+    const body = "😀a😀😀";
+    const slices = splitIntoChunkSlices(body, { maxSize: 6, overlap: 4 });
+
+    expect(slices.map((slice) => slice.charStart)).toEqual([0, 2]);
+    expect(slices.every((slice) => hasOnlyCompleteSurrogatePairs(slice.text))).toBe(true);
+
+    let rebuilt = slices[0].text;
+    for (let i = 1; i < slices.length; i++) {
+      const coveredUntil = slices[i - 1].charStart + slices[i - 1].text.length;
+      rebuilt += slices[i].text.slice(coveredUntil - slices[i].charStart);
+    }
+    expect(rebuilt).toBe(body);
   });
 });
 

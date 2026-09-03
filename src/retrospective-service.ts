@@ -284,6 +284,28 @@ export function findRetrospectiveSection(content: string, language: string): num
   return -1;
 }
 
+/** 기존 회고 섹션의 시작과 다음 h2 직전 끝 위치를 찾는다. */
+function findRetrospectiveRange(
+  content: string,
+  language: string,
+): { start: number; bodyStart: number; end: number } | null {
+  const start = findRetrospectiveSection(content, language);
+  if (start === -1) return null;
+
+  const headingEnd = content.indexOf("\n", start);
+  if (headingEnd === -1) {
+    return { start, bodyStart: content.length, end: content.length };
+  }
+
+  const bodyStart = headingEnd + 1;
+  const nextH2 = content.slice(bodyStart).search(/^## /m);
+  return {
+    start,
+    bodyStart,
+    end: nextH2 === -1 ? content.length : bodyStart + nextH2,
+  };
+}
+
 /**
  * To-Do 콘텐츠에서 기존 회고 섹션을 제거한다.
  * AI 프롬프트에 이전 회고가 포함되지 않도록 하기 위해 사용.
@@ -293,9 +315,12 @@ export function findRetrospectiveSection(content: string, language: string): num
  * @returns 회고 섹션이 제거된 콘텐츠
  */
 export function removeExistingRetrospective(content: string, language: string): string {
-  const idx = findRetrospectiveSection(content, language);
-  if (idx === -1) return content;
-  return content.substring(0, idx).trimEnd();
+  const range = findRetrospectiveRange(content, language);
+  if (range === null) return content;
+
+  const before = content.slice(0, range.start).trimEnd();
+  const after = content.slice(range.end).trimStart();
+  return after === "" ? before : `${before}\n\n${after}`;
 }
 
 // ============================================
@@ -335,17 +360,10 @@ export function extractRetrospectiveSection(
   content: string,
   language: string,
 ): string | null {
-  const idx = findRetrospectiveSection(content, language);
-  if (idx === -1) return null;
+  const range = findRetrospectiveRange(content, language);
+  if (range === null) return null;
 
-  // 헤딩 줄 다음부터 본문이 시작된다.
-  const afterHeading = content.indexOf("\n", idx);
-  if (afterHeading === -1) return null;
-  const body = content.slice(afterHeading + 1);
-
-  // 다음 h2 경계에서 끊는다. 줄 시작의 "## "만 경계로 본다.
-  const nextH2 = body.search(/^## /m);
-  const section = (nextH2 === -1 ? body : body.slice(0, nextH2)).trim();
+  const section = content.slice(range.bodyStart, range.end).trim();
 
   if (section === "") return null;
   return section.length > PAST_RETROSPECTIVE_MAX_CHARS
@@ -413,11 +431,11 @@ export function replaceOrAppendRetrospective(
   newRetrospective: string,
   language: string,
 ): string {
-  const idx = findRetrospectiveSection(content, language);
-  if (idx !== -1) {
-    // 기존 회고 섹션 이전 내용 + 새 회고로 교체
-    const before = content.substring(0, idx).trimEnd();
-    return before + "\n\n" + newRetrospective + "\n";
+  const range = findRetrospectiveRange(content, language);
+  if (range !== null) {
+    const before = content.slice(0, range.start).trimEnd();
+    const after = content.slice(range.end).trimStart();
+    return `${before}\n\n${newRetrospective.trim()}\n${after === "" ? "" : `\n${after}\n`}`;
   }
   // 기존 회고 없음 → 끝에 추가
   return content.trimEnd() + "\n\n" + newRetrospective + "\n";

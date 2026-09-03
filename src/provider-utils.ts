@@ -235,7 +235,6 @@ const CACHING_MODEL_PATTERNS: readonly RegExp[] = [
 	/claude-opus-(?:[4-9]|\d{2,})/,
 	/claude-sonnet-(?:[4-9]|\d{2,})/,
 	/claude-haiku-(?:[4-9]|\d{2,})/,
-	/gpt-(?:[5-9]|\d{2,})/,
 	/nova-(?:lite|pro|premier)/,
 ];
 

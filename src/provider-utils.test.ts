@@ -23,8 +23,6 @@ import {
 	backendsSupportingFormat,
 	supportsPromptCaching,
 	MIN_CACHEABLE_PREFIX_CHARS,
-	supportsPromptCaching,
-	MIN_CACHEABLE_PREFIX_CHARS,
 	effortLevels,
 	clampEffort,
 	buildEffortParams,
@@ -1475,7 +1473,6 @@ describe("supportsPromptCaching", () => {
 			"global.anthropic.claude-sonnet-5-20260101-v1:0",
 			"global.anthropic.claude-opus-4-1",
 			"global.anthropic.claude-haiku-5",
-			"global.openai.gpt-5.6-sol",
 			"amazon.nova-pro-v1:0",
 		]) {
 			expect(supportsPromptCaching("bedrock", id, LONG)).toBe(true);
@@ -1488,6 +1485,7 @@ describe("supportsPromptCaching", () => {
 			"anthropic.claude-instant-v1",
 			"meta.llama3-70b-instruct-v1:0",
 			"amazon.nova-micro-v1:0",
+			"global.openai.gpt-5.6-sol",
 			"",
 		]) {
 			expect(supportsPromptCaching("bedrock", id, LONG)).toBe(false);
@@ -1503,7 +1501,7 @@ describe("supportsPromptCaching", () => {
 
 	it("두 자리 버전을 낮은 버전으로 오판하지 않는다", () => {
 		expect(supportsPromptCaching("bedrock", "claude-sonnet-12", LONG)).toBe(true);
-		expect(supportsPromptCaching("bedrock", "gpt-10-terra", LONG)).toBe(true);
+		expect(supportsPromptCaching("bedrock", "gpt-10-terra", LONG)).toBe(false);
 	});
 });
 

@@ -81,11 +81,18 @@ function makeVault(initial: any[] = []) {
 
 function makeApp(vault: any) {
   const openFile = vi.fn(async () => {});
+  const renameFile = vi.fn(async (entry: any, dest: string) => {
+    vault._map.delete(entry.path);
+    entry.path = dest;
+    vault._map.set(dest, entry);
+  });
   const leaf = { openFile };
   return {
     vault,
+    fileManager: { renameFile },
     workspace: { getLeaf: vi.fn(() => leaf) },
     _openFile: openFile,
+    _renameFile: renameFile,
   };
 }
 
@@ -250,18 +257,19 @@ describe("archiveOldTodos (mock vault) — 오래된 항목 아카이브 부수�
     expect(vault.createFolder).toHaveBeenCalledWith("ToDo/Archive");
 
     // 오래된 항목은 "<archiveFolder>/<name>"로 이동된다
-    expect(vault.rename).toHaveBeenCalledWith(flatOld1, "ToDo/Archive/2026-03-01 To-Do.md");
-    expect(vault.rename).toHaveBeenCalledWith(legacyOld, "ToDo/Archive/2026-02-25.md");
+    expect(app._renameFile).toHaveBeenCalledWith(flatOld1, "ToDo/Archive/2026-03-01 To-Do.md");
+    expect(app._renameFile).toHaveBeenCalledWith(legacyOld, "ToDo/Archive/2026-02-25.md");
 
     // 충돌 항목은 이동하지 않는다
-    const renamedEntries = vault.rename.mock.calls.map((c) => c[0]);
+    const renamedEntries = app._renameFile.mock.calls.map((c: any[]) => c[0]);
     expect(renamedEntries).not.toContain(flatOld2);
 
     // 최근(>= cutoff) 항목은 이동하지 않는다
     expect(renamedEntries).not.toContain(flatRecent);
 
     // 실제 이동 수(2건)만 알림
-    expect(vault.rename).toHaveBeenCalledTimes(2);
+    expect(app._renameFile).toHaveBeenCalledTimes(2);
+    expect(vault.rename).not.toHaveBeenCalled();
     expect(t.todoArchived).toHaveBeenCalledWith(2);
   });
 
@@ -281,6 +289,7 @@ describe("archiveOldTodos (mock vault) — 오래된 항목 아카이브 부수�
     await archiveOldTodos(app, plugin, t, TODO_FOLDER, now);
 
     expect(vault.createFolder).not.toHaveBeenCalled();
+    expect(app._renameFile).not.toHaveBeenCalled();
     expect(vault.rename).not.toHaveBeenCalled();
     expect(t.todoArchived).not.toHaveBeenCalled();
   });

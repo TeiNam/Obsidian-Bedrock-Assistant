@@ -21,7 +21,7 @@ import { runArchitect } from "./second-brain/architect";
 // Second Brain Layer — 사고 도구(challenge/connect/emerge) 실행 래퍼 (읽기 전용)
 import { runChallenge, runConnect, runEmerge } from "./second-brain/thinking-tools";
 // 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
-import { ensureWithinFolder } from "./second-brain/vault-path-guard";
+import { ensureWithinFolder, escapesVault } from "./second-brain/vault-path-guard";
 import type { SecondBrainContext } from "./second-brain/scheduler";
 
 // Obsidian 제어 도구 목록
@@ -330,21 +330,24 @@ export class ToolExecutor {
 
   async execute(toolName: string, input: Record<string, unknown>): Promise<string> {
     try {
-      // 사용자 입력 경로에 normalizePath 적용 (심사 기준: 경로 정규화 필수)
-      if (input.path && typeof input.path === "string") {
-        input.path = normalizePath(input.path);
-      }
-      if (input.folder && typeof input.folder === "string") {
-        input.folder = normalizePath(input.folder);
-      }
-      if (input.source_path && typeof input.source_path === "string") {
-        input.source_path = normalizePath(input.source_path);
-      }
-      if (input.destination_path && typeof input.destination_path === "string") {
-        input.destination_path = normalizePath(input.destination_path);
-      }
-      if (input.output_path && typeof input.output_path === "string") {
-        input.output_path = normalizePath(input.output_path);
+      // 모든 LLM 제공 경로를 공통 진입점에서 검증한다. normalizePath는 `..`를
+      // 해석하지 않으므로 정규화 전에 탈출 입력을 거부해야 한다.
+      const pathKeys = [
+        "path",
+        "folder",
+        "source_path",
+        "destination_path",
+        "output_path",
+        "name",
+        "template_name",
+      ] as const;
+      for (const key of pathKeys) {
+        const value = input[key];
+        if (typeof value !== "string") continue;
+        if (escapesVault(value)) {
+          return `도구 실행 오류: ${toolName}: 볼트를 벗어나는 경로는 허용되지 않습니다: ${value}`;
+        }
+        input[key] = normalizePath(value);
       }
       switch (toolName) {
         case "search_vault":
@@ -400,7 +403,7 @@ export class ToolExecutor {
           return `알 수 없는 도구: ${toolName}`;
       }
     } catch (error) {
-      return `도구 실행 오류 (${toolName}): ${(error as Error).message}`;
+      return `도구 실행 오류: ${toolName}: ${(error as Error).message}`;
     }
   }
 
@@ -688,7 +691,7 @@ export class ToolExecutor {
 
     // {{변수명}} 치환
     for (const [key, value] of Object.entries(variables)) {
-      content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+      content = content.split(`{{${key}}}`).join(value);
     }
 
     // 출력 파일 생성
@@ -745,7 +748,7 @@ export class ToolExecutor {
       }
     }
 
-    await this.app.vault.rename(source, destPath);
+    await this.app.fileManager.renameFile(source, destPath);
     const type = source instanceof TFolder ? "폴더" : "파일";
     new Notice(`${type} 이동됨: ${destPath}`);
     return `${type}을(를) 이동했습니다: ${sourcePath} → ${destPath}`;

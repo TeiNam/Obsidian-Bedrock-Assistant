@@ -113,11 +113,14 @@ function makeParaEnv(fileCount: number, existingTargets: Set<string> = new Set()
       getAbstractFileByPath: (p: string) =>
         p.startsWith("0") && !p.includes("/") ? {} : existingTargets.has(p) ? {} : null,
       createFolder: async () => {},
-      rename: async (f: FakeFile, to: string) => {
-        renamed.push(to);
-      },
+      rename: async () => {},
       getAllLoadedFiles: () => [],
       delete: async () => {},
+    },
+    fileManager: {
+      renameFile: async (f: FakeFile, to: string) => {
+        renamed.push(to);
+      },
     },
   };
   return { app, files, renamed };

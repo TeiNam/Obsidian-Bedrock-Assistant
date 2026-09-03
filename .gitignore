@@ -20,7 +20,10 @@ Thumbs.db
 # 소스맵
 *.map
 
-# Kiro (steering, agents만 추적)
-.kiro/specs/
-.kiro/settings/
-.kiro/hooks/
+# AI 도구 설정 디렉터리 — 전부 로컬 전용이다.
+#
+# 개발자마다 다른 에이전트·스티어링·권한 설정이 들어가고, 저장소에 두면 서로의 로컬 설정을
+# 덮어쓰거나 병합 충돌을 만든다. 프로젝트 정책으로 공유할 내용은 docs/ 아래에 둔다.
+.claude/
+.kiro/
+.superpowers/
