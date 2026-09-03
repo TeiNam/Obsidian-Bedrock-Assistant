@@ -68,6 +68,13 @@ export interface ContradictionParseResult {
   ok: boolean;
   /** 파싱된 모순 항목 (ok=false면 빈 배열) */
   items: Contradiction[];
+  /**
+   * 배열에는 있었지만 정규화를 통과하지 못해 버린 후보 수.
+   *
+   * 실재하지 않는 노트를 가리키는 후보가 대표적이다. `items`가 비었는데 이 값이 0보다
+   * 크면 "모순 없음"이 아니라 "후보가 전부 무효였음"이다.
+   */
+  dropped: number;
 }
 
 /**
