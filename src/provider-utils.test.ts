@@ -15,6 +15,7 @@ import {
 	toOpenAIMessages,
 	toOllamaMessages,
 	supportsEffort,
+	supportsBinaryAttachments,
 	effortLevels,
 	clampEffort,
 	buildEffortParams,
@@ -1290,5 +1291,61 @@ describe("provider-utils embeddingSignature", () => {
 			openaiEmbeddingModel: "changed",
 		});
 		expect(before).toBe(after);
+	});
+});
+
+// ============================================
+// supportsBinaryAttachments: 변환기 실제 동작과의 결합
+// ============================================
+/**
+ * chat-view는 이미지·문서 첨부를 Bedrock Converse 규격 블록으로 만들고,
+ * supportsBinaryAttachments가 false인 백엔드에서는 첨부 자체를 거절한다.
+ *
+ * 이 판정이 변환기의 실제 동작과 어긋나면 두 방향으로 조용히 틀린다:
+ *  - false인데 변환기가 처리할 수 있으면 → 쓸 수 있는 기능을 막는다.
+ *  - true인데 변환기가 못 하면 → 사용자가 첨부를 봤다고 믿은 채 엉뚱한 답을 받는다.
+ *
+ * 그래서 "변환 결과에 첨부 흔적이 남는가"로 실제 능력을 재고, 판정과 비교한다.
+ * 나중에 toOpenAIMessages 등에 블록 변환을 구현하면 여기서 먼저 실패하므로
+ * 판정을 함께 고치도록 강제된다.
+ */
+describe("supportsBinaryAttachments — 변환기 실제 동작과 일치", () => {
+	/** chat-view의 buildBinaryContentBlock이 만드는 것과 같은 모양의 이미지 블록. */
+	const imageMessage = [
+		{
+			role: "user" as const,
+			content: [
+				{ image: { format: "png", source: { bytes: new Uint8Array([1, 2, 3]) } } },
+				{ text: "이 이미지를 설명해줘" },
+			],
+		},
+	];
+
+	it("Bedrock은 지원한다고 판정한다", () => {
+		// bedrock-client는 content를 ConverseStreamCommand에 그대로 넘긴다.
+		expect(supportsBinaryAttachments("bedrock")).toBe(true);
+	});
+
+	it("이미지 블록을 버리는 변환기의 백엔드는 지원한다고 판정하지 않는다", () => {
+		const openai = JSON.stringify(toOpenAIMessages(imageMessage));
+		const ollama = JSON.stringify(toOllamaMessages(imageMessage));
+
+		// 이미지 흔적("png")이 남지 않는다 = 변환기가 블록을 버렸다.
+		expect(openai).not.toContain("png");
+		expect(ollama).not.toContain("png");
+		// 버리는 백엔드는 지원한다고 주장해선 안 된다.
+		expect(supportsBinaryAttachments("openai")).toBe(false);
+		expect(supportsBinaryAttachments("ollama")).toBe(false);
+	});
+
+	it("이미지 블록을 버려도 같은 메시지의 텍스트는 보존한다", () => {
+		// 첨부만 사라지고 질문은 전달되므로 사용자가 눈치채기 어렵다 — 게이팅의 근거다.
+		expect(JSON.stringify(toOpenAIMessages(imageMessage))).toContain("이 이미지를 설명해줘");
+		expect(JSON.stringify(toOllamaMessages(imageMessage))).toContain("이 이미지를 설명해줘");
+	});
+
+	it("Gemini는 지원하지 않는다고 판정한다", () => {
+		// gemini-client의 parts 빌더는 text/toolUse/toolResult 분기뿐이다.
+		expect(supportsBinaryAttachments("gemini")).toBe(false);
 	});
 });

@@ -11,7 +11,7 @@ import { isAllowedTextExtension } from "./file-extension-utils";
 import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 // 모델 변경 시 effort 허용 집합 보정에 사용
-import { clampEffort } from "./provider-utils";
+import { clampEffort, supportsBinaryAttachments } from "./provider-utils";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
@@ -559,15 +559,23 @@ export class ChatView extends ItemView {
           : m.content }],
       }));
 
-      // 바이너리 첨부 파일을 마지막 user 메시지에 추가
+      // 바이너리 첨부 파일을 마지막 user 메시지에 추가.
+      //
+      // 첨부 후 백엔드를 전환했을 수 있으므로 전송 시점에 한 번 더 확인한다.
+      // addLocalFile의 게이팅만으로는 "Bedrock에서 이미지 첨부 → Gemini로 전환 → 전송"
+      // 경로를 막지 못하고, 그 경로에서 블록은 변환기에서 조용히 사라진다.
       if (this.attachedBinaryFiles.size > 0 && converseMessages.length > 0) {
-        const lastUserIdx = converseMessages.length - 1;
-        if (converseMessages[lastUserIdx].role === "user") {
-          for (const [path, data] of this.attachedBinaryFiles) {
-            const ext = path.split(".").pop()?.toLowerCase() || "";
-            const block = this.buildBinaryContentBlock(path, ext, data);
-            if (block) {
-              (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
+        if (!supportsBinaryAttachments(this.plugin.settings.aiBackend)) {
+          new Notice(this.t.binaryDropped([...this.attachedBinaryFiles.keys()].join(", ")));
+        } else {
+          const lastUserIdx = converseMessages.length - 1;
+          if (converseMessages[lastUserIdx].role === "user") {
+            for (const [path, data] of this.attachedBinaryFiles) {
+              const ext = path.split(".").pop()?.toLowerCase() || "";
+              const block = this.buildBinaryContentBlock(path, ext, data);
+              if (block) {
+                (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
+              }
             }
           }
         }
@@ -1285,17 +1293,23 @@ export class ChatView extends ItemView {
     // 로컬 File 객체를 컨텍스트에 추가
     private async addLocalFile(file: File): Promise<void> {
       const ext = file.name.split(".").pop()?.toLowerCase() || "";
-      const supportedExts = [
-        "png", "jpg", "jpeg", "gif", "webp",
-        "pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt",
-      ];
+      // 텍스트로 읽어 프롬프트에 인라인하는 형식 — 모든 백엔드에서 동작한다.
+      const textExts = ["txt", "csv", "html"];
+      // 바이너리 콘텐츠 블록으로 전달하는 형식 — 백엔드 지원이 필요하다.
+      const binaryExts = ["png", "jpg", "jpeg", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx"];
 
-      if (!supportedExts.includes(ext)) {
+      if (!textExts.includes(ext) && !binaryExts.includes(ext)) {
         new Notice(this.t.unsupportedExt(ext));
         return;
       }
 
-      const textExts = ["txt", "csv", "html"];
+      const backend = this.plugin.settings.aiBackend;
+      if (binaryExts.includes(ext) && !supportsBinaryAttachments(backend)) {
+        // 붙이게 놔두면 전송 시점에 조용히 버려진다. 여기서 거절해 이유를 알린다.
+        new Notice(this.t.binaryUnsupported(ext, backend));
+        return;
+      }
+
       if (textExts.includes(ext)) {
         const text = await file.text();
         this.attachedFiles.set(file.name, text);

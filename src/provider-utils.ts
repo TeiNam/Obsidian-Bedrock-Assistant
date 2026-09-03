@@ -224,6 +224,25 @@ export function supportsEffort(provider: AiProvider, modelId: string): boolean {
 	return (EFFORT_MODEL_PATTERNS[provider] ?? []).some((re) => re.test(id));
 }
 
+/**
+ * 백엔드가 바이너리 첨부(이미지·문서) 콘텐츠 블록을 실제로 모델까지 전달하는지 판별한다.
+ *
+ * chat-view의 buildBinaryContentBlock은 Bedrock Converse 규격으로 블록을 만든다
+ * (`{image:{format,source:{bytes}}}` / `{document:{format,name,source:{bytes}}}`).
+ * Bedrock 클라이언트는 이 블록을 ConverseStreamCommand에 그대로 넘기므로 동작한다.
+ *
+ * 나머지 백엔드의 변환기는 text·tool_use·tool_result만 인식한다 — toOpenAIMessages와
+ * toOllamaMessages는 normalizeBlock이 null을 주면 `continue`로 넘기고, gemini-client의
+ * parts 빌더도 `"text" in b` / `"toolResult" in b` / `"toolUse" in b` 분기뿐이다.
+ * 즉 이미지·문서 블록은 예외 없이 조용히 사라진다. 게이팅이 없으면 사용자는 모델이
+ * 첨부를 봤다고 믿은 채 엉뚱한 답을 받는다 — 가장 나쁜 실패 방식이다.
+ *
+ * 새 백엔드에 블록 변환을 구현하면 반드시 여기에도 등록해야 한다.
+ */
+export function supportsBinaryAttachments(provider: AiProvider): boolean {
+	return provider === "bedrock";
+}
+
 /** effort 값의 강도 순서(약함 → 강함). clampEffort의 근접 값 선택 기준. */
 const EFFORT_RANK: readonly EffortLevel[] = [
 	"minimal",

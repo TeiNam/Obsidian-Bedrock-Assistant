@@ -15,6 +15,7 @@ import {
 } from "./graph-rag/vector-search";
 import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { combineAndRank } from "./graph-rag/score-combiner";
+import { filterIndex, isFilterEmpty, type SearchFilter } from "./graph-rag/entry-filter";
 
 // === Graph_RAG_Search 결과 타입 (task 8.4) ===
 // 기존 search()의 반환 타입 Array<{path,title,excerpt,score}>을 대체하는 신규 API 시그니처.
@@ -55,6 +56,11 @@ export interface GraphRagResult {
    * 없는 경우 true. 호출부는 사용자에게 재인덱싱을 안내해야 한다.
    */
   staleEmbeddings?: boolean;
+  /**
+   * 필터가 제외한 노트 수. 필터 때문에 결과가 줄었다는 사실을 호출부가 알려면 필요하다.
+   * 이 값이 크고 items가 비면 "인덱싱이 필요함"이 아니라 "조건이 좁음"이 원인이다.
+   */
+  filteredOutCount?: number;
 }
 
 /** 발췌(excerpt) 최대 길이. 검색 결과 미리보기와 LLM 컨텍스트에 사용된다. */
@@ -496,7 +502,7 @@ export class VaultIndexer {
    * @param query 검색 쿼리
    * @param limit 결과 개수 상한 (기본 10, 1~100). 범위 밖이면 오류 throw (Req 6.7)
    */
-  async search(query: string, limit = 10): Promise<GraphRagResult> {
+  async search(query: string, limit = 10, filter: SearchFilter = {}): Promise<GraphRagResult> {
     // 1) limit 범위 검증 (Req 6.7) — 범위를 벗어나면 결과 없이 오류를 던진다
     if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
       throw new Error(`limit은 1 이상 100 이하여야 합니다 (입력값: ${limit}).`);
@@ -512,14 +518,26 @@ export class VaultIndexer {
       return { items: [] };
     }
 
+    // 3-1) 필터 프리적용 — 시드·그래프 순회·키워드 폴백이 모두 같은 후보 집합을 쓴다.
+    //      한 곳이라도 원본 인덱스를 보면 필터가 새어 조건 밖 노트가 이웃으로 들어온다.
+    //      임베딩 비교 전에 줄이므로 결과 정확도와 속도를 함께 얻는다.
+    const candidates = filterIndex(this.index, filter);
+    const filteredOutCount = this.index.size - candidates.size;
+    const filterInfo = isFilterEmpty(filter) ? {} : { filteredOutCount };
+
+    if (candidates.size === 0) {
+      return { items: [], ...filterInfo };
+    }
+
     // 4) 임베딩이 인덱스에 하나도 없으면 키워드 검색으로 폴백 (Req 4.6)
     //    임베딩 구성 변경으로 벡터를 폐기한 경우도 이 경로를 타므로 stale 표시를 함께 전달한다.
     if (!this.useEmbeddings || !this.hasEmbeddings()) {
-      const items = this.keywordSearch(query, limit);
+      const items = this.keywordSearch(query, limit, candidates);
       return {
         items,
         usedKeywordFallback: true,
         ...(this.staleIndex ? { staleEmbeddings: true } : {}),
+        ...filterInfo,
       };
     }
 
@@ -527,7 +545,7 @@ export class VaultIndexer {
     //    시드 수를 limit에 맞춰 확장한다. 과거에는 10으로 고정돼 limit 11~100이
     //    무의미했다(11위 이후는 그래프 이웃만 채울 수 있었다).
     const queryEmbedding = await this.client.getEmbedding(query);
-    const entries = Array.from(this.index.values());
+    const entries = Array.from(candidates.values());
     const seedCount = Math.max(SEED_MIN_COUNT, Math.min(limit, entries.length));
     const diag = searchWithDiagnostics(queryEmbedding, entries, seedCount);
     const seeds: NoteVectorScore[] = diag.results;
@@ -536,8 +554,8 @@ export class VaultIndexer {
     //      비교 가능한 노트가 하나도 없으면 벡터 검색 결과가 무의미하므로 키워드 검색으로
     //      폴백하고, 사용자에게 재인덱싱이 필요함을 알린다.
     if (diag.comparableCount === 0 && diag.dimensionMismatchCount > 0) {
-      const items = this.keywordSearch(query, limit);
-      return { items, usedKeywordFallback: true, staleEmbeddings: true };
+      const items = this.keywordSearch(query, limit, candidates);
+      return { items, usedKeywordFallback: true, staleEmbeddings: true, ...filterInfo };
     }
     // 일부만 불일치하는 경우(재인덱싱 진행 중 등)는 비교 가능한 후보로 검색을 계속하되
     // 인덱스가 낡았음을 함께 보고한다.
@@ -545,13 +563,13 @@ export class VaultIndexer {
 
     // 시드가 없으면 후보 0개 → 빈 결과 (Req 6.9)
     if (seeds.length === 0) {
-      return { items: [], ...(staleEmbeddings ? { staleEmbeddings } : {}) };
+      return { items: [], ...(staleEmbeddings ? { staleEmbeddings } : {}), ...filterInfo };
     }
 
     // 6) Graph_Traversal — depth=0이면 순회를 생략하고 시드만 후보로 사용한다 (Req 5.1, 5.2)
     const neighbors =
       this.traversalDepth >= 1
-        ? traverseGraph(seeds, this.index, this.traversalDepth, MAX_GRAPH_CANDIDATES)
+        ? traverseGraph(seeds, candidates, this.traversalDepth, MAX_GRAPH_CANDIDATES)
         : [];
 
     // 6-1) 이웃 자신의 벡터 유사도를 계산해 결합 점수에 반영한다.
@@ -564,18 +582,19 @@ export class VaultIndexer {
     }
 
     // 7) ScoreCombiner — 통합 점수 산출 및 재정렬 (Req 6.1~6.4, 6.8)
-    const combined = combineAndRank(seeds, neighbors, this.index, { neighborScores });
+    const combined = combineAndRank(seeds, neighbors, candidates, { neighborScores });
 
     // 7-1) 최소 관련성 임계값으로 후보가 전부 걸러진 경우 키워드 검색으로 폴백한다.
     //      인덱스는 정상인데 "검색 결과 없음"만 반환하면 사용자가 불필요한 재인덱싱을
     //      하게 되고, Second Brain 기능들(synthesize/reconcile/challenge/connect)이
     //      조용히 no-op이 된다. 임베딩 점수가 낮아도 키워드로는 찾을 수 있는 경우가 많다.
     if (combined.length === 0) {
-      const items = this.keywordSearch(query, limit);
+      const items = this.keywordSearch(query, limit, candidates);
       return {
         items,
         usedKeywordFallback: true,
         ...(staleEmbeddings ? { staleEmbeddings } : {}),
+        ...filterInfo,
       };
     }
 
@@ -590,7 +609,7 @@ export class VaultIndexer {
       isSeed: r.isSeed,
       seedPath: r.seedPath,
       // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
-      seedTitle: r.seedPath ? this.index.get(r.seedPath)?.title ?? null : null,
+      seedTitle: r.seedPath ? candidates.get(r.seedPath)?.title ?? null : null,
     }));
 
     return { items, ...(staleEmbeddings ? { staleEmbeddings } : {}) };
@@ -617,11 +636,15 @@ export class VaultIndexer {
   // 키워드 검색 (임베딩이 0개일 때 폴백, Req 4.6)
   // 결과는 GraphRagSearchItem 형태로 반환하며, 모든 항목을 시드(hop 0)로 표시한다.
   // combinedScore는 최고 점수를 1.0으로 하는 상대 정규화 값으로 산출한다(0.0~1.0 보장, Req 7.2).
-  private keywordSearch(query: string, limit: number): GraphRagSearchItem[] {
+  private keywordSearch(
+    query: string,
+    limit: number,
+    candidates: Map<string, VaultIndexEntry> = this.index
+  ): GraphRagSearchItem[] {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     const scored: Array<{ entry: VaultIndexEntry; score: number }> = [];
 
-    for (const entry of this.index.values()) {
+    for (const entry of candidates.values()) {
       const text = entry.searchText || `${entry.title}\n${entry.excerpt}`.toLowerCase();
       let score = 0;
 

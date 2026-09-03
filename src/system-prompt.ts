@@ -48,8 +48,10 @@ function buildDateTimeContext(now: Date): string {
     "\n\n## Current date and time",
     `${buildDateStr(now)} (${weekday}) ${time} — ${timeZone}`,
     "This is the user's local time, refreshed on every message. Resolve relative dates" +
-      ' ("today", "yesterday", "this Friday", "last month") against it instead of guessing.' +
-      " To-do and retrospective note paths use the same YYYY-MM-DD format shown above.",
+      ' ("today", "yesterday", "this Friday", "last month") against it instead of guessing,' +
+      " then pass the computed YYYY-MM-DD to `search_vault`'s modifiedAfter/modifiedBefore" +
+      " rather than searching the whole vault. To-do and retrospective note paths use the" +
+      " same YYYY-MM-DD format.",
   ].join("\n");
 }
 

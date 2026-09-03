@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, MarkdownView, Notice, normalizePath } from "obsidian";
 import type { VaultIndexer, GraphRagResult, GraphRagSearchItem } from "./vault-indexer";
+import { normalizeSearchFilter, describeFilter } from "./graph-rag/entry-filter";
 import type { ToolDefinition, SecondBrainSettings, IAiClient } from "./types";
 // Second Brain Layer — 위키 노트 생성/카탈로그 갱신에 사용하는 순수 함수 + I/O 래퍼
 import { buildAiFirstNote, type AiFirstMeta, type Recency, type Confidence } from "./second-brain/ai-first-format";
@@ -26,12 +27,33 @@ import type { SecondBrainContext } from "./second-brain/scheduler";
 export const TOOLS: ToolDefinition[] = [
   {
     name: "search_vault",
-    description: "볼트에서 시맨틱 검색을 수행합니다. 사용자의 노트 중 질문과 관련된 내용을 찾습니다.",
+    description:
+      "볼트에서 시맨틱 검색을 수행합니다. 사용자의 노트 중 질문과 관련된 내용을 찾습니다. " +
+      "folder/tags/수정 기간으로 후보를 좁힐 수 있습니다 — \"지난달 회의록\", " +
+      "\"Projects 폴더의 노트\", \"#urgent 태그가 붙은 것\" 같은 요청에 사용하세요. " +
+      "날짜는 시스템 프롬프트의 현재 날짜를 기준으로 직접 계산해 YYYY-MM-DD로 넘기세요.",
     input_schema: {
       type: "object",
       properties: {
         query: { type: "string", description: "검색 쿼리" },
         limit: { type: "number", description: "결과 수 (기본값: 10, 1~100)" },
+        folder: {
+          type: "string",
+          description: "이 폴더와 그 하위만 검색 (예: \"Projects\"). 생략하면 볼트 전체.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "이 태그 중 하나라도 가진 노트만 (OR). 선행 # 유무와 대소문자는 무관.",
+        },
+        modifiedAfter: {
+          type: "string",
+          description: "이 날짜(포함) 이후에 수정된 노트만. \"YYYY-MM-DD\".",
+        },
+        modifiedBefore: {
+          type: "string",
+          description: "이 날짜(포함)까지 수정된 노트만. \"YYYY-MM-DD\".",
+        },
       },
       required: ["query"],
     },
@@ -325,7 +347,7 @@ export class ToolExecutor {
       }
       switch (toolName) {
         case "search_vault":
-          return await this.searchVault(input.query as string, (input.limit as number) || 10);
+          return await this.searchVault(input.query as string, (input.limit as number) || 10, input);
         case "read_note":
           return await this.readNote(input.path as string);
         case "create_note":
@@ -381,13 +403,25 @@ export class ToolExecutor {
     }
   }
 
-  private async searchVault(query: string, limit: number): Promise<string> {
+  private async searchVault(
+    query: string,
+    limit: number,
+    rawInput: Record<string, unknown> = {}
+  ): Promise<string> {
+    // 필터 값 검증을 먼저 한다. 잘못된 값을 조용히 버리면 모델은 조건이 적용됐다고
+    // 믿은 채 전체 검색 결과를 근거로 답한다.
+    const { filter, problems } = normalizeSearchFilter(rawInput);
+    if (problems.length > 0) {
+      return `검색 필터가 올바르지 않습니다:\n- ${problems.join("\n- ")}`;
+    }
+    const filterDesc = describeFilter(filter);
+
     // 검색 실패(throw)와 정상 빈 결과를 구분한다 (Req 7.6).
     // indexer.search 호출만 별도 try/catch로 감싸, 검색 자체가 실패하면
     // 부분/빈 결과를 정상으로 반환하지 않고 명확한 "검색 실패" 오류 메시지를 반환한다.
     let result: GraphRagResult;
     try {
-      result = await this.indexer.search(query, limit);
+      result = await this.indexer.search(query, limit, filter);
     } catch (error) {
       return `검색 실패: ${(error as Error).message}`;
     }
@@ -405,13 +439,22 @@ export class ToolExecutor {
 
     // 결과가 비어 있으면 안내 메시지 반환 (Req 7.5)
     if (result.items.length === 0) {
+      // 필터가 후보를 다 걷어낸 경우와 인덱스가 없는 경우는 처방이 다르다.
+      // 여기서 구분하지 않으면 모델이 불필요한 재인덱싱을 안내한다.
+      if (result.filteredOutCount) {
+        return (
+          `검색 결과가 없습니다. 필터(${filterDesc})가 노트 ${result.filteredOutCount}개를 제외했습니다. ` +
+          `조건을 넓혀 다시 시도하세요.${staleWarning}`
+        );
+      }
       return `검색 결과가 없습니다. 볼트 인덱싱이 필요할 수 있습니다.${staleWarning}`;
     }
 
     // 결과 헤더 — 키워드 폴백이 사용된 경우 대체 검색 사실을 표시 (Req 4.6)
+    const scope = filterDesc ? ` — 필터: ${filterDesc}` : "";
     const header = result.usedKeywordFallback
-      ? "검색 결과 (키워드 검색 — 임베딩 인덱스가 없어 키워드 검색으로 대체됨):"
-      : "검색 결과 (Graph RAG):";
+      ? `검색 결과 (키워드 검색 — 임베딩 인덱스가 없어 키워드 검색으로 대체됨)${scope}:`
+      : `검색 결과 (Graph RAG)${scope}:`;
 
     const body = result.items
       .map((item, i) => this.formatSearchItem(item, i + 1))
