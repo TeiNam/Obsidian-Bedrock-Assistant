@@ -47,7 +47,16 @@ const UNSAFE_TITLE_CHARS = /[\\/:*?"<>|#^[\]]/g;
  * 돌려주는 일이 흔한데, 그대로 쓰면 의도치 않은 하위 폴더가 생긴다.
  */
 export function sanitizeTitle(title: string): string {
-  return title.replace(UNSAFE_TITLE_CHARS, " ").replace(/\s+/g, " ").trim();
+  return (
+    title
+      .replace(UNSAFE_TITLE_CHARS, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      // LLM이 `Report.md`처럼 확장자를 붙여 돌려주는 일이 있다. 그대로 쓰면
+      // `Report.md.md` 파일이 생기고, 승인 화면에 보인 제목과도 달라진다.
+      .replace(/\.md$/i, "")
+      .trim()
+  );
 }
 
 /** 태그 정규화 — 선행 #과 공백 제거, 소문자, 내부 공백은 하이픈. */
@@ -156,16 +165,34 @@ export function resolveTargetPath(
   plan: TriagePlan,
   taken: ReadonlySet<string>
 ): string | null {
-  const title = plan.suggestedTitle !== "" ? plan.suggestedTitle : basenameNoExt(plan.path);
+  // 제안 제목이 정리 후 비면(예: LLM이 ".md"만 돌려준 경우) 제안이 없는 것으로 보고
+  // 현재 이름을 유지한다. 폴더 제안은 그대로 살려 이동은 가능하게 둔다.
+  const suggested = sanitizeTitle(plan.suggestedTitle);
+  const title = suggested !== "" ? suggested : sanitizeTitle(basenameNoExt(plan.path));
+  if (title === "") return null;
   const folder = plan.suggestedFolder !== "" ? plan.suggestedFolder : dirOf(plan.path);
 
   const target = folder === "" ? `${title}.md` : `${folder}/${title}.md`;
   if (target === plan.path) return null;
   // 대상이 이미 있으면 건너뛴다. 이름이 겹치는 다른 노트를 덮어쓰는 것이 최악이다.
-  if (taken.has(target)) return null;
+  //
+  // 비교는 **대소문자를 무시한다.** macOS·Windows 기본 파일시스템에서 `Projects/Foo.md`와
+  // `Projects/foo.md`는 같은 파일이므로, 구분해서 통과시키면 renameFile이 오류를 내고
+  // 이미 일부 반영된 승인 배치가 중간에 끊긴다.
+  if (isTaken(target, taken)) return null;
   if (escapesVault(target)) return null;
 
   return target;
+}
+
+/** 대소문자를 무시한 경로 충돌 판정. */
+function isTaken(target: string, taken: ReadonlySet<string>): boolean {
+  if (taken.has(target)) return true;
+  const lower = target.toLowerCase();
+  for (const existing of taken) {
+    if (existing.toLowerCase() === lower) return true;
+  }
+  return false;
 }
 
 /**

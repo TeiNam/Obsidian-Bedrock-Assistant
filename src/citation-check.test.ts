@@ -404,3 +404,46 @@ describe("extractCitations — 첨부 임베드", () => {
     ]);
   });
 });
+
+// ============================================
+// 같은 이름의 노트가 여러 폴더에 있을 때의 앵커
+// ============================================
+/**
+ * 한 응답이 `A/Topic`과 `B/Topic`을 함께 인용하면 basename 키 `topic`은 두 노트의 헤딩
+ * 합집합이 된다. 경로 대상까지 그 키로 폴백하면 B에만 있는 헤딩이 `[[A/Topic#...]]`을
+ * 통과시킨다 — 존재하지 않는 절을 "확인됨"으로 보고하는 것이다.
+ */
+describe("findUnresolvedCitations — 폴더별 앵커", () => {
+  const paths = ["A/Topic.md", "B/Topic.md"];
+  const headings = buildHeadingIndex([
+    ["A/Topic.md", ["가"]],
+    ["B/Topic.md", ["나"]],
+  ]);
+
+  it("그 노트에 없는 헤딩을 경고한다", () => {
+    // "나"는 B에만 있다.
+    const out = findUnresolvedCitations(extractCitations("[[A/Topic#나]]"), paths, headings);
+    expect(out.map((c) => c.anchor)).toEqual(["나"]);
+  });
+
+  it("그 노트에 있는 헤딩은 통과한다", () => {
+    expect(findUnresolvedCitations(extractCitations("[[A/Topic#가]]"), paths, headings)).toEqual(
+      []
+    );
+    expect(findUnresolvedCitations(extractCitations("[[B/Topic#나]]"), paths, headings)).toEqual(
+      []
+    );
+  });
+
+  it("확장자를 붙인 경로도 같게 판정한다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[A/Topic.md#나]]"), paths, headings)
+    ).toHaveLength(1);
+  });
+
+  it("이름만 쓴 대상은 합집합으로 본다", () => {
+    // 어느 노트를 가리키는지 정할 수 없으므로 둘 중 하나에 있으면 통과시킨다 —
+    // 확인할 수 없는 것을 "없다"고 경고하면 거짓 경고가 된다.
+    expect(findUnresolvedCitations(extractCitations("[[Topic#나]]"), paths, headings)).toEqual([]);
+  });
+});

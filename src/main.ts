@@ -939,6 +939,14 @@ export default class GeminiAssistantPlugin extends Plugin {
         const file = this.app.vault.getAbstractFileByPath(sourcePath);
         if (!(file instanceof TFile)) continue;
 
+        // 승인 화면이 열려 있는 동안 대상 노트가 지워지거나 이름이 바뀔 수 있다. 낡은
+        // 목록을 그대로 쓰면 깨진 링크를 만드는데, 이름 변경 시점에는 그 링크가 존재하지
+        // 않았으므로 옵시디언도 보정해주지 못한다 — 적용 직전에 다시 확인한다.
+        const live = group.filter(
+          (s) => this.app.vault.getAbstractFileByPath(s.targetPath) instanceof TFile
+        );
+        if (live.length === 0) continue;
+
         // 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있고, 기존 블록의
         // 링크를 읽어 합집합으로 써야 한다 — 새 승인분만으로 블록을 만들면 이전에
         // 승인한 링크가 사라진다. 내용이 그대로면 쓰지 않아 불필요한 재임베딩을 막는다.
@@ -948,7 +956,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         let added = 0;
         const wrote = await processIfChanged(this.app, file, (content) => {
           const existing = getGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY);
-          const merged = mergeRelatedLinksBlock(existing, group);
+          const merged = mergeRelatedLinksBlock(existing, live);
           // 이미 붙어 있던 링크를 다시 세면 "N건 추가"가 사실과 달라진다.
           added =
             parseRelatedLinksBlock(merged).length - parseRelatedLinksBlock(existing).length;
@@ -961,7 +969,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 링크 **대상**의 백링크도 갱신 대상이다. backlinks는 대상 엔트리에 역산해
         // 저장되는데 대상의 mtime은 바뀌지 않으므로 indexFile이 즉시 반환한다 —
         // 대상에서 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
-        for (const s of group) linkTargets.add(s.targetPath);
+        for (const s of live) linkTargets.add(s.targetPath);
       }
 
       // 소스는 본문이 바뀌었으니 다시 색인한다(청크·임베딩이 달라진다).
@@ -975,7 +983,18 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (!touched.has(path)) this.indexer.refreshGraphMetadata(path);
       }
 
-      return { notes: grouped.size, links };
+      // 위 갱신은 옵시디언이 아직 새 링크를 해석하지 않은 상태를 읽을 수 있다
+      // (metadataCache는 쓰기 직후 한 틱 늦다). 그러면 소스는 최신 mtime이 찍혀 이후
+      // 증분 색인이 건너뛰고, 대상에는 변경 이벤트조차 없어 그래프가 영구히 낡는다.
+      // 캐시 해석이 끝난 뒤 링크 정보만 한 번 더 읽어 수렴시킨다(임베딩은 건드리지 않는다).
+      this.onceMetadataResolved(() => {
+        for (const path of touched) this.indexer.refreshGraphMetadata(path);
+        for (const path of linkTargets) this.indexer.refreshGraphMetadata(path);
+      });
+
+      // 모달이 열린 동안 소스가 사라졌거나 링크가 이미 붙어 있어 쓰기를 건너뛴 경우까지
+      // grouped.size에 들어간다. 실제로 바뀐 노트 수를 보고한다.
+      return { notes: touched.size, links };
     }).open();
   }
 
@@ -1020,6 +1039,27 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
       }
     ).open();
+  }
+
+  /**
+   * metadataCache의 링크 해석이 끝난 다음 시점에 콜백을 **한 번** 실행한다.
+   *
+   * 볼트에 쓴 직후 `resolvedLinks`는 아직 이전 상태일 수 있다. 그 상태로 그래프 정보를
+   * 읽으면 낡은 링크가 인덱스에 굳는다. `resolved` 이벤트는 옵시디언이 해석을 마쳤을 때
+   * 발생하므로 그 뒤에 다시 읽는다.
+   */
+  private onceMetadataResolved(fn: () => void): void {
+    const ref = this.app.metadataCache.on("resolved", () => {
+      this.app.metadataCache.offref(ref);
+      try {
+        fn();
+      } catch (error) {
+        // 인덱스 갱신 실패가 승인 결과 보고를 막아선 안 된다.
+        console.error("메타데이터 해석 후 그래프 갱신 실패:", error);
+      }
+    });
+    // 이벤트가 오기 전에 플러그인이 내려가도 리스너가 남지 않게 한다.
+    this.registerEvent(ref);
   }
 
   /** 현재 활성 노트의 제목(basename)을 반환한다. 없으면 빈 문자열. */

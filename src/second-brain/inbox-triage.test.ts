@@ -331,3 +331,44 @@ describe("Property: resolveTargetPath 안전성", () => {
     );
   });
 });
+
+// ============================================
+// 확장자와 대소문자
+// ============================================
+describe("resolveTargetPath — 확장자·대소문자", () => {
+  it("제목에 붙은 .md를 다시 붙이지 않는다", () => {
+    // LLM이 `Report.md`를 돌려주면 `Report.md.md`가 생기고, 승인 화면에 보인 제목과도
+    // 달라진다. 프롬프트가 금지하지 않는 형태다.
+    const out = resolveTargetPath(plan({ suggestedTitle: "Report.md" }), new Set());
+    expect(out).toBe("Projects/Report.md");
+  });
+
+  it("대소문자만 다른 기존 경로도 충돌로 본다", () => {
+    // macOS·Windows에서는 같은 파일이다. 구분해서 통과시키면 renameFile이 오류를 내고
+    // 이미 일부 반영된 승인 배치가 중간에 끊긴다.
+    const taken = new Set(["projects/쿠버네티스 배포 정리.MD".toLowerCase()]);
+    expect(resolveTargetPath(plan(), taken)).toBeNull();
+
+    expect(
+      resolveTargetPath(plan({ suggestedTitle: "Foo" }), new Set(["Projects/foo.md"]))
+    ).toBeNull();
+  });
+
+  it("확장자를 떼면 제목이 비는 경우를 거부한다", () => {
+    // `.md`만 돌려주면 파일명이 `.md`가 된다.
+    expect(resolveTargetPath(plan({ suggestedTitle: ".md" }), new Set())).toBe(
+      "Projects/무제 1.md"
+    );
+  });
+});
+
+describe("sanitizeTitle — 확장자", () => {
+  it("후행 .md를 떼고 대소문자를 가리지 않는다", () => {
+    expect(sanitizeTitle("Report.md")).toBe("Report");
+    expect(sanitizeTitle("Report.MD")).toBe("Report");
+  });
+
+  it("중간의 .md는 건드리지 않는다", () => {
+    expect(sanitizeTitle("Report.md 초안")).toBe("Report.md 초안");
+  });
+});

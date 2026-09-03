@@ -212,8 +212,13 @@ function resolvesAnchor(
   if (citation.anchor === undefined) return true;
   if (headingsByNote.size === 0) return true;
 
-  // 인용 대상을 전체 경로와 basename 두 가지로 찾아본다.
-  const keys = [citation.target.toLowerCase(), basenameNoExt(citation.target).toLowerCase()];
+  // 인용 대상을 찾을 키. **폴더가 붙은 대상은 경로로만 찾는다** — basename으로 폴백하면
+  // `A/Topic`과 `B/Topic`이 같은 basename 키를 공유해서, B에만 있는 헤딩이
+  // `[[A/Topic#...]]`을 통과시킨다.
+  const target = citation.target.toLowerCase();
+  const keys = target.includes("/")
+    ? [target, target.replace(/\.md$/i, "")]
+    : [target, basenameNoExt(citation.target).toLowerCase()];
   for (const key of keys) {
     const headings = headingsByNote.get(key);
     if (headings === undefined) continue;
@@ -242,7 +247,13 @@ export function buildHeadingIndex(
       const normalized = h.trim().toLowerCase();
       if (normalized !== "") set.add(normalized);
     }
-    for (const key of [path.toLowerCase(), basenameNoExt(path).toLowerCase()]) {
+    // 확장자 있는 경로 / 뗀 경로 / basename 세 가지로 찾을 수 있게 둔다. 인용은
+    // `[[폴더/노트]]`처럼 확장자를 생략하는 형태가 대부분이다.
+    for (const key of [
+      path.toLowerCase(),
+      path.replace(/\.md$/i, "").toLowerCase(),
+      basenameNoExt(path).toLowerCase(),
+    ]) {
       const existing = out.get(key);
       if (existing) for (const h of set) existing.add(h);
       else out.set(key, new Set(set));

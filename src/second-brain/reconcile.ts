@@ -341,14 +341,23 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
 const RECONCILE_BLOCK_KEY = "reconcile";
 
 /**
+ * 정정안 경계 표식.
+ *
+ * 번호 목록(`1. `)으로 나누면 항목 경계가 모호해진다 — 정정안이 여러 줄이거나 그 자체가
+ * `1. `로 시작하면 다음 실행에서 경계를 잃거나 진짜 접두어를 목록 번호로 지운다.
+ * HTML 주석은 미리보기에 보이지 않고 정정안 본문에 나타날 일이 없다.
+ */
+const RECONCILE_ITEM_MARKER = "<!-- @item -->";
+
+/**
  * 기존 정정 블록과 새 정정안을 합친다 — 순수 함수.
  *
  * `upsertGeneratedBlock`은 Generated_Region **전체**를 교체한다. 그래서 이번 승인분만으로
  * 블록을 만들면 이전 실행에서 승인한 정정이 사라진다. 사용자가 명시적으로 승인한 것을
  * 다음 승인이 지우는 조용한 손실이므로 합집합으로 다시 쓴다.
  *
- * 블록은 정정안 한 건이면 그 문구 그대로, 여러 건이면 `1. `로 시작하는 번호 목록이다.
- * 되읽을 때 두 형태를 모두 받는다.
+ * 한 건이면 문구 그대로 쓴다(표식 없음) — 대부분의 경우이고, 노트에 군더더기를 남길
+ * 이유가 없다. 두 건 이상이면 각 항목 앞에 경계 표식을 둔다.
  */
 export function mergeReconcileBlock(
   existingBlock: string | null,
@@ -357,27 +366,32 @@ export function mergeReconcileBlock(
   const items = parseReconcileBlock(existingBlock);
   for (const raw of incoming) {
     const next = raw.trim();
-    if (next !== "" && !items.includes(next)) items.push(next);
+    // 표식을 포함한 정정안은 되읽기를 깨뜨린다. 표식만 지우고 받는다.
+    const safe = next.split(RECONCILE_ITEM_MARKER).join("").trim();
+    if (safe !== "" && !items.includes(safe)) items.push(safe);
   }
 
   if (items.length === 0) return "";
   if (items.length === 1) return items[0];
-  return items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+  return items.map((item) => `${RECONCILE_ITEM_MARKER}\n${item}`).join("\n\n");
 }
 
-/** 기록된 정정 블록에서 정정안 목록을 되읽는다. */
+/**
+ * 기록된 정정 블록에서 정정안 목록을 되읽는다.
+ *
+ * 표식이 없으면 블록 전체가 한 건이다 — 여러 줄짜리 정정안을 줄 단위로 쪼개면 문장이
+ * 조각난다.
+ */
 function parseReconcileBlock(block: string | null): string[] {
   if (block === null) return [];
   const text = block.trim();
   if (text === "") return [];
 
-  // 번호 목록이면 항목별로 쪼갠다. 아니면 블록 전체가 한 건이다.
-  const lines = text.split("\n");
-  const numbered = lines.filter((line) => /^\s*\d+\.\s/.test(line));
-  if (numbered.length === lines.filter((l) => l.trim() !== "").length && numbered.length > 0) {
-    return numbered.map((line) => line.replace(/^\s*\d+\.\s*/, "").trim()).filter((s) => s !== "");
-  }
-  return [text];
+  if (!text.includes(RECONCILE_ITEM_MARKER)) return [text];
+  return text
+    .split(RECONCILE_ITEM_MARKER)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
 }
 
 /**

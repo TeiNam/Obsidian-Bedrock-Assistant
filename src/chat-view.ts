@@ -1863,8 +1863,13 @@ export class ChatView extends ItemView {
 
       // 존재 판정은 볼트에서 직접 한다. 인덱스 스냅샷을 쓰면 플러그인이 꺼져 있는 동안
       // 만든 노트가 "없는 노트"로 경고되고, 인덱싱 전에는 모든 인용이 경고 대상이 된다.
+      //
+      // 마크다운만이 아니라 **볼트 전체 파일**과 대조한다. 모델이 `[[Images/chart.png]]`
+      // 처럼 첨부를 근거로 링크하면, 마크다운 목록에는 그 파일이 없어 실재하는데도 항상
+      // 경고가 붙는다.
+      const paths = this.app.vault.getFiles().map((f) => f.path);
+      // 헤딩은 마크다운에만 있다.
       const files = this.app.vault.getMarkdownFiles();
-      const paths = files.map((f) => f.path);
 
       // 앵커 검증도 metadataCache가 출처다. 인덱스 청크의 heading은 청크 하나를 대표하는
       // 헤딩 한 개일 뿐이어서, `# A ... ## B`가 한 청크에 들어간 노트는 B를 인용하면

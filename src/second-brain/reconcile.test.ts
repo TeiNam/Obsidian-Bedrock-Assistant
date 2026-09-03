@@ -745,9 +745,8 @@ describe("applyReconciliations — 노트 단위 병합", () => {
     const out = read();
     expect(out).toContain("첫 번째 정정");
     expect(out).toContain("두 번째 정정");
-    // 여러 건이면 번호를 붙인다.
-    expect(out).toContain("1. 첫 번째 정정");
-    expect(out).toContain("2. 두 번째 정정");
+    // 여러 건이면 경계 표식으로 구분한다(번호 목록은 항목 경계가 모호하다).
+    expect(out.match(/<!-- @item -->/g)).toHaveLength(2);
     // 사용자 본문은 보존된다.
     expect(out).toContain("본문.");
   });
@@ -831,28 +830,53 @@ describe("applyReconciliations — 노트 단위 병합", () => {
  * 다음 승인이 지우는 것이므로 합집합으로 다시 쓴다.
  */
 describe("mergeReconcileBlock", () => {
-  it("기존 한 건 + 새 한 건 → 번호 목록", () => {
-    expect(mergeReconcileBlock("첫 정정", ["둘째 정정"])).toBe("1. 첫 정정\n2. 둘째 정정");
-  });
+  /** 블록을 다시 파싱해 항목 목록을 얻는다(왕복 검증용). */
+  function roundTrip(block: string): string[] {
+    // 항목이 하나면 표식이 없다.
+    if (!block.includes("<!-- @item -->")) return block === "" ? [] : [block];
+    return block
+      .split("<!-- @item -->")
+      .map((p) => p.trim())
+      .filter((p) => p !== "");
+  }
 
-  it("기존 번호 목록에 덧붙인다", () => {
-    expect(mergeReconcileBlock("1. 가\n2. 나", ["다"])).toBe("1. 가\n2. 나\n3. 다");
-  });
-
-  it("한 건만 있으면 번호를 붙이지 않는다", () => {
+  it("한 건만 있으면 표식을 붙이지 않는다", () => {
     expect(mergeReconcileBlock(null, ["하나"])).toBe("하나");
+  });
+
+  it("두 건 이상은 경계 표식으로 구분한다", () => {
+    const block = mergeReconcileBlock("첫 정정", ["둘째 정정"]);
+    expect(roundTrip(block)).toEqual(["첫 정정", "둘째 정정"]);
+  });
+
+  it("기존 목록에 덧붙인다", () => {
+    const first = mergeReconcileBlock(null, ["가", "나"]);
+    expect(roundTrip(mergeReconcileBlock(first, ["다"]))).toEqual(["가", "나", "다"]);
   });
 
   it("같은 문구를 다시 승인해도 중복되지 않는다", () => {
     expect(mergeReconcileBlock("하나", ["하나"])).toBe("하나");
-    expect(mergeReconcileBlock("1. 가\n2. 나", ["가", "나"])).toBe("1. 가\n2. 나");
+    const two = mergeReconcileBlock(null, ["가", "나"]);
+    expect(mergeReconcileBlock(two, ["가", "나"])).toBe(two);
   });
 
-  it("여러 줄짜리 정정안은 한 건으로 본다", () => {
-    // 번호 목록이 아닌 블록은 쪼개지 않는다 — 쪼개면 문장이 조각난다.
+  it("여러 줄짜리 정정안의 경계를 잃지 않는다", () => {
+    // 번호 목록으로 나누면 줄 단위로 쪼개져 문장이 조각난다.
     const multi = "첫 줄\n둘째 줄";
     expect(mergeReconcileBlock(multi, [])).toBe(multi);
-    expect(mergeReconcileBlock(multi, ["새 정정"])).toBe(`1. ${multi}\n2. 새 정정`);
+    expect(roundTrip(mergeReconcileBlock(multi, ["새 정정"]))).toEqual([multi, "새 정정"]);
+  });
+
+  it("정정안이 '1. '로 시작해도 접두어를 지우지 않는다", () => {
+    // 번호 목록 직렬화의 실패 사례다 — 진짜 접두어를 목록 번호로 오인했다.
+    const numbered = "1. 첫 항목을 고친다";
+    const block = mergeReconcileBlock(numbered, ["다른 정정"]);
+    expect(roundTrip(block)).toEqual([numbered, "다른 정정"]);
+  });
+
+  it("경계 표식이 섞인 정정안은 표식을 지우고 받는다", () => {
+    const block = mergeReconcileBlock(null, ["앞<!-- @item -->뒤", "둘째"]);
+    expect(roundTrip(block)).toEqual(["앞뒤", "둘째"]);
   });
 
   it("빈 입력은 빈 문자열이다", () => {
@@ -863,6 +887,7 @@ describe("mergeReconcileBlock", () => {
   it("여러 번 적용해도 멱등하다", () => {
     const once = mergeReconcileBlock(null, ["가", "나"]);
     expect(mergeReconcileBlock(once, ["가", "나"])).toBe(once);
+    expect(mergeReconcileBlock(mergeReconcileBlock(once, []), [])).toBe(once);
   });
 });
 

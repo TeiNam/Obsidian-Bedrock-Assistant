@@ -53,6 +53,39 @@ function matchedFields(
   return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
 }
 
+/** 질의를 어휘 검색용 토큰으로 쪼갠다. */
+function splitQueryTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * 어휘 질의어가 가장 많이 나온 청크를 찾는다.
+ *
+ * dense 검색과 달리 어휘 검색은 노트 단위 `searchText`로 점수를 낸다. 그래서 "어느 절이
+ * 맞았는가"를 따로 찾아야 하고, 그러지 않으면 인용 앵커를 붙일 근거도 LLM에 줄 본문도
+ * 도입부밖에 없다.
+ *
+ * 청크가 없거나 어느 청크에도 질의어가 없으면 null — 그때는 excerpt로 폴백한다.
+ */
+function bestLexicalChunk(
+  entry: VaultIndexEntry,
+  terms: readonly string[]
+): { heading: string | null; text: string } | null {
+  let best: { heading: string | null; text: string; hits: number } | null = null;
+
+  for (const chunk of entry.chunks ?? []) {
+    const lower = chunk.text.toLowerCase();
+    let hits = 0;
+    for (const term of terms) hits += lower.split(term).length - 1;
+    if (hits === 0) continue;
+    if (best === null || hits > best.hits) {
+      best = { heading: chunk.heading ?? null, text: chunk.text, hits };
+    }
+  }
+
+  return best === null ? null : { heading: best.heading, text: best.text };
+}
+
 export interface GraphRagSearchItem {
   /** 노트의 볼트 루트 기준 경로 */
   path: string;
@@ -721,6 +754,8 @@ export class VaultIndexer {
       Math.max(LEXICAL_POOL_SIZE, limit),
       candidates
     );
+    // 어휘로만 잡힌 결과의 적중 청크를 찾을 때 쓴다. keywordSearch와 같은 분리 규칙이다.
+    const lexicalTerms = splitQueryTerms(query);
     const fused = fuseRanks([
       { name: "dense", paths: combined.map((r) => r.path) },
       { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
@@ -767,10 +802,15 @@ export class VaultIndexer {
         seedPath: d?.seedPath ?? null,
         // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
         seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
-        // 헤딩·적중 본문은 **임베딩으로 맞은 청크**에서 온다. dense가 못 찾아 어휘로만
-        // 들어온 노트에는 붙이지 않는다 — 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"이라고
-        // 표시하면 인용 앵커가 엉뚱한 곳을 가리킨다.
-        ...(d ? matchedFields(this.bestChunkMatch(queryEmbedding, path)) : { heading: null }),
+        // 적중 본문·헤딩의 출처를 결과가 어느 목록에서 왔는지에 맞춘다.
+        // dense로 찾았으면 임베딩이 맞은 청크, 어휘로만 찾았으면 질의어가 있는 청크다.
+        // 섞으면 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"으로 표시해 인용 앵커가
+        // 엉뚱한 곳을 가리킨다.
+        ...matchedFields(
+          d
+            ? this.bestChunkMatch(queryEmbedding, path)
+            : bestLexicalChunk(candidates.get(path)!, lexicalTerms)
+        ),
       };
     });
 
@@ -827,7 +867,7 @@ export class VaultIndexer {
     limit: number,
     candidates: Map<string, VaultIndexEntry> = this.index
   ): GraphRagSearchItem[] {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = splitQueryTerms(query);
     const scored: Array<{ entry: VaultIndexEntry; score: number }> = [];
 
     for (const entry of candidates.values()) {
@@ -856,17 +896,23 @@ export class VaultIndexer {
     // 0.0~1.0 정규화 기준값 (최고 점수)
     const maxScore = scored.length > 0 ? scored[0].score : 0;
 
-    return scored.slice(0, limit).map(({ entry, score }) => ({
-      path: entry.path,
-      title: entry.title,
-      excerpt: entry.excerpt,
-      combinedScore: maxScore > 0 ? score / maxScore : 0,
-      vectorScore: 0,
-      hop: 0,
-      isSeed: true,
-      seedPath: null,
-      seedTitle: null,
-    }));
+    return scored.slice(0, limit).map(({ entry, score }) => {
+      // 어휘가 맞힌 청크를 찾아 적중 본문·헤딩으로 싣는다. excerpt(앞 500자)만 주면
+      // Second Brain 경로들이 정확 문자열을 못 보고 도입부로 답한다.
+      const hit = bestLexicalChunk(entry, terms);
+      return {
+        path: entry.path,
+        title: entry.title,
+        excerpt: entry.excerpt,
+        combinedScore: maxScore > 0 ? score / maxScore : 0,
+        vectorScore: 0,
+        hop: 0,
+        isSeed: true,
+        seedPath: null,
+        seedTitle: null,
+        ...matchedFields(hit),
+      };
+    });
   }
 
   /**
