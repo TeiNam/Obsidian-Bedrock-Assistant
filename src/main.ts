@@ -82,11 +82,11 @@ import {
 } from "./second-brain/canonicalize";
 import {
   suggestLinks,
-  buildRelatedLinksBlock,
+  mergeRelatedLinksBlock,
   groupBySource,
   RELATED_LINKS_BLOCK_KEY,
 } from "./second-brain/link-suggestions";
-import { upsertGeneratedBlock } from "./second-brain/sentinel-blocks";
+import { upsertGeneratedBlock, getGeneratedBlock } from "./second-brain/sentinel-blocks";
 import { VIEW_I18N } from "./chat-view-i18n";
 import { runReconcileDetailed, applyReconciliation } from "./second-brain/reconcile";
 import { buildDateStr } from "./planner-paths";
@@ -640,6 +640,9 @@ export default class GeminiAssistantPlugin extends Plugin {
 
           // 태그를 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
           if (plan.tags.length > 0) {
+            // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
+            // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
+            let added = false;
             await this.app.fileManager.processFrontMatter(file, (fm) => {
               const existing = Array.isArray(fm.tags)
                 ? fm.tags.filter((v: unknown): v is string => typeof v === "string")
@@ -647,9 +650,12 @@ export default class GeminiAssistantPlugin extends Plugin {
                   ? [fm.tags]
                   : [];
               const merged = [...new Set([...existing, ...plan.tags])];
-              if (merged.length > existing.length) fm.tags = merged;
+              if (merged.length > existing.length) {
+                fm.tags = merged;
+                added = true;
+              }
             });
-            tagged++;
+            if (added) tagged++;
           }
 
           const destination = resolveTargetPath(plan, taken);
@@ -728,7 +734,11 @@ export default class GeminiAssistantPlugin extends Plugin {
         const ledgerPath = normalizePath(`${wikiFolder}/${DECISION_LEDGER_FILE}`);
         const existing = this.app.vault.getAbstractFileByPath(ledgerPath);
 
-        let merged: ReturnType<typeof mergeLedger>;
+        // 콜백 안에서 채워지는 값을 non-null 단정으로 꺼내면, 콜백이 불리지 않는 경우
+        // (파일이 그 사이 사라짐 등) 런타임에 터진다. 승인분만으로 계산한 값을 기본값으로
+        // 두고 콜백이 성공하면 갱신한다.
+        let merged = mergeLedger([], approved);
+
         if (existing instanceof TFile) {
           // 원장을 되읽어 병합한다. 사용자가 원장에서 직접 고친 값을 유지하려면
           // 그 값을 읽어와야 한다.
@@ -737,7 +747,6 @@ export default class GeminiAssistantPlugin extends Plugin {
             return upsertGeneratedBlock(content, DECISION_BLOCK_KEY, formatLedger(merged));
           });
         } else {
-          merged = mergeLedger([], approved);
           await this.app.vault.create(
             ledgerPath,
             upsertGeneratedBlock("# 결정 원장\n", DECISION_BLOCK_KEY, formatLedger(merged))
@@ -747,7 +756,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         const file = this.app.vault.getAbstractFileByPath(ledgerPath);
         if (file instanceof TFile) await this.indexer.indexFile(file);
 
-        return { merged: approved.length, total: merged!.length };
+        return { merged: approved.length, total: merged.length };
       }).open();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -787,10 +796,17 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
         // 형식이 뭉개진다.
         await this.app.fileManager.processFrontMatter(file, (fm) => {
+          const before = Array.isArray(fm.aliases)
+            ? fm.aliases.length
+            : typeof fm.aliases === "string"
+              ? 1
+              : 0;
           const merged = mergeAliases(fm.aliases, cluster);
-          if (merged.length > 0) {
+          if (merged.length > before) {
             fm.aliases = merged;
-            aliases += merged.length;
+            // 전체 목록 길이가 아니라 실제로 늘어난 개수를 센다. 재실행 시 0개
+            // 추가인데 "N개 추가"라고 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
+            aliases += merged.length - before;
           }
         });
 
@@ -849,10 +865,18 @@ export default class GeminiAssistantPlugin extends Plugin {
         const file = this.app.vault.getAbstractFileByPath(sourcePath);
         if (!(file instanceof TFile)) continue;
 
-        const block = buildRelatedLinksBlock(group);
-        // process로 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있다.
+        // process로 원자적으로 읽고 고친다. 사용자가 같은 노트를 편집 중일 수 있고,
+        // 기존 블록의 링크를 읽어 합집합으로 써야 한다 — 새 승인분만으로 블록을 만들면
+        // 이전에 승인한 링크가 사라진다.
         await this.app.vault.process(file, (content) =>
-          upsertGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY, block)
+          upsertGeneratedBlock(
+            content,
+            RELATED_LINKS_BLOCK_KEY,
+            mergeRelatedLinksBlock(
+              getGeneratedBlock(content, RELATED_LINKS_BLOCK_KEY),
+              group
+            )
+          )
         );
         links += group.length;
       }

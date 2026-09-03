@@ -162,22 +162,49 @@ export function suggestLinks(
 export const RELATED_LINKS_BLOCK_KEY = "related-links";
 
 /**
- * 승인된 제안들을 노트에 삽입할 마크다운 블록 본문으로 만든다.
+ * 이미 기록된 관련 노트 블록에서 링크 제목을 되읽는다.
+ *
+ * upsertGeneratedBlock은 블록 전체를 교체하므로, 새 승인분만으로 블록을 만들면 이전에
+ * 승인한 링크가 사라진다. 사용자가 명시적으로 승인한 것을 다음 승인이 지우는 것은
+ * 조용한 손실이다 — 기존 블록을 읽어 합집합으로 다시 쓴다.
+ */
+export function parseRelatedLinksBlock(block: string | null): string[] {
+  if (block === null) return [];
+  return [...block.matchAll(/^\s*-\s*\[\[([^\]|#]+)/gm)].map((m) => m[1].trim());
+}
+
+/**
+ * 기존 블록의 링크와 새로 승인한 링크를 합쳐 블록 본문을 만든다.
  *
  * 삽입 위치를 추측하지 않는다. Sentinel_Block으로 문서 끝에 병합하면 Generated_Region만
  * 교체되므로 사람이 쓴 부분이 보존되고, 다시 실행해도 블록이 중복되지 않는다.
  *
- * 위키링크는 경로가 아니라 제목으로 쓴다 — 옵시디언이 제목으로 해석하고, 노트를
- * 옮겨도 링크가 깨지지 않는다.
+ * 위키링크는 경로가 아니라 제목으로 쓴다 — 옵시디언이 제목으로 해석하고, 노트를 옮겨도
+ * 링크가 깨지지 않는다.
+ *
+ * 기존 링크를 먼저 두어 순서를 안정시킨다. 대소문자만 다른 중복은 하나로 합친다.
  */
-export function buildRelatedLinksBlock(suggestions: readonly LinkSuggestion[]): string {
-  if (suggestions.length === 0) return "";
+export function mergeRelatedLinksBlock(
+  existingBlock: string | null,
+  suggestions: readonly LinkSuggestion[]
+): string {
+  const titles: string[] = [];
+  const seen = new Set<string>();
 
-  const lines = ["## 관련 노트", ""];
-  for (const s of suggestions) {
-    lines.push(`- [[${s.targetTitle}]]`);
-  }
-  return lines.join("\n");
+  const add = (title: string): void => {
+    const trimmed = title.trim();
+    if (trimmed === "") return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    titles.push(trimmed);
+  };
+
+  for (const title of parseRelatedLinksBlock(existingBlock)) add(title);
+  for (const s of suggestions) add(s.targetTitle);
+
+  if (titles.length === 0) return "";
+  return ["## 관련 노트", "", ...titles.map((t) => `- [[${t}]]`)].join("\n");
 }
 
 /** 제안들을 source 경로별로 묶는다. 승인 화면과 적용 단계가 노트 단위로 돈다. */

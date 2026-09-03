@@ -3,12 +3,14 @@ import {
   representativeEmbedding,
   suggestLinksForNote,
   suggestLinks,
-  buildRelatedLinksBlock,
   groupBySource,
   MIN_LINK_SIMILARITY,
   RELATED_LINKS_BLOCK_KEY,
+  mergeRelatedLinksBlock,
+  parseRelatedLinksBlock,
+  type LinkSuggestion,
 } from "./link-suggestions";
-import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
 import type { VaultIndexEntry } from "../types";
 
 /** 대표 임베딩을 지정해 엔트리를 만든다. */
@@ -174,14 +176,14 @@ describe("suggestLinks", () => {
   });
 });
 
-describe("buildRelatedLinksBlock", () => {
+describe("mergeRelatedLinksBlock — 블록 생성", () => {
   const suggestions = [
     { sourcePath: "o.md", targetPath: "Notes/Alpha.md", targetTitle: "Alpha", similarity: 0.9 },
     { sourcePath: "o.md", targetPath: "Notes/Beta.md", targetTitle: "Beta", similarity: 0.85 },
   ];
 
   it("제목 기반 위키링크 목록을 만든다", () => {
-    const block = buildRelatedLinksBlock(suggestions);
+    const block = mergeRelatedLinksBlock(null, suggestions);
 
     // 경로가 아니라 제목으로 링크해야 노트를 옮겨도 깨지지 않는다.
     expect(block).toContain("- [[Alpha]]");
@@ -190,12 +192,12 @@ describe("buildRelatedLinksBlock", () => {
   });
 
   it("빈 목록은 빈 문자열이다", () => {
-    expect(buildRelatedLinksBlock([])).toBe("");
+    expect(mergeRelatedLinksBlock(null, [])).toBe("");
   });
 
   it("Sentinel_Block으로 병합하면 사용자 텍스트가 보존되고 재실행이 멱등이다", () => {
     const original = "# 내 노트\n\n직접 쓴 내용입니다.\n";
-    const block = buildRelatedLinksBlock(suggestions);
+    const block = mergeRelatedLinksBlock(null, suggestions);
 
     const once = upsertGeneratedBlock(original, RELATED_LINKS_BLOCK_KEY, block);
     const twice = upsertGeneratedBlock(once, RELATED_LINKS_BLOCK_KEY, block);
@@ -221,5 +223,90 @@ describe("groupBySource", () => {
 
   it("빈 입력은 빈 Map이다", () => {
     expect(groupBySource([]).size).toBe(0);
+  });
+});
+
+// ============================================
+// 이전 승인분 보존 (누적)
+// ============================================
+/**
+ * upsertGeneratedBlock은 블록 전체를 교체한다. 새 승인분만으로 블록을 만들면 이전에
+ * 승인한 링크가 사라진다 — 사용자가 명시적으로 승인한 것을 다음 승인이 지우는 조용한
+ * 손실이다. 리뷰에서 실제로 잡힌 결함이다.
+ */
+describe("mergeRelatedLinksBlock — 이전 승인분 보존", () => {
+  const first: LinkSuggestion[] = [
+    { sourcePath: "o.md", targetPath: "A.md", targetTitle: "알파", similarity: 0.9 },
+  ];
+  const second: LinkSuggestion[] = [
+    { sourcePath: "o.md", targetPath: "B.md", targetTitle: "베타", similarity: 0.85 },
+  ];
+
+  it("두 번에 걸쳐 승인해도 첫 링크가 남는다", () => {
+    const run1 = mergeRelatedLinksBlock(null, first);
+    const run2 = mergeRelatedLinksBlock(run1, second);
+
+    expect(run2).toContain("- [[알파]]");
+    expect(run2).toContain("- [[베타]]");
+  });
+
+  it("기존 링크를 먼저 두어 순서를 안정시킨다", () => {
+    const run2 = mergeRelatedLinksBlock(mergeRelatedLinksBlock(null, first), second);
+
+    expect(run2.indexOf("알파")).toBeLessThan(run2.indexOf("베타"));
+  });
+
+  it("같은 링크를 다시 승인해도 중복되지 않는다", () => {
+    const run1 = mergeRelatedLinksBlock(null, first);
+    const run2 = mergeRelatedLinksBlock(run1, first);
+
+    expect(run2).toBe(run1);
+  });
+
+  it("대소문자만 다른 중복을 합친다", () => {
+    const upper: LinkSuggestion[] = [
+      { sourcePath: "o.md", targetPath: "A.md", targetTitle: "알파", similarity: 0.9 },
+      { sourcePath: "o.md", targetPath: "a.md", targetTitle: "ALPHA", similarity: 0.9 },
+    ];
+    const block = mergeRelatedLinksBlock(null, upper);
+
+    expect(block.match(/- \[\[/g)).toHaveLength(2);
+    expect(mergeRelatedLinksBlock(block, [
+      { sourcePath: "o.md", targetPath: "A.md", targetTitle: "알파", similarity: 0.9 },
+    ])).toBe(block);
+  });
+
+  it("별칭·헤딩이 붙은 기존 링크에서도 대상만 읽는다", () => {
+    const existing = "## 관련 노트\n\n- [[알파|별칭]]\n- [[베타#섹션]]";
+
+    expect(parseRelatedLinksBlock(existing)).toEqual(["알파", "베타"]);
+  });
+
+  it("블록이 없으면 새 승인분만으로 만든다", () => {
+    expect(mergeRelatedLinksBlock(null, first)).toContain("- [[알파]]");
+  });
+
+  it("아무것도 없으면 빈 문자열이다", () => {
+    expect(mergeRelatedLinksBlock(null, [])).toBe("");
+  });
+
+  it("Sentinel_Block 왕복에서 링크가 누적된다", () => {
+    // 실제 적용 경로와 같은 순서: 블록 읽기 → 병합 → upsert.
+    let doc = "# 노트\n\n직접 쓴 내용.\n";
+
+    doc = upsertGeneratedBlock(
+      doc,
+      RELATED_LINKS_BLOCK_KEY,
+      mergeRelatedLinksBlock(getGeneratedBlock(doc, RELATED_LINKS_BLOCK_KEY), first)
+    );
+    doc = upsertGeneratedBlock(
+      doc,
+      RELATED_LINKS_BLOCK_KEY,
+      mergeRelatedLinksBlock(getGeneratedBlock(doc, RELATED_LINKS_BLOCK_KEY), second)
+    );
+
+    expect(doc).toContain("직접 쓴 내용.");
+    expect(doc).toContain("- [[알파]]");
+    expect(doc).toContain("- [[베타]]");
   });
 });
