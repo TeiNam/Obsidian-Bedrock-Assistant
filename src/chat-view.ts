@@ -1828,11 +1828,27 @@ export class ChatView extends ItemView {
       // 앵커 검증도 metadataCache가 출처다. 인덱스 청크의 heading은 청크 하나를 대표하는
       // 헤딩 한 개일 뿐이어서, `# A ... ## B`가 한 청크에 들어간 노트는 B를 인용하면
       // 없는 절이라고 잘못 경고한다.
+      //
+      // 인용된 노트만 훑는다. 응답 한 건마다 볼트 전체에 getFileCache를 돌리면 수천 개
+      // 볼트에서 메시지마다 수천 번 조회가 된다 — 인용은 보통 한 자리 수다.
+      const cited = new Set<string>();
+      for (const c of citations) {
+        const target = c.target.toLowerCase();
+        cited.add(target);
+        cited.add(target.replace(/\.md$/i, ""));
+      }
       const headings = buildHeadingIndex(
-        files.map((f) => [
-          f.path,
-          (this.app.metadataCache.getFileCache(f)?.headings ?? []).map((h) => h.heading),
-        ])
+        files
+          .filter(
+            (f) =>
+              cited.has(f.path.toLowerCase()) ||
+              cited.has(f.path.replace(/\.md$/i, "").toLowerCase()) ||
+              cited.has(f.basename.toLowerCase())
+          )
+          .map((f) => [
+            f.path,
+            (this.app.metadataCache.getFileCache(f)?.headings ?? []).map((h) => h.heading),
+          ])
       );
 
       const unresolved = findUnresolvedCitations(citations, paths, headings);

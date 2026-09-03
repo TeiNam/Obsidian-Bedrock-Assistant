@@ -661,23 +661,25 @@ export default class GeminiAssistantPlugin extends Plugin {
           // 태그는 이동보다 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
           let tagsAdded = false;
           if (plan.tags.length > 0) {
-            // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
-            // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
-            let added = false;
             await this.app.fileManager.processFrontMatter(file, (fm) => {
-              const existing = Array.isArray(fm.tags)
+              // 비교 기준은 **정규화 후** 목록이다. 문자열 아닌 값이나 중복이 섞인
+              // `["work", "work"]`에서 원시 길이와 비교하면 태그가 실제로 늘었는데도
+              // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
+              const raw = Array.isArray(fm.tags)
                 ? fm.tags.filter((v: unknown): v is string => typeof v === "string")
                 : typeof fm.tags === "string"
                   ? [fm.tags]
                   : [];
+              const existing = [...new Set(raw)];
               const merged = [...new Set([...existing, ...plan.tags])];
+              // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
+              // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
               if (merged.length > existing.length) {
                 fm.tags = merged;
-                added = true;
+                tagsAdded = true;
               }
             });
-            if (added) tagged++;
-            tagsAdded = added;
+            if (tagsAdded) tagged++;
           }
 
           if (destination === null) {

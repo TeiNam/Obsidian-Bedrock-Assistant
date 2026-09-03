@@ -293,6 +293,19 @@ export async function runReconcileDetailed(
 
   // 6) 모순 0건 → 안내, 노트 미변경 (Req 8.5)
   if (contradictions.length === 0) {
+    // 후보는 있었지만 전부 실재하지 않는 노트를 가리켜 버린 경우와 정말로 모순이 없는
+    // 경우를 구분한다. 전자를 "모순 없음"으로 보고하면 LLM이 근거를 날조했다는 사실이
+    // 사용자에게 전달되지 않는다.
+    if (parsed.dropped > 0) {
+      return {
+        report: [
+          `모순 후보 ${parsed.dropped}건이 모두 문맥에 없는 노트를 가리켜 버렸습니다.`,
+          "모순이 없다는 뜻이 아니므로, 다시 실행해 주세요.",
+          `어떤 노트도 변경하지 않았습니다.${staleNote}`,
+        ].join("\n"),
+        contradictions: [],
+      };
+    }
     return {
       report: `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`,
       contradictions: [],

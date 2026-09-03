@@ -605,3 +605,28 @@ describe("parseContradictionResult — 허용 경로", () => {
     expect(parseContradictionResult(TEXT).items).toHaveLength(2);
   });
 });
+
+describe("runReconcileDetailed — 후보가 전부 무효인 경우", () => {
+  it("'모순 없음'이 아니라 버렸다는 사실을 알린다", async () => {
+    // 검색 히트는 Notes/example.md인데 LLM은 없는 노트를 가리킨다.
+    const fabricated = JSON.stringify([
+      { notePaths: ["지어냄.md"], statements: ["x", "y"], suggestion: "합친다" },
+    ]);
+    const { ctx, vault } = makeContext({ items: [makeItem()] }, fabricated);
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+
+    expect(outcome.contradictions).toEqual([]);
+    expect(outcome.report).toContain("1건");
+    expect(outcome.report).not.toContain("발견된 모순이 없습니다");
+    expectNoVaultWrites(vault);
+  });
+
+  it("정말로 모순이 없으면 기존 안내를 그대로 쓴다", async () => {
+    const { ctx } = makeContext({ items: [makeItem()] }, "[]");
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+
+    expect(outcome.report).toContain("발견된 모순이 없습니다");
+  });
+});
