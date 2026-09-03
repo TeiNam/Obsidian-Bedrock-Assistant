@@ -458,11 +458,15 @@ describe("sanitizeTitle — 파일시스템 규칙", () => {
 
 describe("sanitizeTitle — 확장자가 붙은 예약 이름", () => {
   it("확장자가 붙어도 예약 이름을 피한다", () => {
-    // 윈도우는 확장자와 무관하게 장치 이름을 예약한다. 통과시키면 최종 경로가
-    // `CON.txt.md`가 되어 renameFile이 실패한다.
-    expect(sanitizeTitle("CON.txt")).toBe("CON.txt 노트");
-    expect(sanitizeTitle("LPT1.csv")).toBe("LPT1.csv 노트");
-    expect(sanitizeTitle("nul.log")).toBe("nul.log 노트");
+    // 윈도우는 확장자와 무관하게 장치 이름을 예약한다. 접미사를 전체 뒤에 붙이면
+    // (`CON.txt 노트`) 첫 점 앞이 여전히 `CON`이라 거부된다 — stem 자체를 바꿔야 한다.
+    expect(sanitizeTitle("CON.txt")).toBe("CON 노트.txt");
+    expect(sanitizeTitle("LPT1.csv")).toBe("LPT1 노트.csv");
+    expect(sanitizeTitle("nul.log")).toBe("nul 노트.log");
+  });
+
+  it("확장자가 없으면 그대로 접미사를 붙인다", () => {
+    expect(sanitizeTitle("CON")).toBe("CON 노트");
   });
 
   it("예약 이름을 포함하기만 한 것은 그대로 둔다", () => {

@@ -83,9 +83,14 @@ export function sanitizeTitle(title: string): string {
   //
   // 첫 점 앞부분으로 판정한다 — 윈도우는 확장자와 무관하게 장치 이름을 예약하므로
   // `CON.txt`도 만들 수 없고, 여기서 통과시키면 최종 경로가 `CON.txt.md`가 되어 실패한다.
-  const stem = cleaned.split(".")[0] ?? cleaned;
-  if (WINDOWS_RESERVED.has(stem.toLowerCase())) return `${cleaned} 노트`;
-  return truncateToBytes(cleaned, MAX_TITLE_BYTES);
+  // 접미사는 **stem에** 붙인다. 전체 뒤에 붙이면 `CON.txt 노트`가 되는데 첫 점 앞은
+  // 여전히 `CON`이라 윈도우가 거부한다.
+  const dot = cleaned.indexOf(".");
+  const stem = dot < 0 ? cleaned : cleaned.slice(0, dot);
+  const rest = dot < 0 ? "" : cleaned.slice(dot);
+  const safe = WINDOWS_RESERVED.has(stem.toLowerCase()) ? `${stem} 노트${rest}` : cleaned;
+
+  return truncateToBytes(safe, MAX_TITLE_BYTES);
 }
 
 /** UTF-8 바이트 길이를 넘지 않게 자른다. 문자 중간에서 끊지 않는다. */

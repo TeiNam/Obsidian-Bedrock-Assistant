@@ -424,6 +424,68 @@ describe("VaultIndexer 어휘 적중 구간", () => {
   });
 });
 
+// ============================================
+// 어휘 점수의 단어 경계
+// ============================================
+/**
+ * 부분문자열로 세면 `is`가 `this`·`list`·`history`에 걸려 무관한 노트가 어휘 상위로
+ * 올라가고, 예약 슬롯이 그 노트를 결과에 밀어넣어 관련 있는 dense 결과를 밀어낸다.
+ */
+describe("VaultIndexer 어휘 점수 — 단어 경계", () => {
+  function makePayload(entries: Array<{ path: string; body: string }>): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: entries.map((e) => ({
+        path: e.path,
+        embedding: [],
+        lastModified: 1000,
+        title: e.path.replace(/\.md$/, ""),
+        excerpt: e.body.slice(0, 100),
+        searchText: e.body.toLowerCase(),
+        chunks: [{ index: 0, text: e.body, embedding: [], charStart: 0 }],
+        outlinks: [],
+        backlinks: [],
+        tags: [],
+        frontmatter: {},
+      })),
+    });
+  }
+
+  it("라틴 토큰은 단어 안에서 세지 않는다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(
+      makePayload([
+        { path: "substring.md", body: "this list history exists" },
+        { path: "standalone.md", body: "it is here" },
+      ])
+    );
+
+    const result = await indexer.search("is");
+
+    // `this`·`list`·`history`에 든 "is"는 세지 않는다.
+    expect(result.items.map((i) => i.path)).toEqual(["standalone.md"]);
+  });
+
+  it("한글은 부분문자열로 센다", async () => {
+    // 띄어쓰기 없이 붙는 언어에서는 경계 규칙을 쓸 수 없다.
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makePayload([{ path: "ko.md", body: "쿠버네티스배포전략" }]));
+
+    const result = await indexer.search("배포");
+
+    expect(result.items.map((i) => i.path)).toEqual(["ko.md"]);
+  });
+
+  it("정규식 특수문자가 든 토큰도 안전하게 센다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makePayload([{ path: "code.md", body: "error c++ 발생" }]));
+
+    // 이스케이프하지 않으면 정규식이 깨지거나 다른 것을 맞힌다.
+    const result = await indexer.search("c++");
+    expect(result.items.map((i) => i.path)).toEqual(["code.md"]);
+  });
+});
+
 describe("VaultIndexer 어휘 후보 풀과 limit", () => {
   /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
   function makeAlignedClient() {

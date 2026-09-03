@@ -73,6 +73,31 @@ function pickMatchedChunk(
   return denseHasTerm ? dense : lexical;
 }
 
+/**
+ * 텍스트에 질의어가 몇 번 나오는지.
+ *
+ * **라틴 토큰은 단어 경계로 센다.** 부분문자열로 세면 `is`가 `this`·`list`·`history`에
+ * 걸려 무관한 노트가 어휘 상위로 올라가고, 예약 슬롯이 그 노트를 결과에 밀어넣어 관련
+ * 있는 dense 결과를 밀어낸다.
+ *
+ * CJK는 경계 규칙을 그대로 쓸 수 없다(띄어쓰기 없이 붙는다). 그쪽은 부분문자열로 센다 —
+ * 한글 2자 토큰은 그 자체로 의미 단위인 경우가 많다.
+ *
+ * ponytail: 흔한 단어가 단독으로 여러 번 나오는 노트는 여전히 점수가 오른다. 그것까지
+ * 걸러내려면 볼트 전체 문서빈도(IDF)가 필요하고, 그건 인덱스 스키마를 늘리는 일이다.
+ */
+function countTerm(text: string, term: string): number {
+  if (term === "") return 0;
+
+  if (/^[a-z0-9]+$/.test(term)) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const matches = text.match(new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g"));
+    return matches === null ? 0 : matches.length;
+  }
+
+  return text.split(term).length - 1;
+}
+
 /** 질의를 어휘 검색용 토큰으로 쪼갠다. */
 function splitQueryTerms(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -98,10 +123,13 @@ function bestLexicalChunk(
     let hits = 0;
     let first = -1;
     for (const term of terms) {
+      // 점수 규칙은 keywordSearch와 같아야 한다 — 다르면 "어휘가 맞은 청크"가 실제로
+      // 순위를 올린 근거와 어긋난다.
+      const count = countTerm(lower, term);
+      if (count === 0) continue;
       const at = lower.indexOf(term);
-      if (at < 0) continue;
-      hits += lower.split(term).length - 1;
-      if (first < 0 || at < first) first = at;
+      hits += count;
+      if (at >= 0 && (first < 0 || at < first)) first = at;
     }
     if (hits === 0) continue;
     if (best === null || hits > best.hits) {
@@ -955,10 +983,9 @@ export class VaultIndexer {
 
       for (const term of terms) {
         // 제목 매치는 가중치 3배
-        if (entry.title.toLowerCase().includes(term)) score += 3;
+        if (countTerm(entry.title.toLowerCase(), term) > 0) score += 3;
         // 본문 매치 횟수 (최대 10점)
-        const matches = text.split(term).length - 1;
-        score += Math.min(matches, 10);
+        score += Math.min(countTerm(text, term), 10);
       }
 
       if (score > 0) {
