@@ -763,7 +763,17 @@ export default class GeminiAssistantPlugin extends Plugin {
 
           // fileManager.renameFile은 이 노트를 가리키는 링크를 자동으로 갱신한다.
           // vault.rename은 갱신하지 않아 볼트의 링크가 깨진다.
-          await this.app.fileManager.renameFile(file, destination);
+          //
+          // 실패를 이 항목에 격리한다. 예약 이름·길이 제한·권한 등으로 한 건이 실패할 때
+          // 예외를 밖으로 던지면 같은 배치의 **뒤쪽 항목이 전부 반영되지 않는다** —
+          // 사용자는 무엇이 적용되고 무엇이 안 됐는지 알 수 없게 된다.
+          try {
+            await this.app.fileManager.renameFile(file, destination);
+          } catch (error) {
+            console.error(`[Inbox 검토] 이름 변경 실패 (${plan.path} → ${destination}):`, error);
+            if (!tagsAdded) skipped++;
+            continue;
+          }
           taken.add(destination);
           taken.delete(plan.path);
           finalPaths.add(destination);
@@ -1176,24 +1186,37 @@ export default class GeminiAssistantPlugin extends Plugin {
     const changedPaths = [...changed];
     const linkedPaths = [...linkedTo];
 
-    // 수렴 리스너를 **재색인보다 먼저** 등록한다. indexFile은 임베딩 호출까지 기다리므로
-    // 그 사이에 resolved 이벤트가 지나갈 수 있고, 그러면 리스너가 그 이벤트를 놓친다.
-    // 이벤트가 색인보다 먼저 와도 손해가 없다 — refreshGraphMetadata는 링크 정보만 다시
-    // 읽으므로 몇 번 불려도 결과가 같다.
-    this.onceMetadataResolved(() => {
+    const refreshAll = (): void => {
       for (const path of changedPaths) this.indexer.refreshGraphMetadata(path);
       for (const path of linkedPaths) this.indexer.refreshGraphMetadata(path);
+    };
+
+    // 리스너는 재색인보다 **먼저 등록**하되 실행은 재색인이 끝난 **뒤**로 미룬다.
+    //  - 먼저 등록해야 하는 이유: indexFile은 임베딩 호출까지 기다리므로 그 사이에
+    //    resolved 이벤트가 지나가면 나중에 등록한 리스너는 그것을 놓친다.
+    //  - 실행을 미뤄야 하는 이유: indexFile의 commitEntry는 **캡처된 낡은 메타데이터로
+    //    엔트리를 통째로 교체**한다. 갱신이 먼저 일어나면 그 결과가 덮어써지고, 짧은 노트는
+    //    이후 디바운스 색인도 mtime 검사로 건너뛰어 링크·태그가 영구히 누락된다.
+    let reindexDone = false;
+    let resolvedSeen = false;
+    this.onceMetadataResolved(() => {
+      resolvedSeen = true;
+      if (reindexDone) refreshAll();
     });
 
     for (const path of changedPaths) {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) await this.indexer.indexFile(file);
     }
+    reindexDone = true;
 
     const changedSet = new Set(changedPaths);
     for (const path of linkedPaths) {
       if (!changedSet.has(path)) this.indexer.refreshGraphMetadata(path);
     }
+
+    // 이벤트가 재색인 도중에 지나갔으면 지금 실행한다.
+    if (resolvedSeen) refreshAll();
   }
 
   /**

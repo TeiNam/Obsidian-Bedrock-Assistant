@@ -41,22 +41,63 @@ export const MAX_TRIAGE_NOTES = 12;
 const UNSAFE_TITLE_CHARS = /[\\/:*?"<>|#^[\]]/g;
 
 /**
+ * 윈도우 예약 파일명. 확장자가 붙어도 예약이다(`CON.md`도 만들 수 없다).
+ *
+ * 이걸 통과시키면 renameFile이 실패하고, 그 항목뿐 아니라 같은 배치의 뒤쪽 항목까지
+ * 반영되지 않는다.
+ */
+const WINDOWS_RESERVED = new Set([
+  "con", "prn", "aux", "nul",
+  "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+  "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+]);
+
+/**
+ * 파일명 한 구성요소의 최대 길이(바이트 근사).
+ *
+ * 대부분의 파일시스템이 255바이트를 넘지 못한다. UTF-8 한글은 한 자에 3바이트라
+ * 문자 수로 재면 초과할 수 있어 넉넉히 잡는다(`.md` 확장자 몫도 남긴다).
+ */
+const MAX_TITLE_BYTES = 200;
+
+/**
  * 제안 제목을 파일명으로 쓸 수 있게 정리한다.
  *
  * 경로 구분자와 옵시디언 링크 문법 문자를 제거한다. LLM이 `폴더/제목` 형태로 제목을
  * 돌려주는 일이 흔한데, 그대로 쓰면 의도치 않은 하위 폴더가 생긴다.
  */
 export function sanitizeTitle(title: string): string {
-  return (
-    title
-      .replace(UNSAFE_TITLE_CHARS, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      // LLM이 `Report.md`처럼 확장자를 붙여 돌려주는 일이 있다. 그대로 쓰면
-      // `Report.md.md` 파일이 생기고, 승인 화면에 보인 제목과도 달라진다.
-      .replace(/\.md$/i, "")
-      .trim()
-  );
+  const cleaned = title
+    .replace(UNSAFE_TITLE_CHARS, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    // LLM이 `Report.md`처럼 확장자를 붙여 돌려주는 일이 있다. 그대로 쓰면
+    // `Report.md.md` 파일이 생기고, 승인 화면에 보인 제목과도 달라진다.
+    .replace(/\.md$/i, "")
+    .trim()
+    // 후행 마침표·공백은 윈도우에서 파일명으로 쓸 수 없다.
+    .replace(/[.\s]+$/, "");
+
+  if (cleaned === "") return "";
+  // 윈도우 예약 이름은 승인해도 renameFile이 실패한다. 접미사를 붙여 피한다.
+  if (WINDOWS_RESERVED.has(cleaned.toLowerCase())) return `${cleaned} 노트`;
+  return truncateToBytes(cleaned, MAX_TITLE_BYTES);
+}
+
+/** UTF-8 바이트 길이를 넘지 않게 자른다. 문자 중간에서 끊지 않는다. */
+function truncateToBytes(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).length <= maxBytes) return value;
+
+  let out = "";
+  let bytes = 0;
+  for (const char of value) {
+    const size = encoder.encode(char).length;
+    if (bytes + size > maxBytes) break;
+    out += char;
+    bytes += size;
+  }
+  return out.trimEnd();
 }
 
 /** 태그 정규화 — 선행 #과 공백 제거, 소문자, 내부 공백은 하이픈. */

@@ -419,3 +419,39 @@ describe("resolveTargetPath — 대소문자만 바꾸는 이름 변경", () => 
     expect(out).toBeNull();
   });
 });
+
+describe("sanitizeTitle — 파일시스템 규칙", () => {
+  it("윈도우 예약 이름을 피한다", () => {
+    // 통과시키면 renameFile이 실패하고 같은 배치의 뒤쪽 항목까지 반영되지 않는다.
+    expect(sanitizeTitle("CON")).toBe("CON 노트");
+    expect(sanitizeTitle("nul")).toBe("nul 노트");
+    expect(sanitizeTitle("COM1")).toBe("COM1 노트");
+    expect(sanitizeTitle("LPT9")).toBe("LPT9 노트");
+  });
+
+  it("예약 이름이 아닌 유사 이름은 그대로 둔다", () => {
+    expect(sanitizeTitle("CONTROL")).toBe("CONTROL");
+    expect(sanitizeTitle("COM10")).toBe("COM10");
+    expect(sanitizeTitle("CON 회의록")).toBe("CON 회의록");
+  });
+
+  it("후행 마침표·공백을 없앤다", () => {
+    // 윈도우에서 파일명으로 쓸 수 없다.
+    expect(sanitizeTitle("보고서...")).toBe("보고서");
+    expect(sanitizeTitle("보고서 . ")).toBe("보고서");
+  });
+
+  it("길이를 바이트 기준으로 제한한다", () => {
+    // 한글은 UTF-8에서 한 자 3바이트다. 문자 수로 재면 파일시스템 한계를 넘는다.
+    const long = "가".repeat(200);
+    const out = sanitizeTitle(long);
+
+    expect(new TextEncoder().encode(out).length).toBeLessThanOrEqual(200);
+    // 문자 중간에서 끊지 않는다.
+    expect(out).toBe("가".repeat(Math.floor(200 / 3)));
+  });
+
+  it("짧은 제목은 그대로 둔다", () => {
+    expect(sanitizeTitle("쿠버네티스 배포 정리")).toBe("쿠버네티스 배포 정리");
+  });
+});

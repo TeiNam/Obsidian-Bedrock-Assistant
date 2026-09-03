@@ -296,7 +296,7 @@ function resolvesAnchor(
   // `[[A/Topic#...]]`을 통과시킨다.
   const target = citation.target.toLowerCase();
   const keys = target.includes("/")
-    ? [target, target.replace(/\.md$/i, "")]
+    ? [target, target.replace(/\.md$/i, ""), ...suffixKeys(target, headingsByNote)]
     : [target, basenameNoExt(citation.target).toLowerCase()];
   for (const key of keys) {
     const headings = headingsByNote.get(key);
@@ -308,6 +308,25 @@ function resolvesAnchor(
   }
   // 헤딩 정보가 없는 노트다 → 판정 불가 → 통과.
   return true;
+}
+
+/**
+ * 인용 대상이 경로 접미사로 맞는 헤딩 인덱스 키들.
+ *
+ * 존재 판정은 접미사를 인정하는데(옵시디언이 그렇게 해석한다) 앵커 판정이 정확 키만 보면,
+ * `Archive/Projects/Note.md`에 대한 `[[Projects/Note#없는 절]]`이 "헤딩 정보 없음 → 통과"로
+ * 빠져나간다. 같은 규칙을 여기서도 적용한다.
+ */
+function suffixKeys(
+  lowerTarget: string,
+  headingsByNote: Map<string, Set<string>>
+): string[] {
+  const needle = `/${lowerTarget.replace(/\.md$/i, "")}`;
+  const out: string[] = [];
+  for (const key of headingsByNote.keys()) {
+    if (key.endsWith(needle)) out.push(key);
+  }
+  return out;
 }
 
 /**

@@ -53,6 +53,26 @@ function matchedFields(
   return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
 }
 
+/**
+ * 발췌·앵커에 실을 청크를 고른다.
+ *
+ * 임베딩 청크가 질의어를 담고 있으면 그것을 쓴다(두 신호가 일치). 담고 있지 않고 어휘
+ * 청크가 있으면 어휘 청크를 쓴다 — 정확 문자열은 확인 가능하고, 사용자가 근거를 눈으로
+ * 확인할 수 있는 쪽이 낫다. 어휘 청크가 없으면(순수 의미 질의) 임베딩 청크를 쓴다.
+ */
+function pickMatchedChunk(
+  dense: { heading: string | null; text: string } | null,
+  lexical: { heading: string | null; text: string } | null,
+  terms: readonly string[]
+): { heading: string | null; text: string } | null {
+  if (dense === null) return lexical;
+  if (lexical === null) return dense;
+
+  const lower = dense.text.toLowerCase();
+  const denseHasTerm = terms.some((term) => lower.includes(term));
+  return denseHasTerm ? dense : lexical;
+}
+
 /** 질의를 어휘 검색용 토큰으로 쪼갠다. */
 function splitQueryTerms(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -857,14 +877,18 @@ export class VaultIndexer {
         seedPath: d?.seedPath ?? null,
         // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
         seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
-        // 적중 본문·헤딩의 출처를 결과가 어느 목록에서 왔는지에 맞춘다.
-        // dense로 찾았으면 임베딩이 맞은 청크, 어휘로만 찾았으면 질의어가 있는 청크다.
-        // 섞으면 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"으로 표시해 인용 앵커가
-        // 엉뚱한 곳을 가리킨다.
+        // 적중 본문·헤딩의 출처를 고른다.
+        //
+        // 기본은 임베딩이 맞은 청크다. 다만 그 청크에 질의어가 **하나도 없고** 질의어가
+        // 있는 청크가 따로 있으면 그쪽을 쓴다 — 에러 코드가 B절에 있는데 임베딩이 A절을
+        // 골랐으면, 발췌에서 그 코드가 사라지고 인용 앵커도 A를 가리켜 하이브리드 검색의
+        // 근거가 잘못 전달된다. 정확 문자열은 확인 가능한 신호이므로 그때는 그것을 따른다.
         ...matchedFields(
-          d
-            ? this.bestChunkMatch(queryEmbedding, path)
-            : bestLexicalChunk(candidates.get(path), lexicalTerms)
+          pickMatchedChunk(
+            d ? this.bestChunkMatch(queryEmbedding, path) : null,
+            bestLexicalChunk(candidates.get(path), lexicalTerms),
+            lexicalTerms
+          )
         ),
       };
     });

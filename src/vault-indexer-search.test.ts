@@ -752,3 +752,66 @@ describe("VaultIndexer 하이브리드 융합", () => {
     expect((await indexer.search(TERM, 2)).items).toHaveLength(2);
   });
 });
+
+// ============================================
+// 융합 결과의 적중 청크 선택
+// ============================================
+/**
+ * dense와 lexical 양쪽에 있는 노트에서 임베딩이 고른 청크에 질의어가 없으면, 발췌와 인용
+ * 앵커가 정확 문자열이 없는 절을 가리킨다 — 하이브리드 검색의 근거가 잘못 전달된다.
+ */
+describe("VaultIndexer 융합 결과의 적중 청크", () => {
+  /** A절은 임베딩이 가깝고 B절에만 질의어가 있다. */
+  function makeSplitPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "note.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "노트",
+          excerpt: "개요 문단",
+          searchText: "개요 문단 오류코드x99 가 여기 있다",
+          chunks: [
+            { index: 0, text: "개요 문단입니다", embedding: [1, 0, 0], charStart: 0, heading: "개요" },
+            { index: 1, text: "오류코드x99 가 여기 있다", embedding: [0, 1, 0], charStart: 50, heading: "오류" },
+          ],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("임베딩 청크에 질의어가 없으면 어휘 청크를 쓴다", async () => {
+    // 쿼리 벡터는 개요 청크에 가깝지만 질의어는 오류 청크에만 있다.
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeSplitPayload());
+
+    const result = await indexer.search("오류코드x99");
+
+    expect(result.items[0].matchedText).toContain("오류코드x99");
+    // 인용 앵커도 그 절을 가리킨다.
+    expect(result.items[0].heading).toBe("오류");
+  });
+
+  it("임베딩 청크에 질의어가 있으면 그것을 쓴다", async () => {
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeSplitPayload());
+
+    const result = await indexer.search("개요");
+
+    expect(result.items[0].heading).toBe("개요");
+  });
+});

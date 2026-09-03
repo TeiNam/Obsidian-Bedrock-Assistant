@@ -627,3 +627,36 @@ describe("citationMatchesPath", () => {
     expect(citationMatchesPath("other", "Archive/Projects/Note.md")).toBe(false);
   });
 });
+
+describe("findUnresolvedCitations — 접미사 경로의 앵커", () => {
+  const paths = ["Archive/Projects/Note.md"];
+  const headings = buildHeadingIndex([["Archive/Projects/Note.md", ["결론"]]]);
+
+  it("접미사로 맞은 노트의 없는 절을 경고한다", () => {
+    // 존재 판정은 접미사로 통과하는데 앵커 판정이 정확 키만 보면 "헤딩 정보 없음 → 통과"로
+    // 지어낸 절이 빠져나간다.
+    const out = findUnresolvedCitations(
+      extractCitations("[[Projects/Note#없는 절]]"),
+      paths,
+      headings
+    );
+
+    expect(out).toHaveLength(1);
+    expect(out[0].anchor).toBe("없는 절");
+  });
+
+  it("접미사로 맞은 노트의 있는 절은 통과한다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[Projects/Note#결론]]"), paths, headings)
+    ).toEqual([]);
+  });
+
+  it("전체 경로 앵커도 그대로 동작한다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[Archive/Projects/Note#결론]]"), paths, headings)
+    ).toEqual([]);
+    expect(
+      findUnresolvedCitations(extractCitations("[[Archive/Projects/Note#없음]]"), paths, headings)
+    ).toHaveLength(1);
+  });
+});
