@@ -225,6 +225,52 @@ export function supportsEffort(provider: AiProvider, modelId: string): boolean {
 }
 
 /**
+ * 프롬프트 캐싱 마커(cachePoint)를 넣어도 되는 Bedrock 모델 패턴.
+ *
+ * Bedrock에서 프롬프트 캐싱은 모델별 지원 기능이다. 지원하지 않는 모델에 cachePoint
+ * 블록을 보내면 검증 오류로 요청 전체가 실패하므로, 확실히 지원하는 계열만 허용한다.
+ * 목록에 없으면 캐시 마커 없이 보낸다 — 캐싱은 최적화이고, 최적화가 요청을 깨서는 안 된다.
+ */
+const CACHING_MODEL_PATTERNS: readonly RegExp[] = [
+	/claude-opus-(?:[4-9]|\d{2,})/,
+	/claude-sonnet-(?:[4-9]|\d{2,})/,
+	/claude-haiku-(?:[4-9]|\d{2,})/,
+	/gpt-(?:[5-9]|\d{2,})/,
+	/nova-(?:lite|pro|premier)/,
+];
+
+/**
+ * 캐시 마커를 붙일 최소 안정 접두어 길이(문자).
+ *
+ * Anthropic 모델은 캐시 대상이 1024토큰(일부 모델 2048) 이상이어야 캐싱이 일어난다.
+ * 토크나이저가 없으므로 문자 수로 보수적으로 가늠한다 — 영어 위주 프롬프트에서 4자/토큰을
+ * 잡으면 1024토큰은 약 4096자다. 미달인데 마커를 붙이면 아무 이득 없이 요청 모양만
+ * 복잡해지므로 그때는 붙이지 않는다.
+ */
+export const MIN_CACHEABLE_PREFIX_CHARS = 4096;
+
+/**
+ * 주어진 백엔드/모델/안정 접두어에 프롬프트 캐시 마커를 붙일 수 있는지 판별한다.
+ *
+ * Bedrock만 true가 될 수 있다. 나머지 백엔드는 이 플러그인이 할 일이 없다:
+ *  - OpenAI: 1024토큰 이상 접두어를 자동으로 캐싱한다. 마커 규격이 없다.
+ *  - Ollama: 로컬 실행이라 과금 대상이 아니고 캐싱 API도 없다.
+ *  - Gemini: 명시적 캐싱은 CachedContent 리소스를 만들고 TTL과 수명을 직접 관리해야
+ *    한다(별 API 호출 + 삭제 책임). 한 줄 마커로 끝나는 일이 아니어서 범위 밖이다.
+ */
+export function supportsPromptCaching(
+	provider: AiProvider,
+	modelId: string,
+	stablePrefixLength: number
+): boolean {
+	if (provider !== "bedrock") return false;
+	if (stablePrefixLength < MIN_CACHEABLE_PREFIX_CHARS) return false;
+
+	const id = (modelId ?? "").toLowerCase();
+	return CACHING_MODEL_PATTERNS.some((re) => re.test(id));
+}
+
+/**
  * 백엔드가 바이너리 첨부(이미지·문서) 콘텐츠 블록을 실제로 모델까지 전달하는지 판별한다.
  *
  * chat-view의 buildBinaryContentBlock은 Bedrock Converse 규격으로 블록을 만든다

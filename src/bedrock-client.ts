@@ -24,8 +24,9 @@ import {
   chatModelRank,
   compareModelVersion,
   inferProviderName,
+  supportsPromptCaching,
 } from "./provider-utils";
-import { buildSystemPrompt } from "./system-prompt";
+import { buildSystemPromptSegments } from "./system-prompt";
 
 /** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
 const EMBEDDING_MAX_CHARS = 20000;
@@ -284,12 +285,29 @@ export class BedrockClient implements IAiClient {
     messages: ConverseMessage[],
     tools?: ToolDefinition[]
   ): Record<string, unknown> {
-    const fullSystemPrompt = buildSystemPrompt(this.settings);
+    const { stable, volatile } = buildSystemPromptSegments(this.settings);
+
+    // 프롬프트 캐싱: 안정 접두어와 매 요청 변하는 시각 블록 사이에 캐시 경계를 둔다.
+    //
+    // 캐싱은 접두어가 바이트 단위로 같을 때만 적중한다. 시각 블록을 같은 text 블록에
+    // 넣으면 분마다 접두어가 달라져 캐시가 매번 무효화된다. system 배열을
+    // [안정, cachePoint, 시각]으로 쪼개면 기본 프롬프트와 스킬 지식은 캐시에 남는다.
+    //
+    // 지원 모델이 아니거나 접두어가 최소 길이에 못 미치면 마커 없이 보낸다 —
+    // 캐싱은 최적화이고, 최적화가 요청을 깨서는 안 된다.
+    const cacheable = supportsPromptCaching(
+      "bedrock",
+      this.settings.bedrockChatModel,
+      stable.length
+    );
+    const system = cacheable
+      ? [{ text: stable }, { cachePoint: { type: "default" } }, { text: volatile }]
+      : [{ text: stable + volatile }];
 
     const input: Record<string, unknown> = {
       modelId: this.settings.bedrockChatModel,
       messages,
-      system: [{ text: fullSystemPrompt }],
+      system,
       inferenceConfig: {
         maxTokens: this.settings.maxTokens,
       },

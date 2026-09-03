@@ -56,32 +56,61 @@ function buildDateTimeContext(now: Date): string {
 }
 
 /**
- * 최종 시스템 프롬프트를 구성한다.
+ * 시스템 프롬프트를 캐시 가능성 기준으로 두 조각으로 나눈 형태.
+ *
+ * 프롬프트 캐싱은 "접두어가 바이트 단위로 같을 때"만 적중한다. 시각은 분마다 변하므로
+ * 안정 조각과 같은 블록에 두면 매 요청 캐시가 깨진다. 두 조각을 따로 넘길 수 있는
+ * 백엔드(Bedrock)는 그 사이에 캐시 경계를 끼운다.
+ */
+export interface SystemPromptSegments {
+  /** 설정이 바뀔 때만 변하는 부분 — 기본 프롬프트 + 사용자 추가 지침 + 스킬. */
+  stable: string;
+  /** 매 요청 변하는 부분 — 현재 시각 블록. 캐시 경계 뒤에 와야 한다. */
+  volatile: string;
+}
+
+/**
+ * 시스템 프롬프트를 안정/변동 조각으로 나눠 구성한다.
+ *
  *  - 내장 기본 프롬프트(BASE_SYSTEM_PROMPT)는 항상 포함된다.
  *  - 설정의 systemPrompt 값이 비어 있지 않으면 "추가 지침"으로 뒤에 덧붙인다.
  *  - 활성화된 Obsidian 스킬 지식(buildSkillsPrompt)을 덧붙인다(기존 동작 유지).
- *  - 현재 시각 블록을 맨 끝에 덧붙인다.
+ *  - 현재 시각 블록은 volatile로 분리한다.
  *
- * 시각 블록이 맨 끝인 이유: 앞의 세 조각은 설정이 바뀔 때만 변하는데 시각은 매
- * 요청마다 변한다. 앞에 두면 프롬프트 캐싱의 안정 접두어가 매번 깨진다.
+ * 두 조각을 이어붙이면 buildSystemPrompt와 완전히 같은 문자열이 된다 — 캐시 경계를
+ * 지원하지 않는 백엔드는 그냥 이어붙여 쓰면 되므로 동작 차이가 없다.
  *
  * @param now 현재 시각. 테스트에서 고정하기 위한 파라미터이며, 실제 호출은 생략한다.
  *   기본값을 호출 시점에 평가하므로 세션이 자정을 넘겨도 값이 굳지 않는다.
+ */
+export function buildSystemPromptSegments(
+  settings: GeminiAssistantSettings,
+  now: Date = new Date()
+): SystemPromptSegments {
+  const custom = (settings.systemPrompt ?? "").trim();
+  const skills = buildSkillsPrompt(settings.enabledSkills || [], settings.customSkills || []);
+
+  let stable = BASE_SYSTEM_PROMPT;
+  if (custom) {
+    // 사용자 추가 지침은 기본 프롬프트를 대체하지 않고 보강한다.
+    stable += `\n\n## Additional instructions from the user\n${custom}`;
+  }
+  // buildSkillsPrompt는 활성 스킬이 없으면 ""를 반환하므로 그대로 이어붙인다.
+  stable += skills;
+
+  return { stable, volatile: buildDateTimeContext(now) };
+}
+
+/**
+ * 최종 시스템 프롬프트 문자열. 캐시 경계가 필요 없는 호출부용이다.
+ *
+ * 시각 블록이 맨 끝인 이유: 앞의 조각들은 설정이 바뀔 때만 변하는데 시각은 매 요청
+ * 변한다. 앞에 두면 프롬프트 캐싱의 안정 접두어가 매번 깨진다.
  */
 export function buildSystemPrompt(
   settings: GeminiAssistantSettings,
   now: Date = new Date()
 ): string {
-  const custom = (settings.systemPrompt ?? "").trim();
-  const skills = buildSkillsPrompt(settings.enabledSkills || [], settings.customSkills || []);
-
-  let prompt = BASE_SYSTEM_PROMPT;
-  if (custom) {
-    // 사용자 추가 지침은 기본 프롬프트를 대체하지 않고 보강한다.
-    prompt += `\n\n## Additional instructions from the user\n${custom}`;
-  }
-  // buildSkillsPrompt는 활성 스킬이 없으면 ""를 반환하므로 그대로 이어붙인다.
-  prompt += skills;
-  prompt += buildDateTimeContext(now);
-  return prompt;
+  const { stable, volatile } = buildSystemPromptSegments(settings, now);
+  return stable + volatile;
 }

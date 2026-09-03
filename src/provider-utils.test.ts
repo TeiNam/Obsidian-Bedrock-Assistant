@@ -16,6 +16,8 @@ import {
 	toOllamaMessages,
 	supportsEffort,
 	supportsBinaryAttachments,
+	supportsPromptCaching,
+	MIN_CACHEABLE_PREFIX_CHARS,
 	effortLevels,
 	clampEffort,
 	buildEffortParams,
@@ -1347,5 +1349,59 @@ describe("supportsBinaryAttachments — 변환기 실제 동작과 일치", () =
 	it("Gemini는 지원하지 않는다고 판정한다", () => {
 		// gemini-client의 parts 빌더는 text/toolUse/toolResult 분기뿐이다.
 		expect(supportsBinaryAttachments("gemini")).toBe(false);
+	});
+});
+
+// ============================================
+// supportsPromptCaching
+// ============================================
+/**
+ * 캐싱은 최적화다. 지원하지 않는 모델에 cachePoint를 보내면 검증 오류로 요청 전체가
+ * 실패하므로, 애매하면 붙이지 않는 쪽이 옳다.
+ */
+describe("supportsPromptCaching", () => {
+	const LONG = MIN_CACHEABLE_PREFIX_CHARS;
+
+	it("Bedrock 이외 백엔드는 항상 false다", () => {
+		// OpenAI는 자동 캐싱, Ollama는 로컬, Gemini는 CachedContent 리소스 관리가 필요하다.
+		for (const p of ["openai", "ollama", "gemini"] as const) {
+			expect(supportsPromptCaching(p, "claude-sonnet-5", LONG)).toBe(false);
+		}
+	});
+
+	it("지원 계열 모델은 true다", () => {
+		for (const id of [
+			"global.anthropic.claude-sonnet-5-20260101-v1:0",
+			"global.anthropic.claude-opus-4-1",
+			"global.anthropic.claude-haiku-5",
+			"global.openai.gpt-5.6-sol",
+			"amazon.nova-pro-v1:0",
+		]) {
+			expect(supportsPromptCaching("bedrock", id, LONG)).toBe(true);
+		}
+	});
+
+	it("구형·미지원 모델은 false다", () => {
+		for (const id of [
+			"anthropic.claude-3-sonnet-20240229-v1:0",
+			"anthropic.claude-instant-v1",
+			"meta.llama3-70b-instruct-v1:0",
+			"amazon.nova-micro-v1:0",
+			"",
+		]) {
+			expect(supportsPromptCaching("bedrock", id, LONG)).toBe(false);
+		}
+	});
+
+	it("접두어가 최소 길이에 못 미치면 false다", () => {
+		// 미달인데 마커를 붙이면 아무 이득 없이 요청 모양만 복잡해진다.
+		expect(supportsPromptCaching("bedrock", "claude-sonnet-5", LONG - 1)).toBe(false);
+		expect(supportsPromptCaching("bedrock", "claude-sonnet-5", 0)).toBe(false);
+		expect(supportsPromptCaching("bedrock", "claude-sonnet-5", LONG)).toBe(true);
+	});
+
+	it("두 자리 버전을 낮은 버전으로 오판하지 않는다", () => {
+		expect(supportsPromptCaching("bedrock", "claude-sonnet-12", LONG)).toBe(true);
+		expect(supportsPromptCaching("bedrock", "gpt-10-terra", LONG)).toBe(true);
 	});
 });
