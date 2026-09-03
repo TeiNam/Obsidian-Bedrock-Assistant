@@ -23,6 +23,14 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 - **Graph RAG Vault Search** — Chunk-level embeddings combined with link traversal (outlinks and backlinks) and a minimum relevance threshold
 - **Second Brain Layer** — Opt-in knowledge layer (off by default) that can write wiki notes into a dedicated folder, with sentinel blocks that preserve your own notes
 - **Knowledge Gap Report** — Finds structural gaps in the vault from index data alone (0 LLM calls)
+- **Hybrid Search** — Lexical matches are fused with vector search by reciprocal rank fusion, so exact strings (error codes, function names, versions) are not lost to embedding similarity
+- **Filtered Search** — The AI can narrow vault search by folder, tags, and modification date range
+- **Citation Verification** — Cited note paths and `#heading` anchors are checked against the index; unresolved citations are flagged under the answer
+- **Contradiction Review** — Approve contradiction fixes note by note; only the generated region is replaced (0 LLM calls to apply)
+- **Link Suggestions** — Proposes links for orphan and stub notes from index embeddings (0 LLM calls)
+- **Duplicate Candidates** — Finds notes covering the same subject and proposes a canonical note plus aliases; nothing is deleted or merged (0 LLM calls)
+- **Decision Ledger** — Collects scattered decisions with rationale, owner, deadline, and sources; superseded decisions are marked rather than deleted
+- **Inbox Triage** — Suggests titles, folders, and tags for newly captured notes; renames go through Obsidian's link-preserving API
 - **Review Queue** — Resurfaces 5 notes you have not opened in a while but that are well linked (0 LLM calls)
 - **Conversation Harvest** — Extracts conclusions, decisions, rationale, and open questions from a saved chat session into a searchable note
 - **Reasoning Effort** — Set reasoning depth per model; omitted on models that do not support it
@@ -35,7 +43,7 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 - **MCP Server Integration** — Model Context Protocol servers (uvx, Docker)
 - **File Management** — Create, edit, move, and delete notes through AI
 - **Multilingual UI** — English, 한국어, 日本語
-- **File Attachments** — Drag-and-drop, clipboard, file search (images, PDFs, text)
+- **File Attachments** — Drag-and-drop, clipboard, file search. Images work on all four backends; PDFs on Bedrock and Gemini; Office documents on Bedrock. Unsupported combinations are refused with the list of backends that can handle the format, rather than dropped silently
 - **Chat Session History** — Save and restore past conversations
 - **Obsidian Skills** — Six built-in knowledge modules: `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `korean-writing`, `business-english-writing`, `second-brain`
 - **Chat Retrospective** — Type "회고", "retrospective", or "振り返り" in chat to auto-generate a daily retrospective, chained with the retrospective sections of the last 7 days so recurring problems stay visible
