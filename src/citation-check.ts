@@ -104,6 +104,23 @@ function looksLikeUrl(target: string): boolean {
  * 같은 대상이 여러 번 인용되면 한 번만 반환한다(대상 기준 중복 제거).
  */
 /**
+ * 이미 분리된 경로·앵커를 각각 디코딩해 인용으로 만든다.
+ *
+ * 합쳐서 `splitTarget`에 넘기면 안 된다 — 디코딩으로 생긴 `#`(`%23`)를 앵커 구분자로
+ * 오인한다. 마크다운 링크에서 앵커는 정규식이 이미 나눠 놓았다.
+ */
+function decodedCitation(
+  rawPath: string,
+  rawAnchor: string | undefined
+): { target: string; anchor?: string } {
+  const target = safeDecode(rawPath).trim();
+  if (rawAnchor === undefined) return { target };
+
+  const anchor = safeDecode(rawAnchor.replace(/^#/, "")).trim();
+  return anchor === "" ? { target } : { target, anchor };
+}
+
+/**
  * URI 디코딩. 실패하면 원문을 그대로 쓴다.
  *
  * `decodeURIComponent`는 `%ZZ`처럼 잘못된 이스케이프에 URIError를 던진다. 그대로 두면
@@ -164,18 +181,18 @@ export function extractCitations(markdown: string): Citation[] {
 
   // 2) 마크다운 링크 중 .md 대상. 헤딩 앵커(`Note.md#절`)까지 받는다 —
   //    받지 않으면 그 형태로 존재하지 않는 노트·절을 인용해도 검증되지 않는다.
+  //
+  //    **경로와 앵커는 디코딩 전에 나뉘어 있다.** 합쳐서 디코딩한 뒤 다시 `#`로 쪼개면
+  //    `Notes/foo%23bar.md`가 `Notes/foo` + 앵커 `bar.md`로 오인되어, 실재하는 파일에
+  //    깨진 인용 경고가 붙는다.
   for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s#]+\.md)(#[^)\s]*)?(?:\s[^)]*)?\)/gi)) {
-    const target = safeDecode(m[1]);
-    const anchor = m[2] === undefined ? "" : safeDecode(m[2]);
-    add(m[0], splitTarget(`${target}${anchor}`));
+    add(m[0], decodedCitation(m[1], m[2]));
   }
 
   // 3) 꺾쇠로 감싼 목적지 — `[근거](<Projects/Fake Note.md>)`.
   //    공백이 든 경로를 쓰는 표준 형태다. 받지 않으면 그 형태의 지어낸 인용이 검증에서 빠진다.
   for (const m of text.matchAll(/\[[^\]\n]*\]\(<([^<>\n]+\.md)(#[^<>\n]*)?>\)/gi)) {
-    const target = safeDecode(m[1]);
-    const anchor = m[2] === undefined ? "" : safeDecode(m[2]);
-    add(m[0], splitTarget(`${target}${anchor}`));
+    add(m[0], decodedCitation(m[1], m[2]));
   }
 
   return out;

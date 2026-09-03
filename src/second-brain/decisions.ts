@@ -10,7 +10,7 @@
 // 매번 추측하면 같은 결정이 실행마다 다른 상태로 기록된다.
 
 import { parseJsonArray, toStringArray, toTrimmedString } from "./llm-json";
-import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
+import { formatNoteLink, parseNoteLinks, pathWithoutExtension } from "./wiki-link";
 
 /** 결정의 현재 상태. */
 export type DecisionStatus = "open" | "done" | "superseded";
@@ -411,10 +411,15 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
     // 별칭(`|`)과 헤딩 앵커(`#`)를 먼저 떼야 한다. 사용자가 원장에서
     // `[[Meetings/a|회의]]`처럼 고치면 그대로 `Meetings/a|회의.md`가 근거로 저장되고,
     // 다음 병합에서 정상 경로와 별개 항목으로 중복된다.
-    const sources = [...sourceCell.matchAll(/\[\[([^\]]+)\]\]/g)]
-      .map((m) => (m[1].split("|")[0] ?? "").split("#")[0].trim())
+    // 위키링크와 마크다운 링크를 모두 읽는다. 근거 파일명에 `#`·`|`가 있으면 formatLedger가
+    // 마크다운 링크로 쓰므로, 한 형태만 읽으면 그 행이 "해석하지 못한 행"으로 밀려나고
+    // 같은 결정이 다시 추가되어 중복된다.
+    const sources = parseNoteLinks(sourceCell)
+      .map((link) => link.target)
       .filter((path) => path !== "")
-      .map((path) => (path.toLowerCase().endsWith(".md") ? path : `${path}.md`));
+      // formatLedger가 확장자를 떼고 쓰므로 다시 붙인다. 이미 붙어 있으면 원문을 유지한다 —
+      // 소문자로 정규화하면 대소문자 구분 파일시스템에서 다른 파일이 된다.
+      .map((path) => (/\.md$/i.test(path) ? path : `${path}.md`));
     // 근거 칸을 일반 텍스트나 마크다운 링크로 고친 행이 여기 온다. 항목으로 만들 수는
     // 없지만 사용자가 쓴 것이므로 지우지 않는다.
     if (sources.length === 0) {

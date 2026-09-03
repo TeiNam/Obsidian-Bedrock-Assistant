@@ -13,6 +13,7 @@ import { VaultIndexer } from "./vault-indexer";
 import type { App } from "obsidian";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
 import { stripFrontmatterFromContent } from "./graph-rag/graph-extractor";
+import { parseNoteLinks } from "./second-brain/wiki-link";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
@@ -130,10 +131,10 @@ const TRIAGE_EXCERPT_CHARS = 500;
  */
 function wikiLinkTargets(app: App, text: string, sourcePath: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
-    const linkpath = (m[1].split("|")[0] ?? "").split("#")[0].trim();
-    if (linkpath === "") continue;
-    const dest = app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
+  // 위키링크와 마크다운 링크를 모두 모은다. 파일명에 `#`·`|`가 있는 대상은 마크다운
+  // 링크로 기록되므로, 한 형태만 모으면 그 노트의 백링크가 갱신 대상에서 빠진다.
+  for (const link of parseNoteLinks(text)) {
+    const dest = app.metadataCache.getFirstLinkpathDest(link.target, sourcePath);
     if (dest) out.push(dest.path);
   }
   return out;

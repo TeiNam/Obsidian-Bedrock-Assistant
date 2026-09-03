@@ -539,3 +539,32 @@ describe("stripCode — 닫는 펜스 조건", () => {
     expect(extractCitations(text).map((c) => c.target)).toEqual(["진짜"]);
   });
 });
+
+describe("extractCitations — 인코딩된 경로", () => {
+  it("%23은 파일명의 일부이지 앵커가 아니다", () => {
+    // 합쳐서 디코딩한 뒤 `#`로 쪼개면 `Notes/foo` + 앵커 `bar.md`로 오인되어, 실재하는
+    // 파일에 깨진 인용 경고가 붙는다.
+    const out = extractCitations("[x](Notes/foo%23bar.md)");
+
+    expect(out).toHaveLength(1);
+    expect(out[0].target).toBe("Notes/foo#bar.md");
+    expect(out[0].anchor).toBeUndefined();
+  });
+
+  it("%7C도 파일명의 일부다", () => {
+    expect(extractCitations("[x](Notes/a%7Cb.md)")[0].target).toBe("Notes/a|b.md");
+  });
+
+  it("인코딩된 경로 + 실제 앵커를 함께 처리한다", () => {
+    const out = extractCitations("[x](Notes/foo%23bar.md#결론)");
+    expect(out[0].target).toBe("Notes/foo#bar.md");
+    expect(out[0].anchor).toBe("결론");
+  });
+
+  it("실재하는 파일이면 경고하지 않는다", () => {
+    const out = findUnresolvedCitations(extractCitations("[x](Notes/foo%23bar.md)"), [
+      "Notes/foo#bar.md",
+    ]);
+    expect(out).toEqual([]);
+  });
+});

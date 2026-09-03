@@ -12,7 +12,12 @@
 
 import type { VaultIndexEntry } from "../types";
 import { compareVectors } from "../graph-rag/vector-search";
-import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
+import {
+  formatNoteLink,
+  parseNoteLinks,
+  pathWithoutExtension,
+  type ParsedNoteLink,
+} from "./wiki-link";
 
 /** 링크 제안 1건. */
 export interface LinkSuggestion {
@@ -173,14 +178,6 @@ export function formatSuggestionLink(suggestion: LinkSuggestion): string {
   return formatNoteLink(pathWithoutExtension(suggestion.targetPath), suggestion.targetTitle.trim());
 }
 
-/** 블록에서 되읽은 링크 1건. */
-interface ParsedLink {
-  /** 링크 대상(헤딩 앵커 제외). */
-  target: string;
-  /** 표시 별칭. 없으면 빈 문자열. */
-  alias: string;
-}
-
 /**
  * 이미 기록된 관련 노트 블록에서 링크를 되읽는다.
  *
@@ -191,22 +188,11 @@ interface ParsedLink {
  * 별칭까지 함께 읽는다. 대상만 읽으면 같은 링크를 다시 승인할 때 `[[경로|제목]]`이
  * `[[경로]]`로 바뀌어 재실행이 멱등하지 않다.
  */
-function parseRelatedLinks(block: string | null): ParsedLink[] {
+function parseRelatedLinks(block: string | null): ParsedNoteLink[] {
   if (block === null) return [];
-
-  const out: ParsedLink[] = [];
-  for (const m of block.matchAll(/^\s*-\s*\[\[([^\]\n]+)/gm)) {
-    // **첫** 파이프만 구분자다. 옵시디언도 그렇게 읽는다 — 별칭에 파이프가 들어간
-    // `[[경로|A | B]]`를 split("|")로 쪼개면 별칭이 `A`로 잘리고, 다음 병합에서 사용자가
-    // 승인한 표시 제목이 조용히 사라진다.
-    const pipe = m[1].indexOf("|");
-    const targetPart = pipe < 0 ? m[1] : m[1].slice(0, pipe);
-    const aliasPart = pipe < 0 ? "" : m[1].slice(pipe + 1);
-    // 헤딩 앵커는 대상 판정에 쓰지 않는다.
-    const target = (targetPart.split("#")[0] ?? "").trim();
-    if (target !== "") out.push({ target, alias: aliasPart.trim() });
-  }
-  return out;
+  // 위키링크와 마크다운 링크를 모두 읽는다. formatNoteLink가 경로에 따라 둘 중 하나를
+  // 쓰므로 한 형태만 읽으면 다음 병합에서 이전에 승인한 링크가 사라진다.
+  return parseNoteLinks(block);
 }
 
 /** 기록된 블록의 링크 **대상 경로** 목록. */
