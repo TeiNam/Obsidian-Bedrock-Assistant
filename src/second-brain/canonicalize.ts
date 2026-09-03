@@ -10,6 +10,7 @@
 import type { VaultIndexEntry } from "../types";
 import { compareVectors } from "../graph-rag/vector-search";
 import { representativeEmbedding } from "./link-suggestions";
+import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** 군집 구성원 1건. */
 export interface DuplicateMember {
@@ -308,8 +309,8 @@ export function buildCanonicalBlock(cluster: DuplicateCluster): string {
   for (const d of cluster.duplicates) {
     // 링크 대상은 경로다. title은 인덱서가 뽑은 첫 H1이라 `[[제목]]`이 그 파일을
     // 가리키지 않는다 — 같은 제목의 노트가 여러 개인 것이 바로 이 군집의 전제다.
-    const target = d.path.replace(/\.md$/i, "");
-    lines.push(`- [[${target}|${d.title}]] — \`${d.path}\` (유사도 ${(d.similarity * 100).toFixed(1)}%)`);
+    const link = formatNoteLink(pathWithoutExtension(d.path), d.title);
+    lines.push(`- ${link} — \`${d.path}\` (유사도 ${(d.similarity * 100).toFixed(1)}%)`);
   }
   lines.push("", "확인 후 직접 합치거나, 필요 없으면 이 블록을 지우세요.");
   return lines.join("\n");

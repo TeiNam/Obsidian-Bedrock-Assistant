@@ -183,7 +183,8 @@ describe("writeIndexCatalog — 카탈로그 갱신 시 사용자 메모 보존 
     // sentinel 블록으로 감싸여 있고 카탈로그 본문을 포함한다
     expect(createdContent).toContain("<!-- @generated:catalog -->");
     expect(createdContent).toContain("<!-- @end:catalog -->");
-    expect(createdContent).toContain("[[Second Brain/concepts/A.md|A]]");
+    // 링크 대상은 확장자를 뗀 경로다(formatNoteLink 규약, 다른 생성 블록과 동일).
+    expect(createdContent).toContain("[[Second Brain/concepts/A|A]]");
   });
 
   it("기존 index.md의 사용자 메모(User_Region)를 보존하고 catalog 블록만 교체한다", async () => {
@@ -209,7 +210,7 @@ describe("writeIndexCatalog — 카탈로그 갱신 시 사용자 메모 보존 
     // 사용자 메모는 그대로 보존된다
     expect(written).toContain(userMemo);
     // 새 카탈로그 항목이 반영되고, 옛 카탈로그 본문은 사라진다
-    expect(written).toContain("[[Second Brain/entities/X.md|X]]");
+    expect(written).toContain("[[Second Brain/entities/X|X]]");
     expect(written).not.toContain("_옛 카탈로그_");
   });
 });

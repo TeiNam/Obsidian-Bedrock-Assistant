@@ -12,6 +12,7 @@
 
 import type { VaultIndexEntry } from "../types";
 import { compareVectors } from "../graph-rag/vector-search";
+import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** 링크 제안 1건. */
 export interface LinkSuggestion {
@@ -161,25 +162,6 @@ export function suggestLinks(
 /** 링크 제안을 적용할 Sentinel_Block 키. reconcile·synthesize와 같은 비파괴 규약이다. */
 export const RELATED_LINKS_BLOCK_KEY = "related-links";
 
-/** 확장자를 뗀 경로. 위키링크 대상으로 쓴다. */
-function pathWithoutExtension(path: string): string {
-  return path.replace(/\.md$/i, "");
-}
-
-/**
- * 링크 한 줄. 별칭이 대상과 같거나 없으면 표기를 늘리지 않는다.
- *
- * 경로에 `#`나 `|`가 있으면 위키링크로 쓸 수 없다 — `[[Notes/foo#bar]]`는 `Notes/foo`의
- * `bar` 절로 해석되고, `|`는 별칭 구분자가 된다. 그 경우 퍼센트 인코딩한 마크다운 링크로
- * 쓴다(옵시디언이 두 형태를 모두 해석한다).
- */
-function formatWikiLink(target: string, alias: string): string {
-  if (/[#|]/.test(target)) {
-    const encoded = target.replace(/#/g, "%23").replace(/\|/g, "%7C").replace(/ /g, "%20");
-    return `[${alias === "" ? target : alias}](${encoded}.md)`;
-  }
-  return alias === "" || alias === target ? `[[${target}]]` : `[[${target}|${alias}]]`;
-}
 
 /**
  * 제안 1건이 노트에 기록될 위키링크 표기.
@@ -188,7 +170,7 @@ function formatWikiLink(target: string, alias: string): string {
  * 달라진다 — 실제로 화면은 `[[제목]]`을, 쓰기는 `[[경로|제목]]`을 쓰고 있었다.
  */
 export function formatSuggestionLink(suggestion: LinkSuggestion): string {
-  return formatWikiLink(pathWithoutExtension(suggestion.targetPath), suggestion.targetTitle.trim());
+  return formatNoteLink(pathWithoutExtension(suggestion.targetPath), suggestion.targetTitle.trim());
 }
 
 /** 블록에서 되읽은 링크 1건. */
@@ -271,7 +253,7 @@ export function mergeRelatedLinksBlock(
 
   const lines = ["## 관련 노트", ""];
   for (const { target, alias } of links) {
-    lines.push(`- ${formatWikiLink(target, alias)}`);
+    lines.push(`- ${formatNoteLink(target, alias)}`);
   }
   return lines.join("\n");
 }

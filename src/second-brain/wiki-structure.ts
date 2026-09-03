@@ -21,6 +21,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
+import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** Wiki_Folder 하위에 두는 기본 카테고리 폴더 목록. 이 목록에 없는 카테고리는 "기타"로 분류된다. */
 export const WIKI_CATEGORIES = ["entities", "concepts", "projects"] as const;
@@ -98,7 +99,7 @@ export function buildIndexCatalog(entries: CatalogEntry[]): string {
 
     // 그룹 내 항목을 제목 오름차순(동일 시 경로)으로 정렬 (Req 4.2)
     const sorted = [...bucket].sort(compareEntries);
-    const lines = sorted.map((e) => `- [[${e.path}|${e.title}]]`);
+    const lines = sorted.map((e) => `- ${formatNoteLink(pathWithoutExtension(e.path), e.title)}`);
     sections.push(`## ${category}\n${lines.join("\n")}`);
   }
 

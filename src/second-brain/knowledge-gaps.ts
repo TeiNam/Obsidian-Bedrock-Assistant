@@ -18,6 +18,7 @@ import type { App } from "obsidian";
 import type { VaultIndexEntry } from "../types";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
+import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** 스텁(내용 부족) 판정 기준 본문 길이. 이보다 짧으면 후보가 된다. */
 export const STUB_MAX_CHARS = 200;
@@ -232,9 +233,9 @@ export function buildGapReport(candidates: GapCandidate[]): string {
     lines.push(`### ${KIND_HEADINGS[kind]}`);
     lines.push("");
     for (const gap of group) {
-      // 위키링크는 확장자 없는 이름을 쓴다.
-      const name = gap.path.replace(/\.md$/, "");
-      lines.push(`- [[${name}]] — ${gap.detail}`);
+      // 링크는 확장자 없는 경로를 쓴다. 경로에 `#`·`|`가 있으면 위키링크로 쓸 수 없어
+      // formatNoteLink가 마크다운 링크로 물러난다.
+      lines.push(`- ${formatNoteLink(pathWithoutExtension(gap.path))} — ${gap.detail}`);
     }
     lines.push("");
   }

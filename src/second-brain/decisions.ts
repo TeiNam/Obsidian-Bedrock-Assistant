@@ -10,6 +10,7 @@
 // 매번 추측하면 같은 결정이 실행마다 다른 상태로 기록된다.
 
 import { parseJsonArray, toStringArray, toTrimmedString } from "./llm-json";
+import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** 결정의 현재 상태. */
 export type DecisionStatus = "open" | "done" | "superseded";
@@ -239,7 +240,9 @@ export function formatLedger(
     lines.push("| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |");
     lines.push("| --- | --- | --- | --- | --- | --- |");
     for (const e of group) {
-      const sources = e.sources.map((s) => `[[${s.replace(/\.md$/i, "")}]]`).join(" ");
+      const sources = e.sources
+        .map((path) => formatNoteLink(pathWithoutExtension(path)))
+        .join(" ");
       // 대체 대상을 결정 칸에 화살표로 붙이지 않는다. 결정 문구에 " → "가 들어 있으면
       // (예: "모놀리식 → 마이크로서비스로 전환한다") 되읽을 때 문구가 잘리고 잘린
       // 뒷부분이 대체 대상으로 들어간다. 두 결정의 문구가 잘려 같아지면 병합에서

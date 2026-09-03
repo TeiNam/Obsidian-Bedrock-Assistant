@@ -4,6 +4,7 @@ import { normalizeSearchFilter, describeFilter } from "./graph-rag/entry-filter"
 import type { ToolDefinition, SecondBrainSettings, IAiClient } from "./types";
 // Second Brain Layer — 위키 노트 생성/카탈로그 갱신에 사용하는 순수 함수 + I/O 래퍼
 import { buildAiFirstNote, type AiFirstMeta, type Recency, type Confidence } from "./second-brain/ai-first-format";
+import { formatAnchorLink, pathWithoutExtension } from "./second-brain/wiki-link";
 import {
   buildIndexCatalog,
   ensureWikiFolders,
@@ -492,13 +493,14 @@ export class ToolExecutor {
     //
     // 앵커 대상은 **경로**다. item.title은 인덱서가 뽑은 첫 H1이지 파일명이 아니므로
     // `[[제목#헤딩]]`은 그 노트를 가리키지 않거나 같은 제목의 다른 노트로 간다.
-    // 헤딩에 파이프가 있으면 앵커를 붙이지 않는다. 위키링크에서 `|`는 별칭 구분자이고
-    // 이스케이프 방법이 없어서, `[[path#A | B]]`는 대상이 `path#A`가 된다 — 존재하지 않는
-    // 절이나 다른 절을 인용하게 만든다. 노트 단위 인용으로 물러나는 쪽이 정확하다.
-    const anchorable = item.heading !== null && item.heading !== undefined && !item.heading.includes("|");
-    const anchor = anchorable
-      ? `\n   인용: [[${item.path.replace(/\.md$/i, "")}#${item.heading}]] (맞은 구간: "${item.heading}")`
-      : "";
+    // 앵커 표기는 formatAnchorLink가 정한다. 헤딩이나 경로에 `#`·`|`가 있으면 위키링크로
+    // 절을 가리킬 방법이 없어 null을 주고, 그때는 노트 단위 인용으로 물러난다 —
+    // 존재하지 않는 절을 가리키는 링크보다 정확하다.
+    const anchorLink = item.heading
+      ? formatAnchorLink(pathWithoutExtension(item.path), item.heading)
+      : null;
+    const anchor =
+      anchorLink === null ? "" : `\n   인용: ${anchorLink} (맞은 구간: "${item.heading}")`;
 
     return (
       `${label} ${rank}. **${item.title}** (${item.path})\n` +

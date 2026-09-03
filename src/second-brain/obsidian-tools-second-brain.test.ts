@@ -262,7 +262,7 @@ describe("update_index — 카탈로그 갱신 + 사용자 메모 보존 (Req 6.
     // 사용자 메모는 그대로 보존된다
     expect(written).toContain(userMemo);
     // 새 카탈로그 항목이 반영되고 옛 카탈로그 본문은 사라진다
-    expect(written).toContain(`[[${WIKI}/concepts/Alpha.md|Alpha]]`);
+    expect(written).toContain(`[[${WIKI}/concepts/Alpha|Alpha]]`);
     expect(written).not.toContain("_옛 카탈로그_");
   });
 });
