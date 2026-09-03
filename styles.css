@@ -1808,15 +1808,6 @@ body.theme-light .ba-message-content pre {
   max-width: 720px;
 }
 
-.ba-reconcile-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 60vh;
-  overflow-y: auto;
-  margin: 12px 0;
-}
-
 .ba-reconcile-card {
   padding: 10px 12px;
   border: 1px solid var(--background-modifier-border);
@@ -1862,24 +1853,10 @@ body.theme-light .ba-message-content pre {
   white-space: pre-wrap;
 }
 
-.ba-reconcile-btn-row {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 
 /* 링크 제안 검토 모달 */
 .ba-link-suggest-modal {
   max-width: 640px;
-}
-
-.ba-link-suggest-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 60vh;
-  overflow-y: auto;
-  margin: 12px 0;
 }
 
 .ba-link-suggest-card {
@@ -1919,7 +1896,18 @@ body.theme-light .ba-message-content pre {
   flex-shrink: 0;
 }
 
-.ba-link-suggest-btn-row {
+
+/* 승인 목록 모달 공통 골격 */
+.ba-approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+
+.ba-approval-btn-row {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
