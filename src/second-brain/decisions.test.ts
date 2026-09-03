@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import fc from "fast-check";
 import {
   normalizeDecision,
   parseDecisionReport,
@@ -220,11 +221,16 @@ describe("formatLedger", () => {
     expect(md).toContain("[[Meetings/2026-09-01]]");
   });
 
-  it("대체된 결정에 대체 대상을 표시한다", () => {
+  it("대체 대상을 별 칸에 적는다", () => {
     const md = formatLedger([
       decision({ decision: "A", status: "superseded", supersededBy: "B" }),
     ]);
-    expect(md).toContain("A → B");
+
+    // 결정 칸에 화살표로 붙이지 않는다 — 문구에 " → "가 있으면 되읽기가 깨진다.
+    expect(md).toContain("| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |");
+    expect(md).not.toContain("A → B");
+    expect(md).toContain("| A |");
+    expect(md).toContain("| B |");
   });
 
   it("빈 원장은 안내 문구다", () => {
@@ -340,5 +346,164 @@ describe("parseLedger — formatLedger와의 왕복", () => {
 
     expect(merged).toHaveLength(2);
     expect(formatLedger(merged)).toBe(ledger);
+  });
+});
+
+describe("parseLedger — 문구에 화살표가 있는 경우", () => {
+  it("열린 결정 문구의 ' → '를 대체 관계로 오인하지 않는다", () => {
+    // "모놀리식 → 마이크로서비스로 전환한다" 같은 문구가 잘려나가고 대체됨으로
+    // 잘못 표시되던 결함. formatLedger는 대체됨 항목에만 화살표를 붙이므로
+    // 그 섹션에서만 해석해야 한다.
+    const e = decision({ decision: "모놀리식 → 마이크로서비스로 전환한다", status: "open" });
+
+    const back = parseLedger(formatLedger([e]));
+
+    expect(back[0].decision).toBe("모놀리식 → 마이크로서비스로 전환한다");
+    expect(back[0].supersededBy).toBe("");
+    expect(mergeLedger([], back)[0].status).toBe("open");
+  });
+
+  it("완료 섹션에서도 화살표를 해석하지 않는다", () => {
+    const e = decision({ decision: "A → B 순서로 배포한다", status: "done" });
+
+    expect(parseLedger(formatLedger([e]))[0].decision).toBe("A → B 순서로 배포한다");
+  });
+
+  it("대체됨 섹션에서는 여전히 대체 대상을 되읽는다", () => {
+    const e = decision({ decision: "구 방식", status: "superseded", supersededBy: "신 방식" });
+
+    const back = parseLedger(formatLedger([e]));
+    expect(back[0].decision).toBe("구 방식");
+    expect(back[0].supersededBy).toBe("신 방식");
+  });
+
+  it("대체됨 항목의 문구에 화살표가 있어도 대체 대상과 섞이지 않는다", () => {
+    const e = decision({
+      decision: "A → B 전환",
+      status: "superseded",
+      supersededBy: "C로 직행",
+    });
+
+    const back = parseLedger(formatLedger([e]));
+    expect(back[0].decision).toBe("A → B 전환");
+    expect(back[0].supersededBy).toBe("C로 직행");
+  });
+
+  it("대체 대상이 없는 대체됨 항목의 문구도 보존된다", () => {
+    // 속성 테스트가 찾은 경우: "가 → 가"가 대체됨 상태이고 대체 대상이 비어 있으면
+    // 화살표 인코딩에서는 문구가 "가"로 잘려 다른 결정과 합쳐졌다.
+    const e = decision({ decision: "가 → 가", status: "superseded", supersededBy: "" });
+
+    const back = parseLedger(formatLedger([e]));
+    expect(back[0].decision).toBe("가 → 가");
+    expect(back[0].supersededBy).toBe("");
+  });
+
+  it("손으로 적은 5칸 행도 읽는다(대체 칸 없음)", () => {
+    const md = [
+      "### 열림 (1)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 근거 |",
+      "| --- | --- | --- | --- | --- |",
+      "| 직접 적은 결정 | 이유 | — | — | [[a]] |",
+    ].join("\n");
+
+    const back = parseLedger(md);
+    expect(back).toHaveLength(1);
+    expect(back[0].decision).toBe("직접 적은 결정");
+    expect(back[0].sources).toEqual(["a.md"]);
+    expect(back[0].supersededBy).toBe("");
+  });
+});
+
+// ============================================
+// Property: 원장 왕복 안정성
+// ============================================
+/**
+ * 화살표 결함(문구의 " → "가 대체 관계로 오인됨)은 구체적 예시를 떠올려야 발견되는
+ * 종류였다. 같은 부류(표 구조를 흔드는 문자가 문구에 들어오는 경우)를 통째로 잡기 위해
+ * 적대적 문자를 섞은 무작위 입력으로 왕복 안정성을 확인한다.
+ *
+ * 문서화된 손실은 생성기에서 제외한다 — rationale의 줄바꿈은 공백으로 접히고,
+ * "—"는 빈 칸 표시라 빈 문자열로 되읽히며, decidedOn은 표에 실리지 않는다.
+ */
+describe("Property: formatLedger → parseLedger 왕복 안정성", () => {
+  /** 표 구조와 파서를 흔들 만한 문자를 섞은 텍스트 생성기. */
+  const adversarialText = fc
+    .array(
+      fc.constantFrom(
+        "가",
+        "A",
+        "|",
+        " → ",
+        "[[링크]]",
+        "###",
+        "#태그",
+        "\\|",
+        "-",
+        "  ",
+        "0"
+      ),
+      { minLength: 1, maxLength: 6 }
+    )
+    .map((parts) => parts.join(""))
+    // 앞뒤 공백만 남거나 빈 칸 표시와 같아지는 입력은 문서화된 손실이라 제외한다.
+    .filter((t) => t.trim() !== "" && t.trim() !== "—");
+
+  const entryArb = fc.record({
+    decision: adversarialText,
+    rationale: adversarialText,
+    owner: adversarialText,
+    due: fc.constantFrom("", "2026-09-30"),
+    status: fc.constantFrom("open" as const, "done" as const, "superseded" as const),
+    supersededBy: fc.constantFrom("", "다른 결정"),
+  });
+
+  it("결정 문구가 왕복에서 보존된다", () => {
+    fc.assert(
+      fc.property(entryArb, (raw) => {
+        const e = decision({ ...raw, sources: ["a.md"], decidedOn: "" });
+        const back = parseLedger(formatLedger([e]));
+
+        // 문구가 잘리거나 다른 칸으로 새지 않는다.
+        expect(back).toHaveLength(1);
+        expect(back[0].decision).toBe(e.decision.trim());
+        expect(back[0].rationale).toBe(e.rationale.trim());
+        expect(back[0].owner).toBe(e.owner.trim());
+      }),
+      { numRuns: 300 }
+    );
+  });
+
+  it("왕복 후 다시 포맷해도 같은 문서가 된다(멱등)", () => {
+    fc.assert(
+      fc.property(fc.array(entryArb, { minLength: 1, maxLength: 4 }), (raws) => {
+        // 같은 결정 문구가 중복 생성될 수 있으므로 먼저 병합해 정본 상태를 만든다.
+        const seeded = mergeLedger(
+          [],
+          raws.map((raw) => decision({ ...raw, sources: ["a.md"], decidedOn: "" }))
+        );
+        const once = formatLedger(seeded);
+        const twice = formatLedger(mergeLedger(parseLedger(once), []));
+
+        expect(twice).toBe(once);
+      }),
+      { numRuns: 200 }
+    );
+  });
+
+  it("왕복 후 재병합해도 항목 수가 늘지 않는다", () => {
+    fc.assert(
+      fc.property(fc.array(entryArb, { minLength: 1, maxLength: 4 }), (raws) => {
+        const seeded = mergeLedger(
+          [],
+          raws.map((raw) => decision({ ...raw, sources: ["a.md"], decidedOn: "" }))
+        );
+        const back = parseLedger(formatLedger(seeded));
+
+        expect(mergeLedger(back, back)).toHaveLength(back.length);
+      }),
+      { numRuns: 200 }
+    );
   });
 });

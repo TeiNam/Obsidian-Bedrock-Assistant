@@ -189,14 +189,17 @@ export function formatLedger(entries: readonly DecisionEntry[]): string {
     if (group.length === 0) continue;
 
     lines.push(`### ${STATUS_LABEL[status]} (${group.length})`, "");
-    lines.push("| 결정 | 이유 | 담당 | 기한 | 근거 |");
-    lines.push("| --- | --- | --- | --- | --- |");
+    lines.push("| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |");
+    lines.push("| --- | --- | --- | --- | --- | --- |");
     for (const e of group) {
       const sources = e.sources.map((s) => `[[${s.replace(/\.md$/i, "")}]]`).join(" ");
-      const note = e.status === "superseded" && e.supersededBy !== "" ? ` → ${e.supersededBy}` : "";
+      // 대체 대상을 결정 칸에 화살표로 붙이지 않는다. 결정 문구에 " → "가 들어 있으면
+      // (예: "모놀리식 → 마이크로서비스로 전환한다") 되읽을 때 문구가 잘리고 잘린
+      // 뒷부분이 대체 대상으로 들어간다. 두 결정의 문구가 잘려 같아지면 병합에서
+      // 하나로 합쳐져 항목이 사라지기까지 한다. 별 칸이면 모호성이 아예 없다.
       lines.push(
-        `| ${cell(e.decision + note)} | ${cell(e.rationale)} | ${cell(e.owner)} | ` +
-          `${cell(e.due)} | ${cell(sources)} |`
+        `| ${cell(e.decision)} | ${cell(e.rationale)} | ${cell(e.owner)} | ` +
+          `${cell(e.due)} | ${cell(e.supersededBy)} | ${cell(sources)} |`
       );
     }
     lines.push("");
@@ -296,11 +299,13 @@ export function parseLedger(markdown: string): DecisionEntry[] {
       .map(uncell);
     if (cells.length < 5) continue;
 
-    // "결정 → 대체결정" 형태에서 대체 대상을 되읽는다.
-    const [rawDecision, rationale, owner, due, sourceCell] = cells;
-    const arrowAt = rawDecision.lastIndexOf(" → ");
-    const decision = arrowAt >= 0 ? rawDecision.slice(0, arrowAt).trim() : rawDecision;
-    const supersededBy = arrowAt >= 0 ? rawDecision.slice(arrowAt + 3).trim() : "";
+    // 6칸(대체 칸 포함)이 정본이다. 사용자가 손으로 5칸 행을 적었을 수도 있으므로
+    // 그 경우 마지막 칸을 근거로 보고 대체 대상은 비운다.
+    const hasSupersededColumn = cells.length >= 6;
+    const [decision, rationale, owner, due] = cells;
+    const supersededBy = hasSupersededColumn ? cells[4] : "";
+    const sourceCell = hasSupersededColumn ? cells[5] : cells[4];
+
     if (decision === "") continue;
 
     // 위키링크에서 경로를 되읽는다. .md는 formatLedger가 떼므로 다시 붙인다.
