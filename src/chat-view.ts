@@ -453,6 +453,50 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * 저장된 어시스턴트 메시지 하나를 그린다.
+   *
+   * 세션 불러오기와 사이드바 복원이 같은 것을 각자 그리다가 갈라졌다 — 한쪽은 라벨과
+   * 재생성 버튼이 없고, 한쪽은 인용 검증이 없었다. 두 경로가 이 함수를 함께 쓴다.
+   *
+   * @param showRegenerate 마지막 어시스턴트 메시지에만 true. 중간 메시지에 붙이면
+   *   어느 것을 다시 만드는지 모호해진다.
+   */
+  private async renderStoredAssistantMessage(
+    content: string,
+    showRegenerate: boolean
+  ): Promise<void> {
+    const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
+    this.addAssistantLabel(msgEl);
+    const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
+    await MarkdownRenderer.render(this.app, content, contentEl, "", this);
+
+    // 경고는 저장되지 않으므로 복원할 때 다시 검증한다. 그러지 않으면 같은 허위 인용이
+    // 아무 표시 없이 근거처럼 보인다.
+    this.appendCitationWarning(msgEl, content);
+
+    if (!showRegenerate) return;
+
+    const footer = msgEl.createDiv({ cls: "ba-response-footer" });
+    const regenBtn = footer.createEl("button", {
+      cls: "ba-regenerate-btn",
+      attr: { "aria-label": this.t.regenerate },
+    });
+    setIcon(regenBtn, "refresh-cw");
+    regenBtn.createSpan({ text: this.t.regenerate });
+    regenBtn.addEventListener("click", () => {
+      if (!this.isGenerating) this.regenerateLastResponse();
+    });
+  }
+
+  /** 목록에서 마지막 어시스턴트 메시지의 인덱스. 없으면 -1. */
+  private lastAssistantIndex(messages: readonly { role: string }[]): number {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  }
+
+  /**
    * 채팅 기반 회고 처리.
    * 어시스턴트 메시지 컨테이너를 생성하고, 진행 상태를 표시하며,
    * RetrospectiveService를 호출하여 결과를 채팅에 렌더링한다.
@@ -1777,17 +1821,11 @@ export class ChatView extends ItemView {
     this.messages = [...session.messages];
     this.messagesEl.empty();
     this.attachedBinaryFiles.clear();
-    for (const msg of this.messages) {
-      if (msg.role === "user") {
-        this.renderUserMessage(msg);
-      } else {
-        const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-        const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-        await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
-        // 경고는 저장되지 않으므로 복원할 때 다시 검증한다. 그러지 않으면 세션을 다시
-        // 열었을 때 같은 허위 인용이 아무 표시 없이 근거처럼 보인다.
-        this.appendCitationWarning(msgEl, msg.content);
-      }
+    const lastAssistant = this.lastAssistantIndex(this.messages);
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+      if (msg.role === "user") this.renderUserMessage(msg);
+      else await this.renderStoredAssistantMessage(msg.content, i === lastAssistant);
     }
     this.plugin.saveChatHistory(this.messages);
     this.scrollToBottom();
@@ -1878,44 +1916,11 @@ export class ChatView extends ItemView {
       const history = await this.plugin.loadChatHistory();
       if (history.length > 0) {
         this.messages = history;
-        // 마지막 어시스턴트 메시지 인덱스를 찾아 재생성 버튼 추가 대상 결정
-        let lastAssistantIdx = -1;
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (history[i].role === "assistant") {
-            lastAssistantIdx = i;
-            break;
-          }
-        }
-
+        const lastAssistant = this.lastAssistantIndex(history);
         for (let i = 0; i < history.length; i++) {
           const msg = history[i];
-          if (msg.role === "user") {
-            this.renderUserMessage(msg);
-          } else {
-            // 어시스턴트 메시지는 마크다운 렌더링
-            const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
-            this.addAssistantLabel(msgEl);
-            const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
-            await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
-            // 경고는 저장되지 않으므로 사이드바를 다시 열 때 다시 검증한다.
-            this.appendCitationWarning(msgEl, msg.content);
-
-            // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
-            if (i === lastAssistantIdx) {
-              const footer = msgEl.createDiv({ cls: "ba-response-footer" });
-              const regenBtn = footer.createEl("button", {
-                cls: "ba-regenerate-btn",
-                attr: { "aria-label": this.t.regenerate },
-              });
-              setIcon(regenBtn, "refresh-cw");
-              regenBtn.createSpan({ text: this.t.regenerate });
-              regenBtn.addEventListener("click", () => {
-                if (!this.isGenerating) {
-                  this.regenerateLastResponse();
-                }
-              });
-            }
-          }
+          if (msg.role === "user") this.renderUserMessage(msg);
+          else await this.renderStoredAssistantMessage(msg.content, i === lastAssistant);
         }
         this.scrollToBottom();
       } else {
