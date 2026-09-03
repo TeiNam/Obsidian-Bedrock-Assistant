@@ -77,10 +77,13 @@ export interface ContradictionParseResult {
  * 응답이 토큰 제한으로 잘렸을 때도 사용자에게 "발견된 모순이 없습니다"라고
  * 잘못 보고했다(거짓 음성). 호출부가 두 경우를 구분할 수 있도록 ok를 함께 준다.
  */
-export function parseContradictionResult(llmText: string): ContradictionParseResult {
+export function parseContradictionResult(
+  llmText: string,
+  allowedPaths?: ReadonlySet<string>
+): ContradictionParseResult {
   // 파싱·실패 의미론은 llm-json이 단일 출처로 갖는다. 빈 배열([])은 정상 응답이며
   // "모순 없음"을 의미하고(Req 8.5), ok=false는 해석 실패다(Req 8.3).
-  return parseJsonArray(llmText, normalizeContradiction);
+  return parseJsonArray(llmText, (raw) => normalizeContradiction(raw, allowedPaths));
 }
 
 /**
@@ -88,14 +91,26 @@ export function parseContradictionResult(llmText: string): ContradictionParseRes
  * - notePaths/statements는 문자열 배열만 취한다(문자열 아닌 원소는 제거).
  * - suggestion은 문자열만 취한다.
  * - 세 필드가 모두 비어 있으면(빈 항목) 유효하지 않은 것으로 보고 null을 반환한다.
+ *
+ * @param allowedPaths 주면 이 집합에 있는 노트 경로만 남기고, 남는 것이 없으면 항목을
+ *   버린다. 승인 시 정정안이 이 경로의 노트에 기록되므로(applyReconciliation), 지어낸
+ *   경로가 통과하면 사용자가 승인한 정정이 엉뚱한 노트에 가거나 조용히 사라진다.
  */
-function normalizeContradiction(raw: unknown): Contradiction | null {
+function normalizeContradiction(
+  raw: unknown,
+  allowedPaths?: ReadonlySet<string>
+): Contradiction | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
 
-  const notePaths = toStringArray(obj.notePaths);
+  const rawPaths = toStringArray(obj.notePaths);
+  const notePaths =
+    allowedPaths === undefined ? rawPaths : rawPaths.filter((p) => allowedPaths.has(p));
   const statements = toStringArray(obj.statements);
   const suggestion = typeof obj.suggestion === "string" ? obj.suggestion : "";
+
+  // 경로를 제한하는 중이라면, 걸러낸 뒤 남는 노트가 없는 항목은 적용할 대상이 없다.
+  if (allowedPaths !== undefined && notePaths.length === 0) return null;
 
   // 완전히 빈 항목은 모순으로 보지 않는다.
   if (notePaths.length === 0 && statements.length === 0 && suggestion.trim() === "") {
@@ -257,7 +272,9 @@ export async function runReconcileDetailed(
   );
 
   // 5) 모순 항목 파싱 (실패 시 실패 표시, throw 금지 — Req 8.3)
-  const parsed = parseContradictionResult(response.text);
+  // 이번 검색에 걸린 노트만 모순 대상으로 인정한다. 프롬프트에 없던 경로를 LLM이
+  // 지어내면 승인된 정정안이 엉뚱한 노트로 간다.
+  const parsed = parseContradictionResult(response.text, new Set(hits.map((h) => h.path)));
 
   // 5-1) 응답 해석 실패 → "모순 없음"으로 오보고하지 않고 실패를 명시한다.
   //      응답이 토큰 제한으로 잘렸거나 JSON 형식이 아닌 경우가 여기에 해당한다.

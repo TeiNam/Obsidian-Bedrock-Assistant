@@ -540,3 +540,55 @@ describe("parseLedger — 구분선·헤더 오인", () => {
     expect(back[0].decision).toBe("실제 결정");
   });
 });
+
+// ============================================
+// 근거 경로 제한
+// ============================================
+/**
+ * 원장의 가치는 "왜 그렇게 결정했나"를 되짚을 수 있다는 것이고, 그건 근거 노트가 실재할
+ * 때만 성립한다. LLM은 프롬프트에 없던 경로를 지어내는 일이 흔하다.
+ */
+describe("normalizeDecision — 근거 경로 제한", () => {
+  const raw = {
+    decision: "A를 쓴다",
+    rationale: "빠르다",
+    sources: ["Notes/실재.md", "Notes/지어냄.md"],
+  };
+  const allowed = new Set(["Notes/실재.md"]);
+
+  it("허용 집합에 없는 근거를 버린다", () => {
+    expect(normalizeDecision(raw, allowed)?.sources).toEqual(["Notes/실재.md"]);
+  });
+
+  it("남는 근거가 없으면 항목 자체를 버린다", () => {
+    // 근거 없는 결정은 검증할 수 없고, 검증할 수 없는 항목이 쌓이면 원장을 못 믿는다.
+    expect(normalizeDecision(raw, new Set(["다른.md"]))).toBeNull();
+  });
+
+  it("허용 집합을 주지 않으면 제한하지 않는다", () => {
+    expect(normalizeDecision(raw)?.sources).toHaveLength(2);
+  });
+});
+
+describe("parseDecisionReport — 전부 무효인 응답", () => {
+  it("모두 버려진 경우를 '결정 없음'과 구분한다", () => {
+    // "0건"으로 보고하면 사용자가 LLM의 경로 날조를 눈치채지 못한다.
+    const text = JSON.stringify([
+      { decision: "A", sources: ["지어냄.md"] },
+      { decision: "B", sources: ["또지어냄.md"] },
+    ]);
+
+    const out = parseDecisionReport(text, new Set(["실재.md"]));
+
+    expect(out.ok).toBe(true);
+    expect(out.items).toEqual([]);
+    expect(out.dropped).toBe(2);
+  });
+
+  it("정말로 결정이 없으면 dropped도 0이다", () => {
+    const out = parseDecisionReport("[]", new Set(["실재.md"]));
+
+    expect(out.ok).toBe(true);
+    expect(out.dropped).toBe(0);
+  });
+});

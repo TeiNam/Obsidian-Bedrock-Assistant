@@ -53,15 +53,22 @@ function normalizeDate(value: unknown): string {
  *
  * decision과 sources가 모두 있어야 유효하다. 출처 없는 결정은 검증할 수 없고,
  * 검증할 수 없는 항목이 원장에 쌓이면 원장 전체를 믿을 수 없게 된다.
+ *
+ * @param allowedPaths 주면 이 집합에 있는 근거 경로만 남긴다. LLM은 프롬프트에 없던
+ *   경로를 지어내는 일이 흔하고, 원장에 실재하지 않는 근거가 쌓이면 검증 자체가 불가능해
+ *   진다. 남는 근거가 없으면 항목을 버린다.
  */
-export function normalizeDecision(raw: unknown): DecisionEntry | null {
+export function normalizeDecision(
+  raw: unknown,
+  allowedPaths?: ReadonlySet<string>
+): DecisionEntry | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
 
   const decision = toTrimmedString(obj.decision);
   const sources = toStringArray(obj.sources)
     .map((s) => s.trim())
-    .filter((s) => s !== "");
+    .filter((s) => s !== "" && (allowedPaths === undefined || allowedPaths.has(s)));
 
   if (decision === "" || sources.length === 0) return null;
 
@@ -77,9 +84,13 @@ export function normalizeDecision(raw: unknown): DecisionEntry | null {
   };
 }
 
-/** LLM 응답에서 결정 목록을 파싱한다. ok=false는 해석 실패이고 "결정 없음"과 다르다. */
-export function parseDecisionReport(llmText: unknown) {
-  return parseJsonArray(llmText, normalizeDecision);
+/**
+ * LLM 응답에서 결정 목록을 파싱한다. ok=false는 해석 실패이고 "결정 없음"과 다르다.
+ *
+ * @param allowedPaths 근거로 인정할 경로 집합(보통 이번 검색 결과). 생략하면 제한하지 않는다.
+ */
+export function parseDecisionReport(llmText: unknown, allowedPaths?: ReadonlySet<string>) {
+  return parseJsonArray(llmText, (raw) => normalizeDecision(raw, allowedPaths));
 }
 
 /** 결정 문구 비교용 정규화 — 같은 결정을 다르게 적은 경우를 합치기 위함이다. */

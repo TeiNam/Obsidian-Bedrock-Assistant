@@ -78,6 +78,7 @@ import {
   findDuplicateClusters,
   buildCanonicalBlock,
   mergeAliases,
+  normalizeAliases,
   CANONICAL_BLOCK_KEY,
 } from "./second-brain/canonicalize";
 import {
@@ -576,7 +577,12 @@ export default class GeminiAssistantPlugin extends Plugin {
         ...new Set(
           this.app.vault
             .getMarkdownFiles()
-            .map((f) => f.path.slice(0, f.path.lastIndexOf("/")))
+            // 루트 노트("메모.md")는 lastIndexOf("/")가 -1이라 slice(0, -1)이
+            // "메모.m"이 된다 — 존재하지 않는 폴더가 허용 목록에 들어간다.
+            .map((f) => {
+              const at = f.path.lastIndexOf("/");
+              return at < 0 ? "" : f.path.slice(0, at);
+            })
             .filter((d) => d !== "" && d !== target && !d.startsWith(`${target}/`))
         ),
       ].sort();
@@ -607,8 +613,11 @@ export default class GeminiAssistantPlugin extends Plugin {
         2500
       );
 
-      const allPaths = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
-      const parsed = parseTriageReport(response.text, new Set(folders), allPaths);
+      // 프롬프트에 보여준 Inbox 노트만 대상으로 인정한다. 볼트 전체를 허용하면 LLM이
+      // 문맥에 없던 노트를 이름 변경·이동 대상으로 지어낼 수 있고, 그건 사용자가 검토를
+      // 요청하지도 않은 노트를 건드리는 것이다.
+      const candidatePaths = new Set(inboxFiles.map((f) => f.path));
+      const parsed = parseTriageReport(response.text, new Set(folders), candidatePaths);
 
       if (!parsed.ok) {
         new Notice(
@@ -618,7 +627,14 @@ export default class GeminiAssistantPlugin extends Plugin {
         return;
       }
       if (parsed.items.length === 0) {
-        new Notice(t.triageNone, 8000);
+        // 제안은 있었지만 전부 무효(지어낸 경로·폴더)였던 경우와 정말로 제안이 없는
+        // 경우를 구분한다. 전자를 "정리할 것 없음"으로 보고하면 오작동을 놓친다.
+        new Notice(
+          parsed.dropped > 0
+            ? `제안 ${parsed.dropped}건이 모두 유효하지 않아 버렸습니다(문맥에 없는 경로·폴더). 다시 실행해 보세요.`
+            : t.triageNone,
+          8000
+        );
         return;
       }
 
@@ -638,7 +654,12 @@ export default class GeminiAssistantPlugin extends Plugin {
             continue;
           }
 
-          // 태그를 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
+          // 이동 대상을 먼저 계산한다. 태그를 붙인 뒤 이동을 건너뛰면 "무엇을 했는지"를
+          // 셀 수 없어져, 아무 일도 안 한 항목과 태그만 붙은 항목이 뒤섞인다.
+          const destination = resolveTargetPath(plan, taken);
+
+          // 태그는 이동보다 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
+          let tagsAdded = false;
           if (plan.tags.length > 0) {
             // 실제로 태그가 늘어난 경우만 센다. 이미 다 붙어 있는데 "태그 N건"이라고
             // 보고하면 사용자가 무엇이 바뀌었는지 잘못 안다.
@@ -656,11 +677,13 @@ export default class GeminiAssistantPlugin extends Plugin {
               }
             });
             if (added) tagged++;
+            tagsAdded = added;
           }
 
-          const destination = resolveTargetPath(plan, taken);
           if (destination === null) {
             // 대상이 이미 있거나 바뀌는 것이 없다 — 덮어쓰지 않고 넘어간다.
+            // 태그도 안 붙었으면 이 항목은 아무것도 하지 못한 것이다.
+            if (!tagsAdded) skipped++;
             continue;
           }
 
@@ -716,7 +739,12 @@ export default class GeminiAssistantPlugin extends Plugin {
         2000
       );
 
-      const parsed = parseDecisionReport(response.text);
+      // 근거는 이번 검색에 걸린 노트로 제한한다. 원장에 실재하지 않는 근거가 쌓이면
+      // "왜 이렇게 결정했나"를 되짚을 수 없고, 원장 전체를 믿을 수 없게 된다.
+      const parsed = parseDecisionReport(
+        response.text,
+        new Set(search.items.map((i) => i.path))
+      );
       if (!parsed.ok) {
         new Notice(
           "결정 추출 응답을 해석할 수 없었습니다(형식 오류 또는 응답 잘림). 결정이 없다는 뜻이 아닙니다.",
@@ -725,7 +753,12 @@ export default class GeminiAssistantPlugin extends Plugin {
         return;
       }
       if (parsed.items.length === 0) {
-        new Notice(t.decisionNone, 8000);
+        new Notice(
+          parsed.dropped > 0
+            ? `결정 ${parsed.dropped}건이 모두 근거를 확인할 수 없어 버렸습니다(문맥에 없는 경로). 다시 실행해 보세요.`
+            : t.decisionNone,
+          8000
+        );
         return;
       }
 
@@ -747,6 +780,8 @@ export default class GeminiAssistantPlugin extends Plugin {
             return upsertGeneratedBlock(content, DECISION_BLOCK_KEY, formatLedger(merged));
           });
         } else {
+          // 위키 폴더가 아직 없으면 create가 실패한다 — 첫 실행에서 항상 그렇다.
+          await ensureWikiFolders(this.app, wikiFolder);
           await this.app.vault.create(
             ledgerPath,
             upsertGeneratedBlock("# 결정 원장\n", DECISION_BLOCK_KEY, formatLedger(merged))
@@ -796,11 +831,10 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
         // 형식이 뭉개진다.
         await this.app.fileManager.processFrontMatter(file, (fm) => {
-          const before = Array.isArray(fm.aliases)
-            ? fm.aliases.length
-            : typeof fm.aliases === "string"
-              ? 1
-              : 0;
+          // 원시 배열 길이가 아니라 **정규화 후** 개수와 비교한다. `[1, null, "old"]`처럼
+          // 잡음이 섞이면 정규화 후가 원시 길이보다 짧아, 별칭이 실제로 늘었는데도
+          // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
+          const before = normalizeAliases(fm.aliases).length;
           const merged = mergeAliases(fm.aliases, cluster);
           if (merged.length > before) {
             fm.aliases = merged;

@@ -6,6 +6,7 @@ import {
   findDuplicateClusters,
   buildCanonicalBlock,
   mergeAliases,
+  normalizeAliases,
   MIN_DUPLICATE_SIMILARITY,
 } from "./canonicalize";
 import type { VaultIndexEntry } from "../types";
@@ -200,6 +201,54 @@ describe("findDuplicateClusters", () => {
   });
 });
 
+// ============================================
+// 정본 기준 유사도 재계산
+// ============================================
+/**
+ * 유사도는 버킷 시드(경로 순 첫 노트) 기준으로 재지만 정본은 링크 수로 고른다. 둘이
+ * 다를 때 시드 기준 값을 그대로 두면 "정본과의 유사도 95%"라고 표시하면서 실제로는
+ * 정본과 먼 노트를 흡수 대상으로 올린다.
+ */
+describe("findDuplicateClusters — 정본 기준 재계산", () => {
+  /** 30° 간격 단위벡터. 이웃끼리는 임계값을 넘고 양 끝(60°)은 넘지 못한다. */
+  const AT_0 = [1, 0, 0];
+  const AT_30 = [Math.cos(Math.PI / 6), Math.sin(Math.PI / 6), 0];
+  const AT_MINUS_30 = [Math.cos(Math.PI / 6), -Math.sin(Math.PI / 6), 0];
+
+  /** 시드는 경로 순 첫 노트(A), 정본은 링크가 가장 많은 노트(C)다. */
+  const entries = [
+    entry("A.md", "주제", AT_0),
+    entry("B.md", "주제", AT_30),
+    entry("C.md", "주제", AT_MINUS_30, { outlinks: ["x.md", "y.md", "z.md"] }),
+  ];
+
+  it("유사도를 정본 기준으로 다시 잰다", () => {
+    const clusters = findDuplicateClusters(entries);
+
+    expect(clusters[0].canonical.path).toBe("C.md");
+    // 시드 기준이면 A는 자기 자신이라 1이 된다. 정본(C) 기준이면 30° 떨어진 값이다.
+    const a = clusters[0].duplicates.find((d) => d.path === "A.md");
+    expect(a?.similarity).toBeCloseTo(0.933, 2);
+  });
+
+  it("정본 기준으로 임계값에 미달하는 노트는 군집에서 뺀다", () => {
+    const clusters = findDuplicateClusters(entries);
+
+    // B는 시드(A)와 30°라 통과했지만 정본(C)과는 60°다 — 흡수 대상이 아니다.
+    expect(clusters[0].duplicates.map((d) => d.path)).toEqual(["A.md"]);
+  });
+
+  it("정본과 남은 노트가 2개 미만이면 군집을 내지 않는다", () => {
+    // 정본 기준으로 전부 떨어져 나가면 애초에 군집이 아니다.
+    const clusters = findDuplicateClusters([
+      entry("A.md", "주제", AT_30),
+      entry("B.md", "주제", AT_MINUS_30, { outlinks: ["x.md"] }),
+    ]);
+
+    expect(clusters).toEqual([]);
+  });
+});
+
 describe("buildCanonicalBlock", () => {
   const cluster = {
     canonical: { path: "A/주제.md", title: "주제", similarity: 1, bodyLength: 100, linkCount: 3 },
@@ -212,7 +261,9 @@ describe("buildCanonicalBlock", () => {
   it("중복 후보를 경로와 유사도와 함께 적는다", () => {
     const block = buildCanonicalBlock(cluster);
 
-    expect(block).toContain("[[주제 사본]]");
+    // 링크 대상은 경로다 — 같은 제목의 노트가 여러 개인 것이 이 군집의 전제이므로
+    // `[[주제 사본]]`은 어느 파일을 가리키는지 정해지지 않는다.
+    expect(block).toContain("[[B/주제|주제 사본]]");
     expect(block).toContain("B/주제.md");
     expect(block).toContain("95.0%");
   });
@@ -225,25 +276,28 @@ describe("buildCanonicalBlock", () => {
 
 describe("mergeAliases", () => {
   const cluster = {
-    canonical: { path: "a.md", title: "주제", similarity: 1, bodyLength: 10, linkCount: 0 },
+    canonical: { path: "Notes/주제.md", title: "주제", similarity: 1, bodyLength: 10, linkCount: 0 },
     duplicates: [
-      { path: "b.md", title: "주제 사본", similarity: 0.95, bodyLength: 5, linkCount: 0 },
-      { path: "c.md", title: "다른 이름", similarity: 0.93, bodyLength: 5, linkCount: 0 },
+      { path: "Notes/사본.md", title: "주제 사본", similarity: 0.95, bodyLength: 5, linkCount: 0 },
+      { path: "Notes/다른.md", title: "다른 이름", similarity: 0.93, bodyLength: 5, linkCount: 0 },
     ],
     reason: "same-title" as const,
   };
 
-  it("중복 노트 제목을 별칭으로 모은다", () => {
-    expect(mergeAliases(undefined, cluster)).toEqual(["주제 사본", "다른 이름"]);
+  it("중복 노트의 제목과 파일명을 모두 별칭으로 모은다", () => {
+    // 옵시디언은 `[[이름]]`을 파일명으로 먼저 푼다. 중복 노트를 지운 뒤 그 노트를
+    // 가리켰던 링크를 정본으로 살리는 것은 파일명 별칭이므로 둘 다 필요하다.
+    expect(mergeAliases(undefined, cluster)).toEqual([
+      "주제 사본",
+      "사본",
+      "다른 이름",
+      "다른",
+    ]);
   });
 
   it("기존 별칭을 보존한다", () => {
     // 사용자가 직접 넣은 별칭을 덮어써선 안 된다.
-    expect(mergeAliases(["기존 별칭"], cluster)).toEqual([
-      "기존 별칭",
-      "주제 사본",
-      "다른 이름",
-    ]);
+    expect(mergeAliases(["기존 별칭"], cluster)[0]).toBe("기존 별칭");
   });
 
   it("문자열 하나로 저장된 기존 별칭도 받는다", () => {
@@ -251,23 +305,71 @@ describe("mergeAliases", () => {
   });
 
   it("중복과 대소문자 차이를 합친다", () => {
-    expect(mergeAliases(["주제 사본"], cluster)).toEqual(["주제 사본", "다른 이름"]);
-    expect(mergeAliases(["주제 사본".toUpperCase()], cluster)).toHaveLength(2);
+    expect(mergeAliases(["주제 사본"], cluster)).toEqual(mergeAliases(undefined, cluster));
+    expect(mergeAliases(["주제 사본".toUpperCase()], cluster)).toHaveLength(4);
   });
 
-  it("정본 자신의 제목은 별칭에 넣지 않는다", () => {
+  it("정본 자신의 제목과 파일명은 별칭에 넣지 않는다", () => {
     const selfTitled = {
       ...cluster,
       duplicates: [
-        { path: "b.md", title: "주제", similarity: 0.95, bodyLength: 5, linkCount: 0 },
+        { path: "Notes/주제 1.md", title: "주제", similarity: 0.95, bodyLength: 5, linkCount: 0 },
       ],
     };
 
-    expect(mergeAliases(undefined, selfTitled)).toEqual([]);
+    // 제목은 정본과 같으니 걸러지고, 파일명은 남는다 — 제목만 넣으면 same-title
+    // 군집에서 별칭이 하나도 안 남아 기능 자체가 무의미해진다.
+    expect(mergeAliases(undefined, selfTitled)).toEqual(["주제 1"]);
   });
 
   it("문자열이 아닌 기존 값은 무시한다", () => {
-    expect(mergeAliases({ not: "a list" }, cluster)).toEqual(["주제 사본", "다른 이름"]);
+    expect(mergeAliases({ not: "a list" }, cluster)[0]).toBe("주제 사본");
     expect(mergeAliases([1, null, "쓸모있음"], cluster)[0]).toBe("쓸모있음");
+  });
+});
+
+// ============================================
+// 기존 별칭 정규화
+// ============================================
+/**
+ * 호출부는 "몇 개 늘었는지"를 세어 사용자에게 보고하고, 늘지 않았으면 쓰기를 건너뛴다.
+ * 그 판정을 원시 배열 길이로 하면 `[1, null, "old"]`처럼 잡음이 섞인 값에서 정규화 후
+ * 개수가 원시 길이보다 짧아, 별칭이 실제로 늘었는데도 쓰기를 건너뛴다.
+ */
+describe("normalizeAliases", () => {
+  it("문자열이 아닌 값과 빈 문자열을 버린다", () => {
+    expect(normalizeAliases([1, null, "  old  ", "", {}])).toEqual(["old"]);
+  });
+
+  it("문자열 하나도 받는다", () => {
+    expect(normalizeAliases("하나")).toEqual(["하나"]);
+  });
+
+  it("대소문자만 다른 중복을 합친다", () => {
+    expect(normalizeAliases(["Alpha", "alpha"])).toEqual(["Alpha"]);
+  });
+
+  it("별칭이 없으면 빈 배열이다", () => {
+    for (const bad of [undefined, null, 42, { a: 1 }]) {
+      expect(normalizeAliases(bad)).toEqual([]);
+    }
+  });
+
+  it("mergeAliases 결과의 앞부분과 일치한다", () => {
+    // 두 함수가 같은 규칙을 쓰지 않으면 증가분 계산이 어긋난다.
+    const cluster = {
+      canonical: { path: "Notes/주제.md", title: "주제", similarity: 1, bodyLength: 10, linkCount: 0 },
+      duplicates: [
+        { path: "Notes/사본.md", title: "주제 사본", similarity: 0.95, bodyLength: 5, linkCount: 0 },
+      ],
+      reason: "same-title" as const,
+    };
+    const existing = [1, null, "기존"];
+
+    const before = normalizeAliases(existing);
+    const merged = mergeAliases(existing, cluster);
+
+    expect(merged.slice(0, before.length)).toEqual(before);
+    expect(merged.length).toBeGreaterThan(before.length);
   });
 });

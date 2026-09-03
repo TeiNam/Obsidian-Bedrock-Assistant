@@ -487,8 +487,11 @@ export class ToolExecutor {
 
     // 맞은 청크의 헤딩이 있으면 인용 앵커로 쓰도록 알려준다. 노트 단위 인용은 긴
     // 노트에서 "어딘가에 있다"까지만 말해줘서 사용자가 근거를 다시 찾아야 한다.
+    //
+    // 앵커 대상은 **경로**다. item.title은 인덱서가 뽑은 첫 H1이지 파일명이 아니므로
+    // `[[제목#헤딩]]`은 그 노트를 가리키지 않거나 같은 제목의 다른 노트로 간다.
     const anchor = item.heading
-      ? `\n   인용: [[${item.title}#${item.heading}]] (맞은 구간: "${item.heading}")`
+      ? `\n   인용: [[${item.path.replace(/\.md$/i, "")}#${item.heading}]] (맞은 구간: "${item.heading}")`
       : "";
 
     return (

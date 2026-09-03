@@ -15,8 +15,16 @@ export interface JsonArrayParseResult<T> {
    * "발견된 것 없음"으로 보고해선 안 된다 — 잘린 응답과 구분되지 않는다.
    */
   ok: boolean;
-  /** 정규화를 통과한 항목들. ok=true이고 빈 배열이면 정말로 결과가 없는 것이다. */
+  /** 정규화를 통과한 항목들. */
   items: T[];
+  /**
+   * 배열에는 있었지만 정규화를 통과하지 못해 버린 원소 수.
+   *
+   * `ok=true, items=[], dropped=0`만 "정말로 결과가 없음"이다. dropped>0인데 items가
+   * 비었으면 LLM이 무언가 제안했지만 전부 무효였다는 뜻이다 — 지어낸 경로나 실재하지
+   * 않는 폴더가 대표적이다. 이를 "발견된 것 없음"으로 보고하면 사용자가 오작동을 놓친다.
+   */
+  dropped: number;
 }
 
 /**
@@ -45,34 +53,36 @@ export function extractJsonArray(text: string): string | null {
  * 빈 응답은 "결과 없음"이 아니라 해석 실패로 본다 — LLM은 최소 `[]`를 출력해야 한다.
  *
  * @param normalize 원소 하나를 도메인 타입으로 바꾼다. 유효하지 않으면 null을 돌려
- *   그 원소만 버린다(전체 실패로 만들지 않는다).
+ *   그 원소만 버린다(전체 실패로 만들지 않는다). 버린 수는 dropped로 보고한다.
  */
 export function parseJsonArray<T>(
   llmText: unknown,
   normalize: (raw: unknown) => T | null
 ): JsonArrayParseResult<T> {
-  if (typeof llmText !== "string") return { ok: false, items: [] };
+  if (typeof llmText !== "string") return { ok: false, items: [], dropped: 0 };
   const text = llmText.trim();
-  if (text === "") return { ok: false, items: [] };
+  if (text === "") return { ok: false, items: [], dropped: 0 };
 
   const jsonText = extractJsonArray(text);
-  if (jsonText === null) return { ok: false, items: [] };
+  if (jsonText === null) return { ok: false, items: [], dropped: 0 };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    return { ok: false, items: [] };
+    return { ok: false, items: [], dropped: 0 };
   }
 
-  if (!Array.isArray(parsed)) return { ok: false, items: [] };
+  if (!Array.isArray(parsed)) return { ok: false, items: [], dropped: 0 };
 
   const items: T[] = [];
+  let dropped = 0;
   for (const raw of parsed) {
     const item = normalize(raw);
-    if (item !== null) items.push(item);
+    if (item === null) dropped++;
+    else items.push(item);
   }
-  return { ok: true, items };
+  return { ok: true, items, dropped };
 }
 
 /** 값이 문자열 배열이면 문자열 원소만 추려 반환하고, 아니면 빈 배열을 반환한다. */

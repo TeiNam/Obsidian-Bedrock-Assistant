@@ -78,8 +78,10 @@ export interface GraphRagResult {
 }
 
 /**
- * 융합에 넣을 어휘 검색 후보 수. limit보다 넉넉히 뽑아야 융합에 쓸 재료가 생긴다.
- * limit=5로 요청했을 때 어휘 후보도 5개만 뽑으면, 정답이 어휘 6위인 경우를 못 살린다.
+ * 융합에 넣을 어휘 검색 후보의 **최소** 수. limit보다 넉넉히 뽑아야 융합에 쓸 재료가
+ * 생긴다 — limit=5로 요청했을 때 어휘 후보도 5개만 뽑으면 정답이 어휘 6위인 경우를
+ * 못 살린다. limit이 이 값보다 크면 limit을 쓴다(그러지 않으면 limit=100 요청에서
+ * 31위 이후가 어휘 신호를 아예 받지 못한다).
  */
 const LEXICAL_POOL_SIZE = 30;
 
@@ -562,7 +564,7 @@ export class VaultIndexer {
 
     // 4) 임베딩이 인덱스에 하나도 없으면 키워드 검색으로 폴백 (Req 4.6)
     //    임베딩 구성 변경으로 벡터를 폐기한 경우도 이 경로를 타므로 stale 표시를 함께 전달한다.
-    if (!this.useEmbeddings || !this.hasEmbeddings()) {
+    if (!this.useEmbeddings || !this.hasEmbeddings(candidates.values())) {
       const items = this.keywordSearch(query, limit, candidates);
       return {
         items,
@@ -638,7 +640,11 @@ export class VaultIndexer {
     //    과거에는 어휘 검색을 "임베딩이 아예 없을 때"의 폴백으로만 썼다. 즉 dense가
     //    아무것도 못 찾을 때만 쓰고, dense가 엉뚱한 것을 찾을 때는 쓰지 않았다.
     //    점수를 더하지 않고 순위만 섞는 이유는 rank-fusion.ts 주석에 있다.
-    const lexical = this.keywordSearch(query, LEXICAL_POOL_SIZE, candidates);
+    const lexical = this.keywordSearch(
+      query,
+      Math.max(LEXICAL_POOL_SIZE, limit),
+      candidates
+    );
     const fused = fuseRanks([
       { name: "dense", paths: combined.map((r) => r.path) },
       { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
@@ -769,8 +775,16 @@ export class VaultIndexer {
     }));
   }
 
-  private hasEmbeddings(): boolean {
-    for (const entry of this.index.values()) {
+  /**
+   * 임베딩을 가진 엔트리가 하나라도 있는지.
+   *
+   * @param entries 검사 대상. 생략하면 인덱스 전체를 본다. 검색 경로는 **필터를 통과한
+   *   후보**를 넘겨야 한다 — 인덱스 전체를 보면 "필터 결과가 전부 미색인 노트"인 경우
+   *   임베딩이 있다고 판정하고 벡터 검색으로 들어가서, 비교 가능한 노트가 없어 빈 결과가
+   *   나온다. 그 상황에서 필요한 건 키워드 폴백이다.
+   */
+  private hasEmbeddings(entries: Iterable<VaultIndexEntry> = this.index.values()): boolean {
+    for (const entry of entries) {
       if (entry.embedding.length > 0) return true;
     }
     return false;

@@ -15,6 +15,7 @@ import { describe, it, expect, vi } from "vitest";
 import { TFile } from "obsidian";
 import {
   parseContradictionReport,
+  parseContradictionResult,
   runReconcile,
   runReconcileDetailed,
   applyReconciliation,
@@ -510,8 +511,17 @@ describe("runReconcileDetailed — 구조화된 결과", () => {
     },
   ]);
 
+  /** 모순이 가리키는 노트가 검색 결과에도 있어야 통과한다(지어낸 경로 차단). */
+  const HITS = {
+    items: [
+      makeItem({ path: "A.md" }),
+      makeItem({ path: "B.md" }),
+      makeItem({ path: "C.md" }),
+    ],
+  };
+
   it("리포트와 모순 목록을 함께 돌려준다", async () => {
-    const { ctx, vault } = makeContext({ items: [makeItem()] }, TWO);
+    const { ctx, vault } = makeContext(HITS, TWO);
 
     const outcome = await runReconcileDetailed(ctx, "주제 X");
 
@@ -561,5 +571,37 @@ describe("runReconcileDetailed — 구조화된 결과", () => {
     expect(outcome.contradictions).toEqual([]);
     expect(outcome.report).toContain("해석할 수 없었습니다");
     expect(outcome.report).not.toContain("발견된 모순이 없습니다");
+  });
+});
+
+// ============================================
+// 모순 대상 경로 제한
+// ============================================
+/**
+ * 승인하면 applyReconciliation이 notePaths의 노트에 정정안을 기록한다. 지어낸 경로가
+ * 통과하면 사용자가 승인한 정정이 엉뚱한 노트로 가거나 조용히 사라진다.
+ */
+describe("parseContradictionResult — 허용 경로", () => {
+  const TEXT = JSON.stringify([
+    { notePaths: ["A.md", "지어냄.md"], statements: ["x", "y"], suggestion: "합친다" },
+    { notePaths: ["전부지어냄.md"], statements: ["z"], suggestion: "고친다" },
+  ]);
+
+  it("허용 집합에 없는 경로를 버린다", () => {
+    const out = parseContradictionResult(TEXT, new Set(["A.md"]));
+
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].notePaths).toEqual(["A.md"]);
+  });
+
+  it("남는 경로가 없는 항목은 항목째로 버린다", () => {
+    const out = parseContradictionResult(TEXT, new Set(["A.md"]));
+
+    // 두 번째 항목은 대상이 하나도 실재하지 않아 적용할 노트가 없다.
+    expect(out.dropped).toBe(1);
+  });
+
+  it("허용 집합을 주지 않으면 제한하지 않는다", () => {
+    expect(parseContradictionResult(TEXT).items).toHaveLength(2);
   });
 });

@@ -138,6 +138,49 @@ export function buildTitleBuckets(entries: readonly VaultIndexEntry[]): Map<stri
   return out;
 }
 
+/**
+ * 정본 기준으로 유사도를 다시 잰다.
+ *
+ * 유사도는 버킷 시드(경로 순 첫 노트) 기준으로 재지만 정본은 링크 수·본문 길이로 고른다.
+ * 둘이 다르면 화면에 보이는 "유사도 95%"가 정본과의 유사도가 아니고, 임계값도 정본이
+ * 아닌 노트를 기준으로 걸러진 상태가 된다 — 정본과는 먼 노트가 흡수 대상으로 올라온다.
+ *
+ * 정본 기준으로 임계값에 미달하는 구성원은 군집에서 빠진다. 남은 수가 2 미만이면
+ * 호출자가 군집 자체를 버린다.
+ */
+function rescoreAgainstCanonical(
+  members: readonly DuplicateMember[],
+  canonicalPath: string,
+  byPath: ReadonlyMap<string, VaultIndexEntry>,
+  minSimilarity: number
+): DuplicateMember[] {
+  const canonicalEntry = byPath.get(canonicalPath);
+  const canonicalVec = canonicalEntry ? representativeEmbedding(canonicalEntry) : null;
+  // 정본 벡터를 못 구하면 다시 잴 근거가 없다. 시드 기준 값을 그대로 둔다.
+  if (canonicalVec === null) return [...members];
+
+  const out: DuplicateMember[] = [];
+  for (const member of members) {
+    if (member.path === canonicalPath) {
+      out.push({ ...member, similarity: 1 });
+      continue;
+    }
+
+    const entry = byPath.get(member.path);
+    const vec = entry ? representativeEmbedding(entry) : null;
+    if (vec === null) continue;
+
+    const cosine = compareVectors(canonicalVec, vec);
+    if (cosine === null) continue;
+
+    const similarity = (cosine + 1) / 2;
+    if (similarity < minSimilarity) continue;
+
+    out.push({ ...member, similarity });
+  }
+  return out;
+}
+
 /** 정본을 고른다: 링크 많은 순 → 본문 긴 순 → 경로 짧은 순(결정적). */
 function pickCanonical(members: DuplicateMember[]): DuplicateMember {
   return [...members].sort((a, b) => {
@@ -218,8 +261,13 @@ export function findDuplicateClusters(
 
     if (members.length < 2) continue;
 
-    const canonical = pickCanonical(members);
-    const duplicates = members
+    const seedCanonical = pickCanonical(members);
+    const rescored = rescoreAgainstCanonical(members, seedCanonical.path, byPath, minSimilarity);
+    // 정본 기준으로 다시 재면 남는 것이 정본 하나뿐일 수 있다. 그러면 군집이 아니다.
+    if (rescored.length < 2) continue;
+
+    const canonical = rescored.find((m) => m.path === seedCanonical.path) ?? seedCanonical;
+    const duplicates = rescored
       .filter((m) => m.path !== canonical.path)
       .sort((a, b) => {
         // 유사도 동점은 경로로 깬다. 같은 임베딩을 가진 노트들이 흔하므로(템플릿에서
@@ -228,7 +276,8 @@ export function findDuplicateClusters(
         return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
       });
 
-    for (const m of members) claimed.add(m.path);
+    // 군집에서 빠진 노트는 claim하지 않는다 — 다른 버킷에서 제대로 묶일 수 있다.
+    for (const m of rescored) claimed.add(m.path);
     clusters.push({
       canonical,
       duplicates,
@@ -257,10 +306,41 @@ export const CANONICAL_BLOCK_KEY = "canonical-candidates";
 export function buildCanonicalBlock(cluster: DuplicateCluster): string {
   const lines = ["## 중복 후보", "", "다음 노트가 이 노트와 같은 대상을 다루는 것으로 보입니다.", ""];
   for (const d of cluster.duplicates) {
-    lines.push(`- [[${d.title}]] — \`${d.path}\` (유사도 ${(d.similarity * 100).toFixed(1)}%)`);
+    // 링크 대상은 경로다. title은 인덱서가 뽑은 첫 H1이라 `[[제목]]`이 그 파일을
+    // 가리키지 않는다 — 같은 제목의 노트가 여러 개인 것이 바로 이 군집의 전제다.
+    const target = d.path.replace(/\.md$/i, "");
+    lines.push(`- [[${target}|${d.title}]] — \`${d.path}\` (유사도 ${(d.similarity * 100).toFixed(1)}%)`);
   }
   lines.push("", "확인 후 직접 합치거나, 필요 없으면 이 블록을 지우세요.");
   return lines.join("\n");
+}
+
+/**
+ * 프론트매터의 기존 `aliases` 값을 문자열 목록으로 정규화한다.
+ *
+ * 값은 문자열 하나이거나 배열이고, 배열에는 숫자·null이 섞여 있을 수 있다. 중복과
+ * 대소문자 차이도 합친다.
+ *
+ * 별도 함수로 두는 이유: 호출부가 "몇 개 늘었는지"를 세려면 **정규화 후** 개수를 기준으로
+ * 비교해야 한다. 원시 배열 길이와 비교하면 `[1, null, "old"]`처럼 잡음이 섞인 값에서
+ * 정규화 후 개수가 원시 길이보다 작아, 실제로 별칭이 늘었는데도 안 늘어난 것으로 보고
+ * 쓰기를 건너뛴다.
+ */
+export function normalizeAliases(existing: unknown): string[] {
+  const values = typeof existing === "string" ? [existing] : Array.isArray(existing) ? existing : [];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed === "") continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /**
@@ -285,15 +365,20 @@ export function mergeAliases(
     out.push(trimmed);
   };
 
-  // 기존 값은 문자열 하나이거나 배열이다. 둘 다 받는다.
-  if (typeof existing === "string") add(existing);
-  else if (Array.isArray(existing)) {
-    for (const v of existing) if (typeof v === "string") add(v);
-  }
+  for (const alias of normalizeAliases(existing)) add(alias);
 
-  // 정본 자신의 제목은 별칭이 아니다.
+  // 정본 자신의 제목·파일명은 별칭이 아니다.
   seen.add(cluster.canonical.title.trim().toLowerCase());
-  for (const d of cluster.duplicates) add(d.title);
+  seen.add(basename(cluster.canonical.path).trim().toLowerCase());
+
+  // 제목과 파일명을 **둘 다** 넣는다. 옵시디언은 `[[이름]]`을 파일명으로 먼저 풀기
+  // 때문에, 중복 노트를 지운 뒤 그 노트를 가리켰던 링크를 정본으로 살리는 것은 파일명
+  // 별칭이다. 제목만 넣으면 같은 제목끼리 묶인 군집(same-title)에서는 정본 제목과
+  // 겹쳐 전부 걸러지고 별칭이 하나도 남지 않는다.
+  for (const d of cluster.duplicates) {
+    add(d.title);
+    add(basename(d.path));
+  }
 
   return out;
 }

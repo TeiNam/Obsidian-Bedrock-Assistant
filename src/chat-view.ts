@@ -1810,7 +1810,7 @@ export class ChatView extends ItemView {
    * 경로가 실재하는지는 아무도 확인하지 않았다 — 지어낸 인용을 잡지 못하면 사용자는
    * 클릭해봐야 알고, 그때까지 답변을 근거 있는 것으로 믿는다.
    *
-   * 인덱스가 비어 있으면(인덱싱 전) 경고하지 않는다. 실패는 삼킨다 — 검증이
+   * 볼트에 노트가 하나도 없으면 경고하지 않는다. 실패는 삼킨다 — 검증이
    * 응답 표시를 막아선 안 된다.
    */
   private appendCitationWarning(container: HTMLElement, text: string): void {
@@ -1820,17 +1820,18 @@ export class ChatView extends ItemView {
       const citations = extractCitations(text);
       if (citations.length === 0) return;
 
-      const entries = this.plugin.indexer.getEntries();
-      const paths = entries.map((e) => e.path);
+      // 존재 판정은 볼트에서 직접 한다. 인덱스 스냅샷을 쓰면 플러그인이 꺼져 있는 동안
+      // 만든 노트가 "없는 노트"로 경고되고, 인덱싱 전에는 모든 인용이 경고 대상이 된다.
+      const files = this.app.vault.getMarkdownFiles();
+      const paths = files.map((f) => f.path);
 
-      // 스키마 v2 청크의 헤딩으로 앵커까지 검증한다. v1 인덱스로 색인된 노트는 헤딩
-      // 집합이 비어 판정 불가가 되고, 그런 노트의 앵커는 경고하지 않는다.
+      // 앵커 검증도 metadataCache가 출처다. 인덱스 청크의 heading은 청크 하나를 대표하는
+      // 헤딩 한 개일 뿐이어서, `# A ... ## B`가 한 청크에 들어간 노트는 B를 인용하면
+      // 없는 절이라고 잘못 경고한다.
       const headings = buildHeadingIndex(
-        entries.map((e) => [
-          e.path,
-          (e.chunks ?? [])
-            .map((c) => c.heading)
-            .filter((h): h is string => typeof h === "string"),
+        files.map((f) => [
+          f.path,
+          (this.app.metadataCache.getFileCache(f)?.headings ?? []).map((h) => h.heading),
         ])
       );
 

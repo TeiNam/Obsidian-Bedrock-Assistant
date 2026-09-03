@@ -161,16 +161,45 @@ export function suggestLinks(
 /** 링크 제안을 적용할 Sentinel_Block 키. reconcile·synthesize와 같은 비파괴 규약이다. */
 export const RELATED_LINKS_BLOCK_KEY = "related-links";
 
+/** 확장자를 뗀 경로. 위키링크 대상으로 쓴다. */
+function pathWithoutExtension(path: string): string {
+  return path.replace(/\.md$/i, "");
+}
+
+/** 블록에서 되읽은 링크 1건. */
+interface ParsedLink {
+  /** 링크 대상(헤딩 앵커 제외). */
+  target: string;
+  /** 표시 별칭. 없으면 빈 문자열. */
+  alias: string;
+}
+
 /**
- * 이미 기록된 관련 노트 블록에서 링크 제목을 되읽는다.
+ * 이미 기록된 관련 노트 블록에서 링크를 되읽는다.
  *
  * upsertGeneratedBlock은 블록 전체를 교체하므로, 새 승인분만으로 블록을 만들면 이전에
  * 승인한 링크가 사라진다. 사용자가 명시적으로 승인한 것을 다음 승인이 지우는 것은
  * 조용한 손실이다 — 기존 블록을 읽어 합집합으로 다시 쓴다.
+ *
+ * 별칭까지 함께 읽는다. 대상만 읽으면 같은 링크를 다시 승인할 때 `[[경로|제목]]`이
+ * `[[경로]]`로 바뀌어 재실행이 멱등하지 않다.
  */
-export function parseRelatedLinksBlock(block: string | null): string[] {
+function parseRelatedLinks(block: string | null): ParsedLink[] {
   if (block === null) return [];
-  return [...block.matchAll(/^\s*-\s*\[\[([^\]|#]+)/gm)].map((m) => m[1].trim());
+
+  const out: ParsedLink[] = [];
+  for (const m of block.matchAll(/^\s*-\s*\[\[([^\]\n]+)/gm)) {
+    const [targetPart, aliasPart = ""] = m[1].split("|");
+    // 헤딩 앵커는 대상 판정에 쓰지 않는다.
+    const target = (targetPart.split("#")[0] ?? "").trim();
+    if (target !== "") out.push({ target, alias: aliasPart.trim() });
+  }
+  return out;
+}
+
+/** 기록된 블록의 링크 **대상 경로** 목록. */
+export function parseRelatedLinksBlock(block: string | null): string[] {
+  return parseRelatedLinks(block).map((link) => link.target);
 }
 
 /**
@@ -179,8 +208,10 @@ export function parseRelatedLinksBlock(block: string | null): string[] {
  * 삽입 위치를 추측하지 않는다. Sentinel_Block으로 문서 끝에 병합하면 Generated_Region만
  * 교체되므로 사람이 쓴 부분이 보존되고, 다시 실행해도 블록이 중복되지 않는다.
  *
- * 위키링크는 경로가 아니라 제목으로 쓴다 — 옵시디언이 제목으로 해석하고, 노트를 옮겨도
- * 링크가 깨지지 않는다.
+ * **링크 대상은 경로다.** `targetTitle`은 인덱서가 뽑은 첫 H1이지 파일명이 아니다 —
+ * `Notes/2026-09-03.md`가 `# 회의`로 시작하면 `[[회의]]`는 그 파일을 가리키지 않고,
+ * "회의"라는 다른 노트가 있으면 엉뚱한 곳을 가리킨다. 확장자를 뗀 경로로 링크하고
+ * 제목은 표시용 별칭(`[[경로|제목]]`)으로 붙인다.
  *
  * 기존 링크를 먼저 두어 순서를 안정시킨다. 대소문자만 다른 중복은 하나로 합친다.
  */
@@ -188,23 +219,31 @@ export function mergeRelatedLinksBlock(
   existingBlock: string | null,
   suggestions: readonly LinkSuggestion[]
 ): string {
-  const titles: string[] = [];
+  /** 중복 판정용 소문자 키. 표시에는 쓰지 않는다 — 경로 대소문자를 보존해야 한다. */
   const seen = new Set<string>();
+  const links: Array<{ target: string; alias: string }> = [];
 
-  const add = (title: string): void => {
-    const trimmed = title.trim();
-    if (trimmed === "") return;
-    const key = trimmed.toLowerCase();
+  const add = (target: string, alias: string): void => {
+    const t = target.trim();
+    if (t === "") return;
+    const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    titles.push(trimmed);
+    // 별칭이 대상과 같으면 표기를 늘릴 이유가 없다.
+    const a = alias.trim();
+    links.push({ target: t, alias: a === t ? "" : a });
   };
 
-  for (const title of parseRelatedLinksBlock(existingBlock)) add(title);
-  for (const s of suggestions) add(s.targetTitle);
+  for (const { target, alias } of parseRelatedLinks(existingBlock)) add(target, alias);
+  for (const s of suggestions) add(pathWithoutExtension(s.targetPath), s.targetTitle);
 
-  if (titles.length === 0) return "";
-  return ["## 관련 노트", "", ...titles.map((t) => `- [[${t}]]`)].join("\n");
+  if (links.length === 0) return "";
+
+  const lines = ["## 관련 노트", ""];
+  for (const { target, alias } of links) {
+    lines.push(alias === "" ? `- [[${target}]]` : `- [[${target}|${alias}]]`);
+  }
+  return lines.join("\n");
 }
 
 /** 제안들을 source 경로별로 묶는다. 승인 화면과 적용 단계가 노트 단위로 돈다. */

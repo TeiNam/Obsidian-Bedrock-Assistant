@@ -182,13 +182,34 @@ describe("mergeRelatedLinksBlock — 블록 생성", () => {
     { sourcePath: "o.md", targetPath: "Notes/Beta.md", targetTitle: "Beta", similarity: 0.85 },
   ];
 
-  it("제목 기반 위키링크 목록을 만든다", () => {
+  it("경로로 링크하고 제목은 별칭으로 붙인다", () => {
     const block = mergeRelatedLinksBlock(null, suggestions);
 
-    // 경로가 아니라 제목으로 링크해야 노트를 옮겨도 깨지지 않는다.
-    expect(block).toContain("- [[Alpha]]");
-    expect(block).toContain("- [[Beta]]");
+    // targetTitle은 인덱서가 뽑은 첫 H1이지 파일명이 아니다. 제목으로 링크하면
+    // 대상 파일을 가리키지 않거나 같은 이름의 다른 노트를 가리킨다.
+    expect(block).toContain("- [[Notes/Alpha|Alpha]]");
+    expect(block).toContain("- [[Notes/Beta|Beta]]");
+    // 확장자는 떼고 링크한다.
     expect(block).not.toContain("Notes/Alpha.md");
+  });
+
+  it("경로 대소문자를 보존한다", () => {
+    // 중복 판정은 소문자로 하지만 표시는 원문이어야 한다 — 대소문자 구분
+    // 파일시스템에서 소문자화된 경로는 링크가 깨진다.
+    const block = mergeRelatedLinksBlock(null, [
+      { sourcePath: "o.md", targetPath: "Notes/CamelCase.md", targetTitle: "제목", similarity: 0.9 },
+    ]);
+
+    expect(block).toContain("[[Notes/CamelCase|제목]]");
+  });
+
+  it("별칭이 대상과 같으면 별칭을 생략한다", () => {
+    const block = mergeRelatedLinksBlock(null, [
+      { sourcePath: "o.md", targetPath: "Alpha.md", targetTitle: "Alpha", similarity: 0.9 },
+    ]);
+
+    expect(block).toContain("- [[Alpha]]");
+    expect(block).not.toContain("|");
   });
 
   it("빈 목록은 빈 문자열이다", () => {
@@ -203,7 +224,7 @@ describe("mergeRelatedLinksBlock — 블록 생성", () => {
     const twice = upsertGeneratedBlock(once, RELATED_LINKS_BLOCK_KEY, block);
 
     expect(once).toContain("직접 쓴 내용입니다.");
-    expect(once).toContain("- [[Alpha]]");
+    expect(once).toContain("- [[Notes/Alpha|Alpha]]");
     // 두 번 적용해도 블록이 중복되지 않는다.
     expect(twice).toBe(once);
   });
@@ -246,14 +267,14 @@ describe("mergeRelatedLinksBlock — 이전 승인분 보존", () => {
     const run1 = mergeRelatedLinksBlock(null, first);
     const run2 = mergeRelatedLinksBlock(run1, second);
 
-    expect(run2).toContain("- [[알파]]");
-    expect(run2).toContain("- [[베타]]");
+    expect(run2).toContain("[[A|알파]]");
+    expect(run2).toContain("[[B|베타]]");
   });
 
   it("기존 링크를 먼저 두어 순서를 안정시킨다", () => {
     const run2 = mergeRelatedLinksBlock(mergeRelatedLinksBlock(null, first), second);
 
-    expect(run2.indexOf("알파")).toBeLessThan(run2.indexOf("베타"));
+    expect(run2.indexOf("A|알파")).toBeLessThan(run2.indexOf("B|베타"));
   });
 
   it("같은 링크를 다시 승인해도 중복되지 않는다", () => {
@@ -270,20 +291,21 @@ describe("mergeRelatedLinksBlock — 이전 승인분 보존", () => {
     ];
     const block = mergeRelatedLinksBlock(null, upper);
 
-    expect(block.match(/- \[\[/g)).toHaveLength(2);
+    // 대상 경로가 대소문자만 다르면 같은 노트로 보고 하나만 남긴다.
+    expect(block.match(/- \[\[/g)).toHaveLength(1);
     expect(mergeRelatedLinksBlock(block, [
       { sourcePath: "o.md", targetPath: "A.md", targetTitle: "알파", similarity: 0.9 },
     ])).toBe(block);
   });
 
   it("별칭·헤딩이 붙은 기존 링크에서도 대상만 읽는다", () => {
-    const existing = "## 관련 노트\n\n- [[알파|별칭]]\n- [[베타#섹션]]";
+    const existing = "## 관련 노트\n\n- [[Notes/알파|별칭]]\n- [[Notes/베타#섹션]]";
 
-    expect(parseRelatedLinksBlock(existing)).toEqual(["알파", "베타"]);
+    expect(parseRelatedLinksBlock(existing)).toEqual(["Notes/알파", "Notes/베타"]);
   });
 
   it("블록이 없으면 새 승인분만으로 만든다", () => {
-    expect(mergeRelatedLinksBlock(null, first)).toContain("- [[알파]]");
+    expect(mergeRelatedLinksBlock(null, first)).toContain("[[A|알파]]");
   });
 
   it("아무것도 없으면 빈 문자열이다", () => {
@@ -306,7 +328,7 @@ describe("mergeRelatedLinksBlock — 이전 승인분 보존", () => {
     );
 
     expect(doc).toContain("직접 쓴 내용.");
-    expect(doc).toContain("- [[알파]]");
-    expect(doc).toContain("- [[베타]]");
+    expect(doc).toContain("[[A|알파]]");
+    expect(doc).toContain("[[B|베타]]");
   });
 });

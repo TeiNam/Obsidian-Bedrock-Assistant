@@ -229,6 +229,159 @@ describe("VaultIndexer 키워드 폴백 검증 (임베딩 0개)", () => {
   });
 });
 
+// ============================================
+// 필터 통과 후보 기준 임베딩 판정
+// ============================================
+/**
+ * 임베딩 유무는 **필터를 통과한 후보** 기준으로 봐야 한다. 인덱스 전체를 보면
+ * "임베딩 있는 노트가 어딘가에 있다"는 이유로 벡터 검색에 들어가고, 후보 중에는 비교
+ * 가능한 벡터가 없어 빈 결과가 나온다. 그 상황에서 필요한 건 키워드 폴백이다.
+ */
+// ============================================
+// 어휘 후보 풀은 limit보다 작아지면 안 된다
+// ============================================
+/**
+ * 어휘 후보를 30개로 고정하면 limit=40 요청에서 어휘 31위 이후는 융합에 아예 참여하지
+ * 못한다. dense가 임계값으로 걸러낸 노트를 어휘가 되살릴 수 있는데, 그 통로가 상위
+ * 30개로 막혀 있으면 결과에 들어올 방법이 없다.
+ */
+describe("VaultIndexer 어휘 후보 풀과 limit", () => {
+  /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
+  function makeAlignedClient() {
+    return {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+  }
+
+  /**
+   * dense 상위 32개 + dense가 버리는 1개.
+   *
+   * 어휘 점수는 전부 동점("키워드" 2회, 제목 매치 없음)이라 순위는 경로 오름차순으로
+   * 정해진다 → 대상 노트(zzz.md)는 어휘 33위다.
+   */
+  function makeWidePayload(): string {
+    const body = "키워드 그리고 키워드";
+    const dense = Array.from({ length: 32 }, (_, i) => ({
+      path: `n${String(i).padStart(2, "0")}.md`,
+      // 쿼리와 정렬 → 코사인 1
+      embedding: [1, 0, 0],
+      lastModified: 1000,
+      title: `노트 ${i}`,
+      excerpt: "발췌",
+      searchText: body,
+      chunks: [{ index: 0, text: body, embedding: [1, 0, 0] }],
+      outlinks: [],
+      backlinks: [],
+      tags: [],
+      frontmatter: {},
+    }));
+
+    return JSON.stringify({
+      schemaVersion: 1,
+      entries: [
+        ...dense,
+        {
+          path: "zzz.md",
+          // 쿼리와 직교 → 정규화 0.5로 최소 관련성 임계값에 못 미쳐 dense가 버린다.
+          embedding: [0, 1, 0],
+          lastModified: 1000,
+          title: "어휘로만 잡히는 노트",
+          excerpt: "발췌",
+          searchText: body,
+          chunks: [{ index: 0, text: body, embedding: [0, 1, 0] }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("limit이 기본 풀보다 크면 어휘 31위 이후도 융합에 참여한다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeAlignedClient());
+    indexer.deserialize(makeWidePayload());
+
+    const result = await indexer.search("키워드", 40);
+
+    // 어휘 33위 노트다. 풀이 30으로 고정돼 있으면 결과에 들어올 통로가 없다.
+    expect(result.items.map((i) => i.path)).toContain("zzz.md");
+  });
+
+  it("limit이 기본 풀보다 작으면 기본 풀을 유지한다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeAlignedClient());
+    indexer.deserialize(makeWidePayload());
+
+    // limit=5여도 어휘는 넉넉히 뽑아야 융합에 쓸 재료가 생긴다.
+    const result = await indexer.search("키워드", 5);
+
+    expect(result.items).toHaveLength(5);
+  });
+});
+
+describe("VaultIndexer 필터 후 임베딩 0개 → 키워드 폴백", () => {
+  /** 임베딩 있는 노트와 없는 노트를 폴더로 나눠 담은 페이로드. */
+  function makeMixedPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 1,
+      entries: [
+        {
+          path: "Dense/a.md",
+          embedding: [0.1, 0.2, 0.3],
+          lastModified: 1000,
+          title: "벡터 있는 노트",
+          excerpt: "발췌",
+          searchText: "키워드 본문",
+          chunks: [{ index: 0, text: "키워드 본문", embedding: [0.1, 0.2, 0.3] }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+        {
+          path: "Sparse/b.md",
+          embedding: [],
+          lastModified: 1000,
+          title: "벡터 없는 노트",
+          excerpt: "발췌",
+          searchText: "키워드 본문",
+          chunks: [],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("필터가 미색인 노트만 남기면 키워드 폴백으로 결과를 낸다", async () => {
+    const client = makeClient();
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeMixedPayload());
+
+    client.getEmbedding.mockClear();
+
+    const result = await indexer.search("키워드", 10, { folder: "Sparse" });
+
+    // 빈 결과가 아니라 키워드로 찾아야 한다.
+    expect(result.usedKeywordFallback).toBe(true);
+    expect(result.items.map((i) => i.path)).toEqual(["Sparse/b.md"]);
+    // 폴백 경로는 쿼리 임베딩을 만들지 않는다.
+    expect(client.getEmbedding).not.toHaveBeenCalled();
+  });
+
+  it("필터가 색인된 노트를 남기면 벡터 경로를 그대로 쓴다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(makeMixedPayload());
+
+    const result = await indexer.search("키워드", 10, { folder: "Dense" });
+
+    expect(result.usedKeywordFallback).toBeUndefined();
+    expect(result.items.map((i) => i.path)).toEqual(["Dense/a.md"]);
+  });
+});
+
 describe("VaultIndexer limit 기본값 검증", () => {
   // limit 인자를 생략하면 기본 10이 적용되어 결과는 최대 10개로 제한된다 (Req 6.6).
   it("limit 미지정 시 기본 10이 적용되어 후보가 10개를 초과해도 최대 10개만 반환한다", async () => {
