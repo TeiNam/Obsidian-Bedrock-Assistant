@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import fc from "fast-check";
 import {
   sanitizeTitle,
   sanitizeTag,
@@ -230,5 +231,103 @@ describe("MAX_TRIAGE_NOTES", () => {
     // 50건이 한꺼번에 올라오면 전부 체크하거나 전부 무시하게 되고 어느 쪽도 검토가 아니다.
     expect(MAX_TRIAGE_NOTES).toBeGreaterThan(0);
     expect(MAX_TRIAGE_NOTES).toBeLessThanOrEqual(20);
+  });
+});
+
+// ============================================
+// Property: 대상 경로 안전성
+// ============================================
+/**
+ * resolveTargetPath의 결과는 파일시스템에 직접 쓰인다(fileManager.renameFile). LLM이
+ * 만든 제목·폴더가 그 입력이므로, 어떤 입력에도 지켜져야 하는 성질을 못박는다.
+ */
+describe("Property: resolveTargetPath 안전성", () => {
+  /** 경로·제목을 흔들 만한 조각을 섞은 생성기. */
+  const nasty = fc
+    .array(
+      fc.constantFrom(
+        "가",
+        "A",
+        "..",
+        "/",
+        "\\",
+        ":",
+        "*",
+        "?",
+        '"',
+        "<",
+        ">",
+        "|",
+        "#",
+        "^",
+        "[",
+        "]",
+        " ",
+        ".md"
+      ),
+      { minLength: 1, maxLength: 8 }
+    )
+    .map((parts) => parts.join(""));
+
+  const planArb = fc.record({
+    path: fc.constantFrom("Inbox/a.md", "Inbox/sub/b.md", "c.md"),
+    suggestedTitle: fc.oneof(fc.constant(""), nasty.map(sanitizeTitle)),
+    suggestedFolder: fc.constantFrom("", "Projects", "Areas/Work"),
+    tags: fc.constant([] as string[]),
+    splitHint: fc.constant(""),
+    reason: fc.constant(""),
+  });
+
+  it("결과는 항상 .md로 끝나고 볼트를 벗어나지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out === null) return;
+
+        expect(out.endsWith(".md")).toBe(true);
+        // 상위 디렉터리 세그먼트·절대경로·드라이브 문자가 없어야 한다.
+        expect(out.split("/").includes("..")).toBe(false);
+        expect(out.startsWith("/")).toBe(false);
+        expect(/^[A-Za-z]:/.test(out)).toBe(false);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("이미 존재하는 경로를 결과로 내지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        // 무엇을 내놓든 그것이 이미 있다고 하면 null이어야 한다.
+        const first = resolveTargetPath(p, new Set());
+        if (first === null) return;
+
+        expect(resolveTargetPath(p, new Set([first]))).toBeNull();
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("결과가 현재 경로와 같지 않다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out !== null) expect(out).not.toBe(p.path);
+      }),
+      { numRuns: 400 }
+    );
+  });
+
+  it("빈 파일명을 만들지 않는다", () => {
+    fc.assert(
+      fc.property(planArb, (p) => {
+        const out = resolveTargetPath(p, new Set());
+        if (out === null) return;
+
+        const base = out.split("/").pop() ?? "";
+        expect(base).not.toBe(".md");
+        expect(base.length).toBeGreaterThan(3);
+      }),
+      { numRuns: 400 }
+    );
   });
 });

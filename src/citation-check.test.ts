@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import fc from "fast-check";
 import {
   stripCode,
   extractCitations,
@@ -236,5 +237,96 @@ describe("buildHeadingIndex", () => {
     ]);
 
     expect(idx.get("topic")).toEqual(new Set(["가", "나"]));
+  });
+});
+
+// ============================================
+// Property: 추출 결과의 형태 보장
+// ============================================
+/**
+ * 인용 대상은 인덱스 조회 키로 쓰인다. 앵커·별칭·링크 문법 문자가 대상에 섞이면 실재하는
+ * 노트를 못 찾아 거짓 경고가 나고, 거짓이 섞이면 진짜 경고까지 무시된다.
+ */
+describe("Property: extractCitations 결과 형태", () => {
+  /** 링크 문법과 코드 펜스를 흔들 조각들. */
+  const piece = fc.constantFrom(
+    "본문 ",
+    "[[가]]",
+      "[[나|별칭]]",
+    "[[다#헤딩]]",
+    "[[라^block]]",
+    "[텍스트](a/b.md)",
+    "`인라인`",
+    "```",
+    "~~~",
+    "\n",
+    "[[",
+    "]]",
+    "|",
+    "#",
+    "http://x.com",
+    "[[http://y.com]]"
+  );
+
+  it("대상에 링크 문법·앵커 문자가 남지 않는다", () => {
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 14 }), (parts) => {
+        for (const c of extractCitations(parts.join(""))) {
+          expect(c.target).not.toContain("[");
+          expect(c.target).not.toContain("]");
+          expect(c.target).not.toContain("|");
+          expect(c.target).not.toContain("#");
+          expect(c.target).not.toContain("^");
+          // 빈 대상은 반환하지 않는다.
+          expect(c.target.trim()).not.toBe("");
+        }
+      }),
+      { numRuns: 500 }
+    );
+  });
+
+  it("외부 URL을 인용으로 반환하지 않는다", () => {
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 14 }), (parts) => {
+        for (const c of extractCitations(parts.join(""))) {
+          expect(/^https?:/i.test(c.target)).toBe(false);
+        }
+      }),
+      { numRuns: 500 }
+    );
+  });
+
+  it("stripCode는 길이를 보존한다", () => {
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 14 }), (parts) => {
+        const md = parts.join("");
+        expect(stripCode(md)).toHaveLength(md.length);
+      }),
+      { numRuns: 500 }
+    );
+  });
+
+  it("같은 대상·앵커 조합은 중복 반환하지 않는다", () => {
+    fc.assert(
+      fc.property(fc.array(piece, { maxLength: 14 }), (parts) => {
+        const cites = extractCitations(parts.join(""));
+        const keys = cites.map((c) => `${c.target.toLowerCase()}#${c.anchor ?? ""}`);
+        expect(new Set(keys).size).toBe(keys.length);
+      }),
+      { numRuns: 500 }
+    );
+  });
+});
+
+describe("중첩된 대괄호", () => {
+  it("`[[[[노트]]`에서 대상만 올바르게 뽑는다", () => {
+    // 속성 테스트가 찾은 결함: 첫 `[[`부터 매칭돼 대상이 `[[노트`가 되고,
+    // 그 대상은 인덱스에서 찾을 수 없어 거짓 경고가 됐다.
+    expect(extractCitations("[[[[노트|별칭]]").map((c) => c.target)).toEqual(["노트"]);
+    expect(extractCitations("[[ 그리고 [[실제노트]]").map((c) => c.target)).toEqual(["실제노트"]);
+  });
+
+  it("닫히지 않은 대괄호만 있으면 인용이 없다", () => {
+    expect(extractCitations("[[ 열린 채로 끝")).toEqual([]);
   });
 });

@@ -114,7 +114,11 @@ export function extractCitations(markdown: string): Citation[] {
   };
 
   // 1) 위키링크
-  for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
+  //
+  // 내부에 `[`를 허용하지 않는다. 허용하면 `[[[[노트]]` 같은 입력에서 첫 `[[`부터
+  // 매칭돼 대상이 `[[노트`가 되고, 그 대상은 인덱스에서 찾을 수 없어 거짓 경고가 된다.
+  // 배제하면 정규식이 안쪽 `[[`부터 다시 매칭해 올바른 대상을 얻는다.
+  for (const m of text.matchAll(/\[\[([^[\]\n]+)\]\]/g)) {
     add(m[0], splitTarget(m[1]));
   }
 
