@@ -814,8 +814,11 @@ export default class GeminiAssistantPlugin extends Plugin {
           );
         }
 
-        const file = this.app.vault.getAbstractFileByPath(ledgerPath);
-        if (file instanceof TFile) await this.indexer.indexFile(file);
+        // 원장 표의 근거 칸은 각 노트로 향하는 위키링크다 — 그 노트들의 백링크도 바뀐다.
+        await this.syncIndexAfterApply(
+          [ledgerPath],
+          merged.flatMap((entry) => entry.sources)
+        );
 
         return { merged: approved.length, total: merged.length };
       }).open();
@@ -887,10 +890,12 @@ export default class GeminiAssistantPlugin extends Plugin {
         }
       }
 
-      for (const path of touched) {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof TFile) await this.indexer.indexFile(file);
-      }
+      // 중복 후보 블록은 각 중복 노트로 향하는 위키링크를 담는다 — 그 노트들의 백링크도
+      // 갱신 대상이다.
+      await this.syncIndexAfterApply(
+        touched,
+        approved.flatMap((c) => c.duplicates.map((d) => d.path))
+      );
 
       return { notes, aliases };
     }).open();
@@ -972,25 +977,8 @@ export default class GeminiAssistantPlugin extends Plugin {
         for (const s of live) linkTargets.add(s.targetPath);
       }
 
-      // 소스는 본문이 바뀌었으니 다시 색인한다(청크·임베딩이 달라진다).
-      for (const path of touched) {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof TFile) await this.indexer.indexFile(file);
-      }
-      // 대상은 본문이 그대로다. 링크 정보만 갱신하고 재임베딩하지 않는다 — 내용이 같은
-      // 노트를 다시 임베딩하는 것은 순수한 비용이다.
-      for (const path of linkTargets) {
-        if (!touched.has(path)) this.indexer.refreshGraphMetadata(path);
-      }
-
-      // 위 갱신은 옵시디언이 아직 새 링크를 해석하지 않은 상태를 읽을 수 있다
-      // (metadataCache는 쓰기 직후 한 틱 늦다). 그러면 소스는 최신 mtime이 찍혀 이후
-      // 증분 색인이 건너뛰고, 대상에는 변경 이벤트조차 없어 그래프가 영구히 낡는다.
-      // 캐시 해석이 끝난 뒤 링크 정보만 한 번 더 읽어 수렴시킨다(임베딩은 건드리지 않는다).
-      this.onceMetadataResolved(() => {
-        for (const path of touched) this.indexer.refreshGraphMetadata(path);
-        for (const path of linkTargets) this.indexer.refreshGraphMetadata(path);
-      });
+      // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
+      await this.syncIndexAfterApply(touched, linkTargets);
 
       // 모달이 열린 동안 소스가 사라졌거나 링크가 이미 붙어 있어 쓰기를 건너뛴 경우까지
       // grouped.size에 들어간다. 실제로 바뀐 노트 수를 보고한다.
@@ -1039,6 +1027,43 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
       }
     ).open();
+  }
+
+  /**
+   * 승인 반영 후 인덱스를 볼트 상태에 맞춘다.
+   *
+   * 세 가지를 한다:
+   *  1. 본문이 바뀐 노트를 다시 색인한다(청크·임베딩이 달라진다).
+   *  2. 링크가 새로 향한 노트의 링크 정보만 갱신한다. 그 노트의 본문은 그대로이므로
+   *     재임베딩은 순수한 낭비이고, mtime도 안 바뀌어 indexFile은 즉시 반환한다.
+   *  3. metadataCache 해석이 끝난 뒤 링크 정보를 한 번 더 읽어 수렴시킨다. 쓰기 직후의
+   *     `resolvedLinks`는 아직 이전 상태일 수 있고, 그 값이 최신 mtime과 함께 굳으면
+   *     이후 증분 색인이 건너뛰어 그래프가 영구히 낡는다.
+   *
+   * @param changed 본문이 바뀐 노트 경로
+   * @param linkedTo 링크가 새로 향한 노트 경로(생성된 블록의 위키링크 대상 등)
+   */
+  private async syncIndexAfterApply(
+    changed: Iterable<string>,
+    linkedTo: Iterable<string> = []
+  ): Promise<void> {
+    const changedPaths = [...changed];
+    const linkedPaths = [...linkedTo];
+
+    for (const path of changedPaths) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) await this.indexer.indexFile(file);
+    }
+
+    const changedSet = new Set(changedPaths);
+    for (const path of linkedPaths) {
+      if (!changedSet.has(path)) this.indexer.refreshGraphMetadata(path);
+    }
+
+    this.onceMetadataResolved(() => {
+      for (const path of changedPaths) this.indexer.refreshGraphMetadata(path);
+      for (const path of linkedPaths) this.indexer.refreshGraphMetadata(path);
+    });
   }
 
   /**

@@ -68,12 +68,12 @@ function splitQueryTerms(query: string): string[] {
  * 청크가 없거나 어느 청크에도 질의어가 없으면 null — 그때는 excerpt로 폴백한다.
  */
 function bestLexicalChunk(
-  entry: VaultIndexEntry,
+  entry: VaultIndexEntry | undefined,
   terms: readonly string[]
 ): { heading: string | null; text: string } | null {
   let best: { heading: string | null; text: string; hits: number } | null = null;
 
-  for (const chunk of entry.chunks ?? []) {
+  for (const chunk of entry?.chunks ?? []) {
     const lower = chunk.text.toLowerCase();
     let hits = 0;
     for (const term of terms) hits += lower.split(term).length - 1;
@@ -809,7 +809,7 @@ export class VaultIndexer {
         ...matchedFields(
           d
             ? this.bestChunkMatch(queryEmbedding, path)
-            : bestLexicalChunk(candidates.get(path)!, lexicalTerms)
+            : bestLexicalChunk(candidates.get(path), lexicalTerms)
         ),
       };
     });
