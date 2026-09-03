@@ -49,6 +49,11 @@ interface McpToolDef {
   inputSchema?: Record<string, unknown>;
 }
 
+/** MCP stdio 전송 규격: JSON-RPC 메시지 하나를 한 줄로 보낸다. */
+export function encodeMcpStdioMessage(message: unknown): string {
+  return `${JSON.stringify(message)}\n`;
+}
+
 // 단일 MCP 서버 연결
 class McpServerConnection {
   readonly name: string;
@@ -228,9 +233,7 @@ class McpServerConnection {
       const request: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
       this.pending.set(id, { resolve, reject });
 
-      const msg = JSON.stringify(request);
-      const payload = `Content-Length: ${Buffer.byteLength(msg)}\r\n\r\n${msg}\n`;
-      this.process.stdin.write(payload);
+      this.process.stdin.write(encodeMcpStdioMessage(request));
 
       // 설정된 타임아웃 적용
       setTimeout(() => {
@@ -245,8 +248,7 @@ class McpServerConnection {
   // JSON-RPC 알림 전송 (응답 없음)
   private sendNotification(method: string, params: Record<string, unknown>): void {
     if (!this.process?.stdin?.writable) return;
-    const msg = JSON.stringify({ jsonrpc: "2.0", method, params });
-    this.process.stdin.write(`Content-Length: ${Buffer.byteLength(msg)}\r\n\r\n${msg}\n`);
+    this.process.stdin.write(encodeMcpStdioMessage({ jsonrpc: "2.0", method, params }));
   }
 
   // 수신 버퍼에서 완전한 메시지 파싱 (Content-Length 헤더 + raw JSON 모두 지원)
@@ -439,7 +441,7 @@ export class McpManager {
     try {
       return await server.callTool(toolName, input);
     } catch (error) {
-      return `MCP 도구 실행 오류 (${toolName}): ${(error as Error).message}`;
+      return `도구 실행 오류: MCP ${toolName}: ${(error as Error).message}`;
     }
   }
 

@@ -43,10 +43,23 @@ function normalizeStatus(value: unknown): DecisionStatus {
   return "open";
 }
 
-/** "YYYY-MM-DD" 형식만 통과시킨다. 형식이 다르면 빈 문자열 — 추측하지 않는다. */
+/** 실제로 존재하는 "YYYY-MM-DD" 날짜만 통과시킨다. */
 function normalizeDate(value: unknown): string {
   const v = toTrimmedString(value);
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!match) return "";
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? v
+    : "";
 }
 
 /**
@@ -274,7 +287,11 @@ export function formatLedger(
  * 파이프와 줄바꿈이 그대로 들어가면 표 구조가 깨져 원장 전체가 읽히지 않는다.
  */
 function cell(value: string): string {
-  const v = value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+  const v = value
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, " ")
+    .trim();
   return v === "" ? "—" : v;
 }
 
@@ -321,7 +338,28 @@ const LABEL_TO_STATUS: Record<string, DecisionStatus> = {
 function uncell(value: string): string {
   const v = value.trim();
   if (v === "—") return "";
-  return v.replace(/\\\|/g, "|").trim();
+  return v.replace(/\\([\\|])/g, "$1").trim();
+}
+
+/** 짝수 개 백슬래시 뒤의 파이프만 표 칸 구분자로 본다. */
+function splitTableCells(trimmedLine: string): string[] {
+  const line = trimmedLine.replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let start = 0;
+
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== "|") continue;
+
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes++;
+    if (backslashes % 2 === 1) continue;
+
+    cells.push(line.slice(start, i).trim());
+    start = i + 1;
+  }
+
+  cells.push(line.slice(start).trim());
+  return cells;
 }
 
 /**
@@ -360,9 +398,9 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
   let status: DecisionStatus | null = null;
 
   for (const line of markdown.split("\n")) {
-    const heading = /^###\s+(\S+)/.exec(line.trim());
+    const heading = /^(#{1,6})\s+(\S+)/.exec(line.trim());
     if (heading) {
-      status = LABEL_TO_STATUS[heading[1]] ?? null;
+      status = heading[1].length === 3 ? LABEL_TO_STATUS[heading[2]] ?? null : null;
       continue;
     }
 
@@ -375,11 +413,7 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
     }
 
     // 이스케이프된 파이프(\|)를 칸 구분자로 오인하지 않도록 분리한다.
-    const rawCells = trimmed
-      .replace(/^\|/, "")
-      .replace(/\|$/, "")
-      .split(/(?<!\\)\|/)
-      .map((c) => c.trim());
+    const rawCells = splitTableCells(trimmed);
     // 헤더 행과 구분선은 건너뛴다(보존 대상도 아니다 — formatLedger가 다시 만든다).
     //
     // 접두어("| ---" / "| 결정 |")로 판정하면 안 된다 — `---`로 시작하는 결정 문구나
@@ -450,11 +484,7 @@ const LEDGER_HEADER_CELLS = ["결정", "이유", "담당", "기한", "대체", "
 
 /** 표의 헤더 행이거나 구분선인지. formatLedger가 다시 만들므로 보존 대상이 아니다. */
 function isTableFurniture(trimmedLine: string): boolean {
-  const cells = trimmedLine
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split(/(?<!\\)\|/)
-    .map((c) => c.trim());
+  const cells = splitTableCells(trimmedLine);
   if (cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c))) return true;
   // 헤더 판정은 **전체 칸 이름과 칸 수가 모두 일치**할 때만 참이다. 앞 두 칸만 보면
   // 결정 문구가 "결정"이고 이유가 "이유"인 정상 행이 헤더로 오인되어, 다음 승인에서

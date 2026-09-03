@@ -340,12 +340,19 @@ export class BedrockClient implements IAiClient {
     abortSignal?: AbortSignal
   ): Promise<ConverseResult> {
     const input = this.buildInput(messages, tools);
+    let streamedText = false;
+    const handleTextDelta = (text: string): void => {
+      streamedText = true;
+      onTextDelta?.(text);
+    };
 
     try {
-      return await this.converseStream(input, onTextDelta, abortSignal);
+      return await this.converseStream(input, handleTextDelta, abortSignal);
     } catch (error) {
       // 중단된 경우 그대로 throw
       if (abortSignal?.aborted) throw error;
+      // 이미 화면에 일부 텍스트를 보낸 뒤 전체 응답을 다시 요청하면 같은 답이 중복된다.
+      if (streamedText) throw error;
       // 스트리밍 실패 시 일반 호출로 폴백
       return await this.converseFallback(input, onTextDelta, abortSignal);
     }

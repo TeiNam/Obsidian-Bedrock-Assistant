@@ -240,8 +240,9 @@ export async function organizeVaultPara(
         continue;
       }
 
-      await app.vault.rename(file, newPath);
-      result.moved.push({ from: file.path, to: newPath });
+      const oldPath = file.path;
+      await app.fileManager.renameFile(file, newPath);
+      result.moved.push({ from: oldPath, to: newPath });
     } catch (e: any) {
       // 예외는 백엔드 장애 신호로 본다(자격증명·네트워크·쓰로틀링).
       consecutiveErrors++;

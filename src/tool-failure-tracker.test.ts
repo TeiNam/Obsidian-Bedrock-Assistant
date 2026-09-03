@@ -8,6 +8,8 @@ describe("isToolError", () => {
 
   it("한국어 에러 접두사를 감지한다", () => {
     expect(isToolError("도구 실행 오류: 알 수 없는 도구")).toBe(true);
+    expect(isToolError("도구 실행 오류: read_note: 읽기 실패")).toBe(true);
+    expect(isToolError("도구 실행 오류: MCP fetch: 연결 실패")).toBe(true);
   });
 
   it("정상 결과는 에러로 판별하지 않는다", () => {

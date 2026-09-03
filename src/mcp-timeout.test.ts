@@ -1,8 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { McpManager } from "./mcp-client";
+import { encodeMcpStdioMessage, McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("MCP 타임아웃 설정", () => {
+  it("stdio 메시지는 Content-Length 없이 JSON 한 줄로 직렬화한다", () => {
+    const payload = encodeMcpStdioMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+
+    expect(payload).toBe('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+    expect(payload).not.toContain("Content-Length");
+  });
+
   it("DEFAULT_SETTINGS에 mcpTimeout 기본값이 10이다", () => {
     expect(DEFAULT_SETTINGS.mcpTimeout).toBe(10);
   });

@@ -37,6 +37,10 @@ describe("stripCode", () => {
     expect(out).not.toContain("config/app.md");
   });
 
+  it("더 긴 백틱 묶음의 일부를 닫는 기호로 오인하지 않는다", () => {
+    expect(extractCitations("`a```[[가짜]]`")).toEqual([]);
+  });
+
   it("닫히지 않은 펜스는 문서 끝까지 코드로 본다", () => {
     // 스트리밍이 중간에 끊긴 응답에서 뒤쪽 전부가 오탐이 되는 걸 막는다.
     const out = stripCode("본문 [[실제노트]]\n```\n[[가짜1]]\n[[가짜2]]");

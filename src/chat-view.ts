@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
+import { Component, ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
@@ -52,6 +52,8 @@ export class ChatView extends ItemView {
   private attachedBinaryFiles: Map<string, ArrayBuffer> = new Map(); // path → binary data
   private manuallyAttachedPaths: Set<string> = new Set(); // 수동 첨부 경로 (문서 이동 시 유지)
   private autoAttachedPath: string | null = null; // 자동 첨부 경로 (문서 이동 시 교체)
+  private autoAttachVersion = 0;
+  private uiEvents!: Component;
 
   // 모델 선택 (onOpen()에서 초기화)
   private modelSelectorEl!: HTMLElement;
@@ -96,6 +98,9 @@ export class ChatView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+        if (this.uiEvents) this.removeChild(this.uiEvents);
+        this.uiEvents = this.addChild(new Component());
+
         const container = this.contentEl ?? (this.containerEl.children[1] as HTMLElement);
         if (!container) return;
 
@@ -146,22 +151,22 @@ export class ChatView extends ItemView {
     // 인덱싱 버튼
     const indexBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.indexVault } });
     setIcon(indexBtn, "file-search");
-    this.registerDomEvent(indexBtn, "click", () => this.handleIndexVault());
+    this.uiEvents.registerDomEvent(indexBtn, "click", () => this.handleIndexVault());
 
     // 새 대화 버튼
     const newBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.newChat } });
     setIcon(newBtn, "square-pen");
-    this.registerDomEvent(newBtn, "click", () => this.startNewChat());
+    this.uiEvents.registerDomEvent(newBtn, "click", () => this.startNewChat());
 
     // 대화 내보내기 버튼
     const exportBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.exportChat } });
     setIcon(exportBtn, "download");
-    this.registerDomEvent(exportBtn, "click", () => this.exportChat());
+    this.uiEvents.registerDomEvent(exportBtn, "click", () => this.exportChat());
 
     // 지난 대화 버튼
     const historyBtn = actions.createDiv({ cls: "ba-header-btn", attr: { "aria-label": this.t.chatHistory } });
     setIcon(historyBtn, "history");
-    this.registerDomEvent(historyBtn, "click", () => this.showSessionList());
+    this.uiEvents.registerDomEvent(historyBtn, "click", () => this.showSessionList());
   }
 
   private async buildInputArea(): Promise<void> {
@@ -173,17 +178,17 @@ export class ChatView extends ItemView {
     // To-Do 생성 버튼
     const todoBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.createTodo } });
     setIcon(todoBtn, "check-square");
-    this.registerDomEvent(todoBtn, "click", () => this.handleCreateTodoNote());
+    this.uiEvents.registerDomEvent(todoBtn, "click", () => this.handleCreateTodoNote());
 
     // 태그 생성 버튼
     const tagBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.generateTags } });
     setIcon(tagBtn, "tag");
-    this.registerDomEvent(tagBtn, "click", () => this.generateTags());
+    this.uiEvents.registerDomEvent(tagBtn, "click", () => this.generateTags());
 
     // 웹 페이지 요약 버튼
     const webClipBtn = actionToolbar.createDiv({ cls: "ba-action-btn", attr: { "aria-label": this.t.webClip } });
     setIcon(webClipBtn, "globe");
-    this.registerDomEvent(webClipBtn, "click", () => this.openWebClipper());
+    this.uiEvents.registerDomEvent(webClipBtn, "click", () => this.openWebClipper());
 
     const inputWrapper = inputContainer.createDiv({ cls: "ba-input-wrapper" });
 
@@ -204,22 +209,22 @@ export class ChatView extends ItemView {
     // 현재 노트 첨부 버튼
     const attachBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.attachNote } });
     setIcon(attachBtn, "file-plus");
-    this.registerDomEvent(attachBtn, "click", () => this.attachCurrentNote());
+    this.uiEvents.registerDomEvent(attachBtn, "click", () => this.attachCurrentNote());
 
     // 파일 검색 첨부 버튼
     const searchBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.searchFile } });
     setIcon(searchBtn, "search");
-    this.registerDomEvent(searchBtn, "click", () => this.openFileSearchModal());
+    this.uiEvents.registerDomEvent(searchBtn, "click", () => this.openFileSearchModal());
 
     // 파일 첨부 버튼 (이미지, PDF, XLSX 등)
     const clipBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn", attr: { "aria-label": this.t.attachFile } });
     setIcon(clipBtn, "paperclip");
-    this.registerDomEvent(clipBtn, "click", () => this.openBinaryFileAttach());
+    this.uiEvents.registerDomEvent(clipBtn, "click", () => this.openBinaryFileAttach());
 
     // 웹 서치 토글 버튼
     this.webSearchBtn = toolbarLeft.createDiv({ cls: "ba-toolbar-btn ba-web-search-btn", attr: { "aria-label": this.t.webSearch } });
     setIcon(this.webSearchBtn, "globe");
-    this.registerDomEvent(this.webSearchBtn, "click", () => this.toggleWebSearch());
+    this.uiEvents.registerDomEvent(this.webSearchBtn, "click", () => this.toggleWebSearch());
 
     // 툴바 오른쪽 (링 + 전송/중지)
     const toolbarRight = toolbar.createDiv({ cls: "ba-toolbar-right" });
@@ -273,10 +278,10 @@ export class ChatView extends ItemView {
     setIcon(this.stopBtn, "square");
 
     // 이벤트
-    this.registerDomEvent(this.sendBtn, "click", () => this.handleSend());
-    this.registerDomEvent(this.stopBtn, "click", () => this.handleStop());
+    this.uiEvents.registerDomEvent(this.sendBtn, "click", () => this.handleSend());
+    this.uiEvents.registerDomEvent(this.stopBtn, "click", () => this.handleStop());
 
-    this.registerDomEvent(this.inputEl, "keydown", (e: KeyboardEvent) => {
+    this.uiEvents.registerDomEvent(this.inputEl, "keydown", (e: KeyboardEvent) => {
       // 한글 등 IME 조합 중에는 Enter 무시
       if (e.isComposing || e.keyCode === 229) return;
       // Enter 단독: 전송, Shift+Enter: 줄바꿈
@@ -288,14 +293,14 @@ export class ChatView extends ItemView {
     });
 
     // 자동 높이 조절
-    this.registerDomEvent(this.inputEl, "input", () => {
+    this.uiEvents.registerDomEvent(this.inputEl, "input", () => {
       this.inputEl.style.height = "auto";
       this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 200) + "px";
       this.updateContextRing();
     });
 
     // Escape로 스트리밍 중지
-    this.registerDomEvent(this.containerEl, "keydown", (e: KeyboardEvent) => {
+    this.uiEvents.registerDomEvent(this.containerEl, "keydown", (e: KeyboardEvent) => {
       if (e.key === "Escape" && this.isGenerating) {
         e.preventDefault();
         this.handleStop();
@@ -303,7 +308,7 @@ export class ChatView extends ItemView {
     });
 
     // 파일 열기 이벤트 → 자동 첨부
-    this.registerEvent(
+    this.uiEvents.registerEvent(
       this.app.workspace.on("file-open", (file) => {
         if (file && this.plugin.settings.autoAttachActiveNote) {
           this.autoAttachFile(file.path);
@@ -313,7 +318,7 @@ export class ChatView extends ItemView {
 
     // 탭 전환(active-leaf-change) 이벤트 → 자동 첨부
     // file-open은 새로 열 때만 발생하므로, 이미 열린 탭 클릭 시에도 감지
-    this.registerEvent(
+    this.uiEvents.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         if (!this.plugin.settings.autoAttachActiveNote) return;
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -338,17 +343,17 @@ export class ChatView extends ItemView {
     this.updateMcpIndicator();
 
     // 드래그 앤 드롭 파일 첨부
-    this.registerDomEvent(inputWrapper, "dragover", (e: DragEvent) => {
+    this.uiEvents.registerDomEvent(inputWrapper, "dragover", (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.addClass("ba-drag-over");
     });
-    this.registerDomEvent(inputWrapper, "dragleave", (e: DragEvent) => {
+    this.uiEvents.registerDomEvent(inputWrapper, "dragleave", (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.removeClass("ba-drag-over");
     });
-    this.registerDomEvent(inputWrapper, "drop", async (e: DragEvent) => {
+    this.uiEvents.registerDomEvent(inputWrapper, "drop", async (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       inputWrapper.removeClass("ba-drag-over");
@@ -360,7 +365,7 @@ export class ChatView extends ItemView {
     });
 
     // 클립보드 붙여넣기 (스크린샷 등)
-    this.registerDomEvent(this.inputEl, "paste", async (e: ClipboardEvent) => {
+    this.uiEvents.registerDomEvent(this.inputEl, "paste", async (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const item of Array.from(items)) {
@@ -381,7 +386,7 @@ export class ChatView extends ItemView {
     const chevron = modelBtn.createDiv({ cls: "ba-model-chevron" });
     setIcon(chevron, "chevron-down");
 
-    this.registerDomEvent(modelBtn, "click", () => this.openModelPicker());
+    this.uiEvents.registerDomEvent(modelBtn, "click", () => this.openModelPicker());
 
     // 입력창에도 폰트 크기 적용
     this.applyFontSize();
@@ -984,6 +989,7 @@ export class ChatView extends ItemView {
   // ============================================
 
   private async autoAttachFile(path: string): Promise<void> {
+      const version = ++this.autoAttachVersion;
       // 이전 자동 첨부 파일만 제거 (수동 첨부는 유지)
       if (this.autoAttachedPath && this.autoAttachedPath !== path) {
         // 수동 첨부에도 포함된 경우 제거하지 않음
@@ -994,15 +1000,25 @@ export class ChatView extends ItemView {
         }
       }
       this.autoAttachedPath = path;
-      await this.addFileContext(path, false);
+      await this.addFileContext(path, false, version);
     }
 
-  private async addFileContext(path: string, manual = true): Promise<void> {
+  private async addFileContext(
+    path: string,
+    manual = true,
+    autoAttachVersion?: number
+  ): Promise<void> {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (!file || !(file instanceof TFile)) return;
       if (!isAllowedTextExtension(file.extension)) return;
 
       const content = await this.app.vault.cachedRead(file as any);
+      if (
+        !manual &&
+        (autoAttachVersion !== this.autoAttachVersion || this.autoAttachedPath !== path)
+      ) {
+        return;
+      }
       this.attachedFiles.set(path, content);
       if (manual) {
         this.manuallyAttachedPaths.add(path);
@@ -1016,6 +1032,7 @@ export class ChatView extends ItemView {
       this.manuallyAttachedPaths.delete(path);
       if (this.autoAttachedPath === path) {
         this.autoAttachedPath = null;
+        this.autoAttachVersion++;
       }
       this.renderFileChips();
     }
@@ -1026,6 +1043,7 @@ export class ChatView extends ItemView {
       this.attachedBinaryFiles.clear();
       this.manuallyAttachedPaths.clear();
       this.autoAttachedPath = null;
+      this.autoAttachVersion++;
       this.renderFileChips();
     }
 

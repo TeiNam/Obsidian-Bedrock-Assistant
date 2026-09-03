@@ -7,6 +7,8 @@ import {
   PAST_RETROSPECTIVE_DAYS,
   PAST_RETROSPECTIVE_MAX_CHARS,
   buildTodoPath,
+  removeExistingRetrospective,
+  replaceOrAppendRetrospective,
 } from "./retrospective-service";
 import { buildTodoDocPath } from "./planner-paths";
 
@@ -62,6 +64,36 @@ describe("extractRetrospectiveSection: 회고 섹션만 뽑아낸다", () => {
     // 사용자가 언어 설정을 바꿔도 과거 회고를 잃지 않아야 한다.
     const content = "## 📝 Daily Retrospective\nWrote in English.\n";
     expect(extractRetrospectiveSection(content, LANG)).toBe("Wrote in English.");
+  });
+});
+
+describe("회고 교체: 뒤쪽 섹션 보존", () => {
+  const content = [
+    "# To-Do",
+    "",
+    AI_HEADING,
+    "이전 회고",
+    "",
+    "## 📌 메모",
+    "보존할 내용",
+    "",
+  ].join("\n");
+
+  it("프롬프트용 제거는 회고만 빼고 뒤쪽 섹션을 남긴다", () => {
+    expect(removeExistingRetrospective(content, LANG)).toContain("## 📌 메모\n보존할 내용");
+    expect(removeExistingRetrospective(content, LANG)).not.toContain("이전 회고");
+  });
+
+  it("새 회고로 교체해도 뒤쪽 섹션을 남긴다", () => {
+    const out = replaceOrAppendRetrospective(
+      content,
+      `${AI_HEADING}\n새 회고`,
+      LANG,
+    );
+
+    expect(out).toContain(`${AI_HEADING}\n새 회고`);
+    expect(out).toContain("## 📌 메모\n보존할 내용");
+    expect(out).not.toContain("이전 회고");
   });
 });
 

@@ -873,7 +873,7 @@ export async function archiveOldTodos(
     const dest = normalizePath(`${archiveFolder}/${entry.name}`);
     // 이동 대상에 이미 같은 이름의 항목이 있으면 건너뜀
     if (app.vault.getAbstractFileByPath(dest)) continue;
-    await app.vault.rename(entry, dest);
+    await app.fileManager.renameFile(entry, dest);
     movedCount++;
   }
 
@@ -882,4 +882,3 @@ export async function archiveOldTodos(
     new Notice(t.todoArchived(movedCount));
   }
 }
-

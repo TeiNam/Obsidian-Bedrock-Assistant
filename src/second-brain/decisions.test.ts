@@ -65,12 +65,22 @@ describe("normalizeDecision", () => {
     ).toBe("superseded");
   });
 
-  it("형식이 틀린 날짜는 빈 문자열로 둔다(추측하지 않는다)", () => {
-    for (const bad of ["2026-9-1", "지난달", "2026/09/01", 20260901]) {
+  it("형식이 틀리거나 실제로 존재하지 않는 날짜는 빈 문자열로 둔다", () => {
+    for (const bad of [
+      "2026-9-1",
+      "지난달",
+      "2026/09/01",
+      20260901,
+      "2026-02-29",
+      "2026-04-31",
+    ]) {
       expect(normalizeDecision({ decision: "d", sources: ["a.md"], due: bad })?.due).toBe("");
     }
     expect(normalizeDecision({ decision: "d", sources: ["a.md"], due: "2026-09-30" })?.due).toBe(
       "2026-09-30"
+    );
+    expect(normalizeDecision({ decision: "d", sources: ["a.md"], due: "2028-02-29" })?.due).toBe(
+      "2028-02-29"
     );
   });
 
@@ -677,6 +687,26 @@ describe("parseLedgerDetailed — 보존", () => {
     expect(out.unparsed[0]).toContain("어떤 결정");
   });
 
+  it("다른 상위 섹션으로 넘어가면 이전 상태를 이어받지 않는다", () => {
+    const md = [
+      "### 열림 (1)",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| A | 이유 | — | — | — | [[a]] |",
+      "",
+      "## 부록",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| B | 이유 | — | — | — | [[b]] |",
+    ].join("\n");
+
+    const out = parseLedgerDetailed(md);
+
+    expect(out.entries.map((entry) => entry.decision)).toEqual(["A"]);
+    expect(out.unparsed).toHaveLength(1);
+    expect(out.unparsed[0]).toContain("| B |");
+  });
+
   it("헤더와 구분선은 보존 대상이 아니다", () => {
     // formatLedger가 다시 만든다.
     const md = [
@@ -935,6 +965,24 @@ describe("parseLedgerDetailed — 칸 수", () => {
     expect(out.entries).toEqual([]);
     expect(out.unparsed).toHaveLength(1);
     expect(out.unparsed[0]).toContain("내가 추가한 열");
+  });
+
+  it("짝수 개 백슬래시 뒤 파이프는 칸 구분자로 읽는다", () => {
+    const out = parseLedgerDetailed(
+      rowWith(["A\\\\", "이유", "김", "2026-09-03", "—", "[[a]]"])
+    );
+
+    expect(out.entries[0]).toMatchObject({
+      decision: "A\\",
+      rationale: "이유",
+      owner: "김",
+      due: "2026-09-03",
+    });
+  });
+
+  it("백슬래시 바로 뒤 파이프가 있는 값도 포맷 후 되읽을 수 있다", () => {
+    const original = decision({ decision: "A\\|B" });
+    expect(parseLedger(formatLedger([original]))[0].decision).toBe(original.decision);
   });
 });
 
