@@ -268,3 +268,34 @@ describe("formatAnchorLink — 대괄호", () => {
     expect(formatAnchorLink("Notes/a", "결론[초안]")).toBeNull();
   });
 });
+
+describe("parseNoteLinks — 외부 링크", () => {
+  it("URI 스킴이 있는 목적지는 노트로 보지 않는다", () => {
+    // 사용자가 생성 블록에 외부 링크를 적어두면 그것까지 노트 대상으로 모아
+    // 다음 병합에서 `[[https://...]]`로 다시 써버린다.
+    for (const dest of [
+      "https://example.com",
+      "http://example.com/a.md",
+      "mailto:a@b.c",
+      "obsidian://open?vault=x",
+      "//example.com/a.md",
+    ]) {
+      expect(parseNoteLinks(`[문서](${dest})`)).toEqual([]);
+    }
+  });
+
+  it("볼트 경로는 그대로 읽는다", () => {
+    expect(parseNoteLinks("[문서](Notes/a.md)")[0].target).toBe("Notes/a.md");
+    expect(parseNoteLinks("[문서](./Notes/a.md)")[0].target).toBe("./Notes/a.md");
+  });
+});
+
+describe("formatNoteLink — 대상의 대괄호", () => {
+  it("대상에 대괄호가 있으면 마크다운으로 물러난다", () => {
+    // `[[Notes/a[b]]]`는 어디까지가 링크인지 정해지지 않아 되읽지 못한다.
+    const link = formatNoteLink("Notes/a[b]", "제목");
+
+    expect(link).toBe("[제목](Notes/a%5Bb%5D.md)");
+    expect(parseNoteLinks(link)[0].target).toBe("Notes/a[b].md");
+  });
+});

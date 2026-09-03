@@ -387,7 +387,10 @@ export function parseLedgerDetailed(markdown: string): LedgerParseResult {
     // 칸 내용으로 판정하면 그런 오인이 없다.
     if (isTableFurniture(trimmed)) continue;
 
-    if (rawCells.length < 5) {
+    // 5칸(대체 칸 없음) 또는 6칸(정본)만 항목으로 읽는다. 사용자가 일곱 번째 열을
+    // 추가했으면 그 내용을 이해할 수 없고, 정상 행으로 처리하면 다음 승인에서
+    // formatLedger가 표를 다시 쓸 때 그 열이 조용히 삭제된다.
+    if (rawCells.length < 5 || rawCells.length > 6) {
       unparsed.push(line);
       continue;
     }

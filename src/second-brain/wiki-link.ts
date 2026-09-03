@@ -8,7 +8,12 @@
 // 생성 블록에 링크를 쓰는 곳이 여러 곳(링크 제안·중복 후보·지식 공백·위키 인덱스)이라
 // 각자 문자열을 보간하면 한 곳만 고치고 나머지는 계속 깨진 링크를 쓴다. 여기서 한 번 정한다.
 
-/** 대상에 있으면 위키링크로 쓸 수 없는 문자. `#`는 앵커, `|`는 별칭 구분자가 된다. */
+/**
+ * 대상에 있으면 위키링크로 쓸 수 없는 문자. `#`는 앵커, `|`는 별칭 구분자가 된다.
+ *
+ * 대괄호(UNSAFE_ALIAS)도 대상에서 같은 문제를 일으킨다 — `[[Notes/a[b]]]`는 어디까지가
+ * 링크인지 정해지지 않아 parseNoteLinks가 되읽지 못한다. 두 검사를 함께 쓴다.
+ */
 const UNSAFE_TARGET = /[#|]/;
 
 /**
@@ -36,7 +41,7 @@ export function pathWithoutExtension(path: string): string {
 export function formatNoteLink(target: string, alias = ""): string {
   const trimmedAlias = alias.trim();
 
-  if (UNSAFE_TARGET.test(target) || UNSAFE_ALIAS.test(trimmedAlias)) {
+  if (UNSAFE_TARGET.test(target) || UNSAFE_ALIAS.test(target) || UNSAFE_ALIAS.test(trimmedAlias)) {
     const label = sanitizeLabel(trimmedAlias === "" ? target : trimmedAlias);
     return `[${label}](${encodeLinkPath(target)}.md)`;
   }
@@ -135,11 +140,23 @@ export function parseNoteLinks(text: string): ParsedNoteLink[] {
   ];
   for (const m of markdownLinks) {
     const [pathPart] = splitFragment(m[2]);
+    // 외부 URL은 노트가 아니다. 사용자가 생성 블록에 `[문서](https://...)`를 적어두면
+    // 그것까지 노트 대상으로 모아 다음 병합에서 `[[https://...]]`로 다시 써버린다.
+    if (hasUriScheme(pathPart)) continue;
     const target = safeDecodeUri(pathPart);
     if (target.trim() !== "") out.push({ target, alias: m[1].trim() });
   }
 
   return out;
+}
+
+/**
+ * 목적지에 URI 스킴이 있는지(`https:`, `mailto:`, `obsidian:` 등).
+ *
+ * 프로토콜 상대 URL(`//example.com`)도 외부로 본다. 볼트 경로는 스킴을 가질 수 없다.
+ */
+function hasUriScheme(dest: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(dest) || dest.startsWith("//");
 }
 
 /** 헤딩 앵커를 뗀 부분. */

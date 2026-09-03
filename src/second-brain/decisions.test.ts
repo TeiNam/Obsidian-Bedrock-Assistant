@@ -901,3 +901,39 @@ describe("decisionKey — 등호", () => {
     expect(out).toHaveLength(2);
   });
 });
+
+describe("parseLedgerDetailed — 칸 수", () => {
+  /** 지정한 칸으로 원장 표 한 줄을 만든다. */
+  function rowWith(cells: string[]): string {
+    return [
+      "### 열림 (1)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      `| ${cells.join(" | ")} |`,
+    ].join("\n");
+  }
+
+  it("6칸은 정상 항목이다", () => {
+    const out = parseLedgerDetailed(rowWith(["결정A", "이유", "—", "—", "—", "[[a]]"]));
+    expect(out.entries).toHaveLength(1);
+    expect(out.unparsed).toEqual([]);
+  });
+
+  it("5칸도 정상 항목이다(대체 칸 없음)", () => {
+    const out = parseLedgerDetailed(rowWith(["결정A", "이유", "—", "—", "[[a]]"]));
+    expect(out.entries).toHaveLength(1);
+  });
+
+  it("7칸 이상은 원문으로 보존한다", () => {
+    // 사용자가 추가한 열을 이해할 수 없다. 정상 행으로 처리하면 다음 승인에서
+    // formatLedger가 표를 다시 쓸 때 그 열이 조용히 삭제된다.
+    const out = parseLedgerDetailed(
+      rowWith(["결정A", "이유", "—", "—", "—", "[[a]]", "내가 추가한 열"])
+    );
+
+    expect(out.entries).toEqual([]);
+    expect(out.unparsed).toHaveLength(1);
+    expect(out.unparsed[0]).toContain("내가 추가한 열");
+  });
+});

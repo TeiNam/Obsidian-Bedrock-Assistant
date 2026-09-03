@@ -229,21 +229,33 @@ export function buildCitationIndex(knownPaths: Iterable<string>): {
 }
 
 /**
- * 인용 대상이 실재하는 노트를 가리키는지 판정한다.
+ * 인용 대상이 실재하는 노트를 가리키는지 판정한다 — **옵시디언의 해석 규칙을 따른다.**
  *
- * 폴더가 붙은 대상(`[[Wrong/Agent LLMs]]`)은 **경로로만** 판정한다. basename으로 폴백하면
- * 폴더가 틀린 링크도 통과하는데, 옵시디언은 그 링크를 열지 못한다 — 실제로 깨진 링크를
- * "확인됨"으로 보고하는 것이 검증의 목적과 정반대다.
+ *  - 전체 경로 일치(확장자는 있어도 없어도 된다)
+ *  - 폴더가 붙은 대상은 **경로 접미사** 일치도 인정한다. 볼트에 `Archive/Projects/Note.md`가
+ *    있으면 옵시디언에서 `[[Projects/Note]]`는 유효한 링크다. 전체 경로만 요구하면 실제로
+ *    열리는 인용에 거짓 경고가 붙는다.
+ *  - 접미사는 **세그먼트 경계**에서만 맞아야 한다. 그러지 않으면 `[[ojects/Note]]`도 통과한다.
+ *  - 이름만 쓴 대상은 볼트 어디서든 찾는다(옵시디언과 같다).
  *
- * 이름만 쓴 대상(`[[Agent LLMs]]`)은 옵시디언이 볼트 어디서든 찾으므로 basename으로 본다.
+ * 폴더가 틀린 대상(`[[Wrong/Agent LLMs]]`)은 여전히 걸린다 — `Wrong/Agent LLMs`는
+ * `Projects/Agent LLMs`의 접미사가 아니다.
  */
 function resolvesToNote(
   target: string,
   index: { paths: Set<string>; basenames: Set<string> }
 ): boolean {
-  if (index.paths.has(target.toLowerCase())) return true;
-  // 경로 구분자가 있으면 그 경로가 맞아야 한다.
-  if (target.includes("/")) return false;
+  const lower = target.toLowerCase();
+  if (index.paths.has(lower)) return true;
+
+  if (target.includes("/")) {
+    const needle = `/${lower.replace(/\.md$/i, "")}`;
+    for (const known of index.paths) {
+      if (known.endsWith(needle)) return true;
+    }
+    return false;
+  }
+
   return index.basenames.has(basenameNoExt(target).toLowerCase());
 }
 

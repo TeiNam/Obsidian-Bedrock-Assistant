@@ -568,3 +568,39 @@ describe("extractCitations — 인코딩된 경로", () => {
     expect(out).toEqual([]);
   });
 });
+
+// ============================================
+// 옵시디언의 경로 접미사 해석
+// ============================================
+/**
+ * 볼트에 `Archive/Projects/Note.md`가 있으면 옵시디언에서 `[[Projects/Note]]`는 유효한
+ * 링크다. 전체 경로만 요구하면 실제로 열리는 인용에 거짓 경고가 붙는다.
+ */
+describe("findUnresolvedCitations — 경로 접미사", () => {
+  const known = ["Archive/Projects/Note.md", "Projects/Agent LLMs.md"];
+
+  it("경로 접미사로 맞으면 통과한다", () => {
+    expect(findUnresolvedCitations(extractCitations("[[Projects/Note]]"), known)).toEqual([]);
+  });
+
+  it("전체 경로도 통과한다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[Archive/Projects/Note]]"), known)
+    ).toEqual([]);
+  });
+
+  it("세그먼트 경계가 아닌 접미사는 통과하지 않는다", () => {
+    // `ojects/Note`는 문자열로는 접미사지만 경로로는 아니다.
+    expect(findUnresolvedCitations(extractCitations("[[ojects/Note]]"), known)).toHaveLength(1);
+  });
+
+  it("폴더가 틀린 인용은 여전히 걸린다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[Wrong/Agent LLMs]]"), known)
+    ).toHaveLength(1);
+  });
+
+  it("확장자가 붙은 접미사도 통과한다", () => {
+    expect(findUnresolvedCitations(extractCitations("[[Projects/Note.md]]"), known)).toEqual([]);
+  });
+});
