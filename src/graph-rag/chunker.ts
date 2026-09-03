@@ -140,7 +140,11 @@ function extractHeadingPositions(body: string): Array<{ offset: number; text: st
   const out: Array<{ offset: number; text: string }> = [];
   // 줄 시작의 # 1~6개 + 공백 + 제목. 코드펜스 안의 #은 헤딩이 아니지만, 잘못 잡아도
   // 인용 앵커가 어긋나는 정도이므로 펜스 추적까지 하지 않는다.
-  const pattern = /^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+  //
+  // 닫는 ATX 표식(`## 제목 ##`)은 **앞에 공백이 있을 때만** 벗긴다. CommonMark 규약이
+  // 그렇고, 그러지 않으면 `## C#`의 제목이 `C`가 되어 검색 결과가 존재하지 않는 앵커를
+  // 제안한다(`C#`, `F#`, `## 태그#`가 전부 해당된다).
+  const pattern = /^[ \t]{0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/gm;
   for (const m of body.matchAll(pattern)) {
     if (m.index === undefined) continue;
     const text = m[2].trim();

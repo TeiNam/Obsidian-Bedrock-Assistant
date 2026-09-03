@@ -98,6 +98,19 @@ function looksLikeUrl(target: string): boolean {
  *
  * 같은 대상이 여러 번 인용되면 한 번만 반환한다(대상 기준 중복 제거).
  */
+/**
+ * 대상이 마크다운이 아닌 파일을 가리키는지.
+ *
+ * 확장자가 있고 그것이 `.md`가 아니면 첨부 파일로 본다. 확장자가 없으면 노트다 —
+ * 옵시디언 위키링크는 보통 확장자를 생략한다.
+ */
+function isNonMarkdownFile(target: string): boolean {
+  const base = target.split("/").pop() ?? target;
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return false;
+  return base.slice(dot).toLowerCase() !== ".md";
+}
+
 export function extractCitations(markdown: string): Citation[] {
   const text = stripCode(markdown);
   const seen = new Set<string>();
@@ -118,8 +131,15 @@ export function extractCitations(markdown: string): Citation[] {
   // 내부에 `[`를 허용하지 않는다. 허용하면 `[[[[노트]]` 같은 입력에서 첫 `[[`부터
   // 매칭돼 대상이 `[[노트`가 되고, 그 대상은 인덱스에서 찾을 수 없어 거짓 경고가 된다.
   // 배제하면 정규식이 안쪽 `[[`부터 다시 매칭해 올바른 대상을 얻는다.
-  for (const m of text.matchAll(/\[\[([^[\]\n]+)\]\]/g)) {
-    add(m[0], splitTarget(m[1]));
+  //
+  // 앞에 `!`가 붙은 임베드에서 **비마크다운 파일**은 건너뛴다. `![[Images/chart.png]]`는
+  // 노트 인용이 아니라 첨부 임베드인데, 존재 판정은 마크다운 파일 목록으로만 하므로
+  // 실제로 그 이미지가 있어도 항상 거짓 경고가 된다.
+  for (const m of text.matchAll(/(!?)\[\[([^[\]\n]+)\]\]/g)) {
+    const isEmbed = m[1] === "!";
+    const citation = splitTarget(m[2]);
+    if (isEmbed && isNonMarkdownFile(citation.target)) continue;
+    add(m[0], citation);
   }
 
   // 2) 마크다운 링크 중 .md 대상
@@ -162,13 +182,20 @@ export function buildCitationIndex(knownPaths: Iterable<string>): {
 
 /**
  * 인용 대상이 실재하는 노트를 가리키는지 판정한다.
- * 전체 경로 / 확장자 뗀 경로 / basename 세 가지로 찾아본다.
+ *
+ * 폴더가 붙은 대상(`[[Wrong/Agent LLMs]]`)은 **경로로만** 판정한다. basename으로 폴백하면
+ * 폴더가 틀린 링크도 통과하는데, 옵시디언은 그 링크를 열지 못한다 — 실제로 깨진 링크를
+ * "확인됨"으로 보고하는 것이 검증의 목적과 정반대다.
+ *
+ * 이름만 쓴 대상(`[[Agent LLMs]]`)은 옵시디언이 볼트 어디서든 찾으므로 basename으로 본다.
  */
 function resolvesToNote(
   target: string,
   index: { paths: Set<string>; basenames: Set<string> }
 ): boolean {
   if (index.paths.has(target.toLowerCase())) return true;
+  // 경로 구분자가 있으면 그 경로가 맞아야 한다.
+  if (target.includes("/")) return false;
   return index.basenames.has(basenameNoExt(target).toLowerCase());
 }
 

@@ -932,6 +932,8 @@ export default class GeminiAssistantPlugin extends Plugin {
       let links = 0;
       /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
       const touched = new Set<string>();
+      /** 링크가 새로 향한 노트. 본문은 그대로이므로 백링크만 갱신한다. */
+      const linkTargets = new Set<string>();
 
       for (const [sourcePath, group] of grouped) {
         const file = this.app.vault.getAbstractFileByPath(sourcePath);
@@ -956,16 +958,21 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (!wrote) continue;
         links += added;
         touched.add(sourcePath);
-        // 링크 **대상**도 재색인한다. backlinks는 대상 엔트리에 역산해 저장되므로,
-        // 소스만 갱신하면 대상의 mtime은 그대로여서 증분 색인도 건너뛴다 — 대상에서
-        // 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
-        for (const s of group) touched.add(s.targetPath);
+        // 링크 **대상**의 백링크도 갱신 대상이다. backlinks는 대상 엔트리에 역산해
+        // 저장되는데 대상의 mtime은 바뀌지 않으므로 indexFile이 즉시 반환한다 —
+        // 대상에서 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
+        for (const s of group) linkTargets.add(s.targetPath);
       }
 
-      // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
+      // 소스는 본문이 바뀌었으니 다시 색인한다(청크·임베딩이 달라진다).
       for (const path of touched) {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (file instanceof TFile) await this.indexer.indexFile(file);
+      }
+      // 대상은 본문이 그대로다. 링크 정보만 갱신하고 재임베딩하지 않는다 — 내용이 같은
+      // 노트를 다시 임베딩하는 것은 순수한 비용이다.
+      for (const path of linkTargets) {
+        if (!touched.has(path)) this.indexer.refreshGraphMetadata(path);
       }
 
       return { notes: grouped.size, links };

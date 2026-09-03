@@ -472,8 +472,10 @@ export class ToolExecutor {
   private formatSearchItem(item: GraphRagSearchItem, rank: number): string {
     // 통합 점수를 0.0~1.0 → 백분율로 표현 (Req 7.2)
     const scorePercent = (item.combinedScore * 100).toFixed(1);
-    // 발췌는 최대 500자로 제한 (Req 7.2)
-    const excerpt = item.excerpt.slice(0, 500);
+    // 적중 청크 본문을 우선 보여준다. item.excerpt는 노트 앞 500자로 고정이라,
+    // 아래 인용 앵커가 뒤쪽 절을 가리키는데 본문은 도입부인 모순이 생긴다 — 모델이
+    // 앵커의 근거를 받지 못한다.
+    const excerpt = (item.matchedText || item.excerpt).slice(0, 500);
 
     // Seed/Neighbor 구분 라벨 생성 (Req 7.3)
     let label: string;

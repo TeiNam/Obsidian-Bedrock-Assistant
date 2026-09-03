@@ -330,3 +330,77 @@ describe("중첩된 대괄호", () => {
     expect(extractCitations("[[ 열린 채로 끝")).toEqual([]);
   });
 });
+
+// ============================================
+// 폴더가 붙은 대상은 경로로만 판정
+// ============================================
+/**
+ * `[[Wrong/Agent LLMs]]`는 basename이 실재해도 옵시디언이 열지 못한다. basename으로
+ * 폴백하면 실제로 깨진 링크를 "확인됨"으로 보고하게 되고, 그건 검증의 목적과 정반대다.
+ */
+describe("findUnresolvedCitations — 폴더 지정 인용", () => {
+  const known = ["Projects/Agent LLMs.md"];
+
+  it("폴더가 틀린 인용을 경고한다", () => {
+    const out = findUnresolvedCitations(extractCitations("[[Wrong/Agent LLMs]]"), known);
+    expect(out.map((c) => c.target)).toEqual(["Wrong/Agent LLMs"]);
+  });
+
+  it("폴더가 맞는 인용은 통과한다", () => {
+    expect(findUnresolvedCitations(extractCitations("[[Projects/Agent LLMs]]"), known)).toEqual([]);
+  });
+
+  it("이름만 쓴 인용은 볼트 어디서든 찾는다", () => {
+    // 옵시디언이 그렇게 해석한다.
+    expect(findUnresolvedCitations(extractCitations("[[Agent LLMs]]"), known)).toEqual([]);
+  });
+
+  it("확장자가 붙은 전체 경로도 통과한다", () => {
+    expect(
+      findUnresolvedCitations(extractCitations("[[Projects/Agent LLMs.md]]"), known)
+    ).toEqual([]);
+  });
+});
+
+// ============================================
+// 첨부 임베드는 노트 인용이 아니다
+// ============================================
+/**
+ * 존재 판정은 마크다운 파일 목록으로만 한다. `![[Images/chart.png]]`를 노트 인용으로
+ * 뽑으면 실제로 그 이미지가 있어도 항상 거짓 경고가 붙는다.
+ */
+describe("extractCitations — 첨부 임베드", () => {
+  it("비마크다운 임베드를 인용으로 뽑지 않는다", () => {
+    for (const embed of [
+      "![[Images/chart.png]]",
+      "![[docs/spec.pdf]]",
+      "![[audio/note.mp3]]",
+      "![[data.xlsx]]",
+    ]) {
+      expect(extractCitations(embed)).toEqual([]);
+    }
+  });
+
+  it("노트 임베드는 여전히 인용으로 본다", () => {
+    // `![[노트]]`는 그 노트의 내용을 근거로 끌어온 것이므로 실재해야 한다.
+    expect(extractCitations("![[Projects/노트]]").map((c) => c.target)).toEqual([
+      "Projects/노트",
+    ]);
+    expect(extractCitations("![[Projects/노트.md]]").map((c) => c.target)).toEqual([
+      "Projects/노트.md",
+    ]);
+  });
+
+  it("임베드가 아닌 일반 링크는 확장자와 무관하게 인용이다", () => {
+    // `!`가 없으면 사용자가 그 파일을 근거로 제시한 것이다.
+    expect(extractCitations("[[Images/chart.png]]").map((c) => c.target)).toEqual([
+      "Images/chart.png",
+    ]);
+  });
+
+  it("점이 파일명에 없으면 노트로 본다", () => {
+    expect(extractCitations("![[폴더.이름/노트]]").map((c) => c.target)).toEqual([
+      "폴더.이름/노트",
+    ]);
+  });
+});

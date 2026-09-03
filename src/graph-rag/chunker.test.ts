@@ -327,3 +327,32 @@ describe("splitIntoChunkSlices — 출처 정보", () => {
     expect(slices[0].heading).toBeNull();
   });
 });
+
+// ============================================
+// 닫는 ATX 표식과 제목 안의 #
+// ============================================
+/**
+ * 닫는 표식(`## 제목 ##`)은 앞에 공백이 있을 때만 표식이다(CommonMark). 그러지 않으면
+ * `## C#`의 제목이 `C`가 되고, 검색 결과가 존재하지 않는 앵커를 제안한다.
+ */
+describe("헤딩 추출 — 제목 끝의 #", () => {
+  /** 각 절이 자기 청크를 갖도록 충분히 긴 본문을 만들고 heading을 모은다. */
+  function headings(secondHeading: string): (string | null)[] {
+    const filler = "가".repeat(400);
+    const body = `# 문서\n\n${filler}\n\n${secondHeading}\n\n${filler}\n`;
+    return splitIntoChunkSlices(body, { maxSize: 300, overlap: 0 }).map((s) => s.heading);
+  }
+
+  it("공백 없는 후행 #은 제목의 일부다", () => {
+    expect(headings("## C#")).toContain("C#");
+    expect(headings("## foo##")).toContain("foo##");
+  });
+
+  it("공백이 있는 닫는 표식은 벗긴다", () => {
+    expect(headings("## 제목 ##")).toContain("제목");
+  });
+
+  it("제목 중간의 #도 보존한다", () => {
+    expect(headings("## F# 과 C#")).toContain("F# 과 C#");
+  });
+});

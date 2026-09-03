@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { VaultIndexer } from "./vault-indexer";
 import { TFile } from "obsidian";
+import type { MetadataSource } from "./graph-rag/graph-extractor";
 
 // ============================================
 // 인덱스 수명주기 회귀 테스트 (교차 리뷰 2차)
@@ -135,5 +136,95 @@ describe("인덱싱 도중 삭제: 삭제된 노트가 부활하지 않는다", 
     file.stat = { ...file.stat, mtime: 2000 } as TFile["stat"];
     await indexer.indexFile(file);
     expect(indexer.size).toBe(1);
+  });
+});
+
+// ============================================
+// 그래프 메타데이터만 갱신
+// ============================================
+/**
+ * A에 `[[B]]`를 추가하면 B의 mtime은 바뀌지 않는다. `indexFile`은 `lastModified >= mtime`
+ * 이면 즉시 반환하므로 B의 backlinks가 영구히 낡고, B에서 시작한 그래프 순회와 고아·스텁
+ * 판정이 새 링크를 계속 못 본다. 그리고 B의 본문은 그대로이므로 재임베딩은 낭비다.
+ */
+describe("VaultIndexer.refreshGraphMetadata", () => {
+  /** A → B 링크가 이미 해석된 MetadataSource. */
+  function makeSource(): MetadataSource {
+    return {
+      resolvedLinks: { "A.md": { "B.md": 1 } },
+      getBacklinks: (path: string) => (path === "B.md" ? ["A.md"] : []),
+      getFileCache: () => ({ tags: ["#work"], frontmatter: { k: "v" } }),
+      fileExists: () => true,
+    } as unknown as MetadataSource;
+  }
+
+  /** 링크 정보가 비어 있는 기존 엔트리를 심는다. */
+  function seed(indexer: VaultIndexer): void {
+    indexer.deserialize(
+      JSON.stringify({
+        schemaVersion: 2,
+        entries: [
+          {
+            path: "B.md",
+            embedding: [1, 2, 3],
+            lastModified: 5000,
+            title: "B",
+            excerpt: "발췌",
+            searchText: "b 본문",
+            chunks: [{ index: 0, text: "본문", embedding: [1, 2, 3], charStart: 0 }],
+            outlinks: [],
+            backlinks: [],
+            tags: [],
+            frontmatter: {},
+          },
+        ],
+      })
+    );
+  }
+
+  it("백링크·태그·프론트매터를 다시 뽑는다", () => {
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries().find((e) => e.path === "B.md");
+    expect(entry?.backlinks).toEqual(["A.md"]);
+    expect(entry?.tags).toEqual(["work"]);
+    expect(entry?.frontmatter).toEqual({ k: "v" });
+  });
+
+  it("임베딩·청크·mtime은 건드리지 않는다", () => {
+    // 본문이 그대로인 노트를 다시 임베딩하는 것은 순수한 비용이다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("B.md");
+
+    const entry = indexer.getEntries().find((e) => e.path === "B.md");
+    expect(entry?.embedding).toEqual([1, 2, 3]);
+    expect(entry?.chunks?.[0].embedding).toEqual([1, 2, 3]);
+    expect(entry?.lastModified).toBe(5000);
+  });
+
+  it("인덱스에 없는 노트는 만들지 않는다", () => {
+    // 임베딩 없는 반쪽 엔트리를 만들면 검색에서 비교 불가 후보로 섞인다.
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    indexer.setMetadataSource(makeSource());
+
+    indexer.refreshGraphMetadata("없는노트.md");
+
+    expect(indexer.size).toBe(0);
+  });
+
+  it("metadataSource가 없으면 아무것도 하지 않는다", () => {
+    const indexer = new VaultIndexer(makeApp([], new Map()), makeClient());
+    seed(indexer);
+
+    indexer.refreshGraphMetadata("B.md");
+
+    expect(indexer.getEntries()[0].backlinks).toEqual([]);
   });
 });

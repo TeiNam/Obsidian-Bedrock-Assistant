@@ -19,6 +19,7 @@ import {
   runReconcile,
   runReconcileDetailed,
   applyReconciliations,
+  mergeReconcileBlock,
   type Contradiction,
 } from "./reconcile";
 import { buildAiFirstNote, parseAiFirstNote } from "./ai-first-format";
@@ -818,5 +819,111 @@ describe("applyReconciliations — 노트 단위 병합", () => {
 
     const summary = await applyReconciliations(ctx, [], "2026-09-03");
     expect(summary).toContain("반영할 대상 노트가 없습니다");
+  });
+});
+
+// ============================================
+// 실행 사이의 누적
+// ============================================
+/**
+ * `upsertGeneratedBlock`은 Generated_Region 전체를 교체한다. 이번 승인분만으로 블록을
+ * 만들면 다른 실행에서 승인한 정정이 조용히 사라진다 — 사용자가 명시적으로 승인한 것을
+ * 다음 승인이 지우는 것이므로 합집합으로 다시 쓴다.
+ */
+describe("mergeReconcileBlock", () => {
+  it("기존 한 건 + 새 한 건 → 번호 목록", () => {
+    expect(mergeReconcileBlock("첫 정정", ["둘째 정정"])).toBe("1. 첫 정정\n2. 둘째 정정");
+  });
+
+  it("기존 번호 목록에 덧붙인다", () => {
+    expect(mergeReconcileBlock("1. 가\n2. 나", ["다"])).toBe("1. 가\n2. 나\n3. 다");
+  });
+
+  it("한 건만 있으면 번호를 붙이지 않는다", () => {
+    expect(mergeReconcileBlock(null, ["하나"])).toBe("하나");
+  });
+
+  it("같은 문구를 다시 승인해도 중복되지 않는다", () => {
+    expect(mergeReconcileBlock("하나", ["하나"])).toBe("하나");
+    expect(mergeReconcileBlock("1. 가\n2. 나", ["가", "나"])).toBe("1. 가\n2. 나");
+  });
+
+  it("여러 줄짜리 정정안은 한 건으로 본다", () => {
+    // 번호 목록이 아닌 블록은 쪼개지 않는다 — 쪼개면 문장이 조각난다.
+    const multi = "첫 줄\n둘째 줄";
+    expect(mergeReconcileBlock(multi, [])).toBe(multi);
+    expect(mergeReconcileBlock(multi, ["새 정정"])).toBe(`1. ${multi}\n2. 새 정정`);
+  });
+
+  it("빈 입력은 빈 문자열이다", () => {
+    expect(mergeReconcileBlock(null, [])).toBe("");
+    expect(mergeReconcileBlock(null, ["", "   "])).toBe("");
+  });
+
+  it("여러 번 적용해도 멱등하다", () => {
+    const once = mergeReconcileBlock(null, ["가", "나"]);
+    expect(mergeReconcileBlock(once, ["가", "나"])).toBe(once);
+  });
+});
+
+describe("applyReconciliations — 실행 사이 누적", () => {
+  it("다른 실행에서 승인한 정정이 남는다", async () => {
+    const file = new TFile();
+    file.path = "A.md";
+    let content = "# 노트\n\n본문.\n";
+    const ctx = {
+      app: {
+        vault: {
+          read: async () => content,
+          process: async (_f: TFile, fn: (c: string) => string) => {
+            content = fn(content);
+            return content;
+          },
+          getAbstractFileByPath: () => file,
+        },
+      },
+    } as unknown as Parameters<typeof applyReconciliations>[0];
+
+    // 1차 실행
+    await applyReconciliations(
+      ctx,
+      [{ notePaths: ["A.md"], statements: [], suggestion: "1차 정정" }],
+      "2026-09-03"
+    );
+    // 2차 실행 — 다른 정정안
+    await applyReconciliations(
+      ctx,
+      [{ notePaths: ["A.md"], statements: [], suggestion: "2차 정정" }],
+      "2026-09-04"
+    );
+
+    expect(content).toContain("1차 정정");
+    expect(content).toContain("2차 정정");
+    expect(content).toContain("본문.");
+    // learned_at은 최신 시점이다.
+    expect(content).toContain("learned_at: 2026-09-04");
+  });
+
+  it("같은 정정안을 다시 승인하면 쓰지 않는다", async () => {
+    const file = new TFile();
+    file.path = "A.md";
+    let content = "# 노트\n";
+    const process = vi.fn(async (_f: TFile, fn: (c: string) => string) => {
+      content = fn(content);
+      return content;
+    });
+    const ctx = {
+      app: {
+        vault: { read: async () => content, process, getAbstractFileByPath: () => file },
+      },
+    } as unknown as Parameters<typeof applyReconciliations>[0];
+
+    const item = { notePaths: ["A.md"], statements: [], suggestion: "같은 정정" };
+    await applyReconciliations(ctx, [item], "2026-09-03");
+    process.mockClear();
+    // learned_at도 같으면 내용이 완전히 같아 쓰지 않는다.
+    await applyReconciliations(ctx, [item], "2026-09-03");
+
+    expect(process).not.toHaveBeenCalled();
   });
 });

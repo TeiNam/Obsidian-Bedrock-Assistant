@@ -22,7 +22,7 @@ import {
   SECOND_BRAIN_SYSTEM_PROMPT,
   type SearchHit,
 } from "./search-adapter";
-import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { parseJsonArray, toStringArray } from "./llm-json";
 
@@ -341,6 +341,46 @@ export async function runReconcile(ctx: SecondBrainContext, topic: string): Prom
 const RECONCILE_BLOCK_KEY = "reconcile";
 
 /**
+ * 기존 정정 블록과 새 정정안을 합친다 — 순수 함수.
+ *
+ * `upsertGeneratedBlock`은 Generated_Region **전체**를 교체한다. 그래서 이번 승인분만으로
+ * 블록을 만들면 이전 실행에서 승인한 정정이 사라진다. 사용자가 명시적으로 승인한 것을
+ * 다음 승인이 지우는 조용한 손실이므로 합집합으로 다시 쓴다.
+ *
+ * 블록은 정정안 한 건이면 그 문구 그대로, 여러 건이면 `1. `로 시작하는 번호 목록이다.
+ * 되읽을 때 두 형태를 모두 받는다.
+ */
+export function mergeReconcileBlock(
+  existingBlock: string | null,
+  incoming: readonly string[]
+): string {
+  const items = parseReconcileBlock(existingBlock);
+  for (const raw of incoming) {
+    const next = raw.trim();
+    if (next !== "" && !items.includes(next)) items.push(next);
+  }
+
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  return items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+}
+
+/** 기록된 정정 블록에서 정정안 목록을 되읽는다. */
+function parseReconcileBlock(block: string | null): string[] {
+  if (block === null) return [];
+  const text = block.trim();
+  if (text === "") return [];
+
+  // 번호 목록이면 항목별로 쪼갠다. 아니면 블록 전체가 한 건이다.
+  const lines = text.split("\n");
+  const numbered = lines.filter((line) => /^\s*\d+\.\s/.test(line));
+  if (numbered.length === lines.filter((l) => l.trim() !== "").length && numbered.length > 0) {
+    return numbered.map((line) => line.replace(/^\s*\d+\.\s*/, "").trim()).filter((s) => s !== "");
+  }
+  return [text];
+}
+
+/**
  * 비(非) AI-first 노트의 프론트매터 `learned_at`만 최소 변경으로 갱신한다.
  *
  * - 표준 프론트매터(`---\n ... \n---`)가 있으면 그 안의 `learned_at:` 줄만 새 값으로 교체하고,
@@ -394,32 +434,40 @@ function updateLearnedAtMinimal(content: string, now: string): string {
  * @param suggestion 승인된 정정안(빈 문자열이면 본문은 그대로 두고 learned_at만 갱신)
  * @param now YYYY-MM-DD 형식의 갱신 시점
  */
-function applyToNoteContent(current: string, suggestion: string, now: string): string {
+function applyToNoteContent(
+  current: string,
+  suggestions: readonly string[],
+  now: string
+): string {
+  const merged = mergeReconcileBlock(
+    // 기존 블록과 합친다. upsertGeneratedBlock은 블록 **전체**를 교체하므로 이번
+    // 승인분만으로 만들면 다른 실행에서 승인한 정정이 조용히 사라진다.
+    getGeneratedBlock(current, RECONCILE_BLOCK_KEY),
+    suggestions
+  );
   const withSuggestion =
-    suggestion.trim() !== ""
-      ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, suggestion)
-      : current;
+    merged !== "" ? upsertGeneratedBlock(current, RECONCILE_BLOCK_KEY, merged) : current;
   return updateLearnedAtMinimal(withSuggestion, now);
 }
 
 
 /**
- * 노트 하나에 정정안을 반영한다. 실제로 썼으면 true.
+ * 노트 하나에 정정안들을 **한 번의 쓰기로** 반영한다. 실제로 썼으면 true.
  *
  * 존재하지 않는 노트는 생성하지 않는다(비파괴, 승인 범위 한정). 내용이 그대로면 쓰지
  * 않는다 — 같은 바이트를 써서 mtime만 바꾸면 인덱서가 그 노트를 다시 임베딩한다.
  */
-async function writeSuggestion(
+async function writeSuggestions(
   ctx: SecondBrainContext,
   notePath: string,
-  suggestion: string,
+  suggestions: readonly string[],
   now: string,
 ): Promise<boolean> {
   const file = ctx.app.vault.getAbstractFileByPath(notePath);
   if (!(file instanceof TFile)) return false;
 
   return processIfChanged(ctx.app, file, (content) =>
-    applyToNoteContent(content, suggestion, now)
+    applyToNoteContent(content, suggestions, now)
   );
 }
 
@@ -464,13 +512,9 @@ export async function applyReconciliations(
   const skipped: string[] = [];
 
   for (const [notePath, suggestions] of byNote) {
-    // 한 건이면 그대로, 여러 건이면 번호를 붙여 하나의 블록에 담는다.
-    const merged =
-      suggestions.length <= 1
-        ? suggestions[0] ?? ""
-        : suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
-
-    if (await writeSuggestion(ctx, notePath, merged, now)) updated.push(notePath);
+    // 노트당 한 번만 쓴다. 여러 번 쓰면 mtime이 그만큼 바뀌어 재임베딩을 부르고,
+    // 사용자가 편집 중일 때 겹칠 창도 그만큼 늘어난다.
+    if (await writeSuggestions(ctx, notePath, suggestions, now)) updated.push(notePath);
     else skipped.push(notePath);
   }
 

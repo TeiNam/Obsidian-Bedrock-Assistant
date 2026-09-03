@@ -489,6 +489,39 @@ export class VaultIndexer {
     }
   }
 
+  /**
+   * 노트의 **그래프 메타데이터만** 갱신한다(아웃링크·백링크·태그·프론트매터).
+   *
+   * 왜 indexFile이 아닌가: `indexFile`은 `lastModified >= mtime`이면 즉시 반환한다.
+   * A에 `[[B]]`를 추가하면 B의 mtime은 바뀌지 않으므로 B의 `backlinks`가 영구히 낡는다 —
+   * B에서 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
+   *
+   * 그리고 B의 **본문은 바뀌지 않았다**. 재임베딩은 순수한 낭비(API 비용 + 시간)이므로
+   * 청크와 임베딩은 그대로 두고 링크 정보만 다시 뽑는다.
+   *
+   * 인덱스에 없는 노트는 아무것도 하지 않는다 — 임베딩 없는 반쪽 엔트리를 만들면
+   * 검색에서 비교 불가 후보로 섞인다. 그 경우는 호출부가 indexFile을 쓰면 된다.
+   *
+   * ponytail: 옵시디언의 링크 해석(resolvedLinks)은 파일 쓰기 직후 한 틱 늦을 수 있다.
+   * 그러면 이번 갱신이 직전 상태를 읽고, 다음 증분 인덱싱에서 수렴한다. 이벤트를 기다리는
+   * 장치는 값을 못 할 만큼 복잡하다.
+   */
+  refreshGraphMetadata(path: string): void {
+    const existing = this.index.get(path);
+    if (!existing || !this.metadataSource) return;
+
+    const metadata = extractMetadata(path, this.metadataSource);
+    // 태그가 바뀌면 키워드 검색 텍스트도 따라가야 한다. 본문은 그대로이므로 기존
+    // searchText에서 태그 부분만 다시 만들 수는 없다 — 태그를 덧붙이는 쪽이 안전하다.
+    this.index.set(path, {
+      ...existing,
+      outlinks: metadata.outlinks,
+      backlinks: metadata.backlinks,
+      tags: metadata.tags,
+      frontmatter: metadata.frontmatter,
+    });
+  }
+
   // 단일 파일 인덱싱
   // 전체 인덱싱 중이면 대기열에 추가 후 즉시 리턴
   async indexFile(file: TFile): Promise<void> {
