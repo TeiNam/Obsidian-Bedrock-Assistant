@@ -10,11 +10,7 @@ import type { DecisionEntry } from "../second-brain/decisions";
 import { effectiveStatus } from "../second-brain/decisions";
 import { ApprovalListModal, type ApprovalLabels } from "./approval-list-modal";
 
-const STATUS_TEXT: Record<DecisionEntry["status"], string> = {
-  open: "열림",
-  done: "완료",
-  superseded: "대체됨",
-};
+
 
 export class DecisionReviewModal extends ApprovalListModal<DecisionEntry> {
   constructor(
@@ -55,7 +51,7 @@ export class DecisionReviewModal extends ApprovalListModal<DecisionEntry> {
       // 두고 supersededBy를 채우는 일이 흔한데, 그대로 보여주면 사용자가 보지 않은 상태
       // 전환을 승인하게 된다.
       const status = effectiveStatus(item);
-      head.createSpan({ cls: "ba-decision-status", text: STATUS_TEXT[status] });
+      head.createSpan({ cls: "ba-decision-status", text: this.statusText(status) });
 
       const body = card.createDiv({ cls: "ba-decision-body" });
 
@@ -87,6 +83,13 @@ export class DecisionReviewModal extends ApprovalListModal<DecisionEntry> {
         text: `${t.decisionSources}: ${item.sources.join(", ")}`,
       });
     });
+  }
+
+  /** 상태 배지 문구. 모달의 나머지 문구와 같은 언어를 쓴다. */
+  private statusText(status: DecisionEntry["status"]): string {
+    if (status === "done") return this.t.decisionStatusDone;
+    if (status === "superseded") return this.t.decisionStatusSuperseded;
+    return this.t.decisionStatusOpen;
   }
 
   protected async applyApproved(approved: DecisionEntry[]): Promise<string> {

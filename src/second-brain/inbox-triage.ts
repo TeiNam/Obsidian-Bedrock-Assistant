@@ -80,7 +80,11 @@ export function sanitizeTitle(title: string): string {
 
   if (cleaned === "") return "";
   // 윈도우 예약 이름은 승인해도 renameFile이 실패한다. 접미사를 붙여 피한다.
-  if (WINDOWS_RESERVED.has(cleaned.toLowerCase())) return `${cleaned} 노트`;
+  //
+  // 첫 점 앞부분으로 판정한다 — 윈도우는 확장자와 무관하게 장치 이름을 예약하므로
+  // `CON.txt`도 만들 수 없고, 여기서 통과시키면 최종 경로가 `CON.txt.md`가 되어 실패한다.
+  const stem = cleaned.split(".")[0] ?? cleaned;
+  if (WINDOWS_RESERVED.has(stem.toLowerCase())) return `${cleaned} 노트`;
   return truncateToBytes(cleaned, MAX_TITLE_BYTES);
 }
 

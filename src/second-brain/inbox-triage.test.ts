@@ -455,3 +455,18 @@ describe("sanitizeTitle — 파일시스템 규칙", () => {
     expect(sanitizeTitle("쿠버네티스 배포 정리")).toBe("쿠버네티스 배포 정리");
   });
 });
+
+describe("sanitizeTitle — 확장자가 붙은 예약 이름", () => {
+  it("확장자가 붙어도 예약 이름을 피한다", () => {
+    // 윈도우는 확장자와 무관하게 장치 이름을 예약한다. 통과시키면 최종 경로가
+    // `CON.txt.md`가 되어 renameFile이 실패한다.
+    expect(sanitizeTitle("CON.txt")).toBe("CON.txt 노트");
+    expect(sanitizeTitle("LPT1.csv")).toBe("LPT1.csv 노트");
+    expect(sanitizeTitle("nul.log")).toBe("nul.log 노트");
+  });
+
+  it("예약 이름을 포함하기만 한 것은 그대로 둔다", () => {
+    expect(sanitizeTitle("CONTROL.txt")).toBe("CONTROL.txt");
+    expect(sanitizeTitle("회의 CON 정리")).toBe("회의 CON 정리");
+  });
+});

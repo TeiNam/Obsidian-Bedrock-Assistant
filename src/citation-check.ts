@@ -146,6 +146,14 @@ function safeDecode(value: string): string {
 }
 
 /**
+ * 파일 확장자로 볼 수 있는 형태. 글자로 시작하는 1~5자 영숫자다.
+ *
+ * 점이 든 노트 이름을 확장자로 오인하지 않기 위한 제한이다 — `Release 1.2`의 `.2`를
+ * 확장자로 보면 그 노트에 대한 임베드가 검증에서 빠진다.
+ */
+const FILE_EXTENSION = /^\.[a-z][a-z0-9]{0,4}$/i;
+
+/**
  * 대상이 마크다운이 아닌 파일을 가리키는지.
  *
  * 확장자가 있고 그것이 `.md`가 아니면 첨부 파일로 본다. 확장자가 없으면 노트다 —
@@ -155,7 +163,10 @@ function isNonMarkdownFile(target: string): boolean {
   const base = target.split("/").pop() ?? target;
   const dot = base.lastIndexOf(".");
   if (dot <= 0) return false;
-  return base.slice(dot).toLowerCase() !== ".md";
+
+  const ext = base.slice(dot);
+  if (!FILE_EXTENSION.test(ext)) return false;
+  return ext.toLowerCase() !== ".md";
 }
 
 export function extractCitations(markdown: string): Citation[] {

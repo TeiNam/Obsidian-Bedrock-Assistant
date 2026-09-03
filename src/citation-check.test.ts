@@ -681,3 +681,24 @@ describe("extractCitations — 외부 스킴", () => {
     expect(extractCitations("[문서](Notes/a.md)")[0].target).toBe("Notes/a.md");
   });
 });
+
+describe("extractCitations — 점이 든 노트 이름", () => {
+  it("버전 번호를 확장자로 오인하지 않는다", () => {
+    // `.2`를 확장자로 보면 그 노트에 대한 임베드가 검증에서 빠진다.
+    expect(extractCitations("![[Release 1.2]]").map((c) => c.target)).toEqual(["Release 1.2"]);
+    expect(extractCitations("![[2026.09.04 회의]]").map((c) => c.target)).toEqual([
+      "2026.09.04 회의",
+    ]);
+  });
+
+  it("실제 확장자는 여전히 첨부로 본다", () => {
+    for (const embed of ["![[a.png]]", "![[a.pdf]]", "![[a.xlsx]]", "![[a.mp3]]"]) {
+      expect(extractCitations(embed)).toEqual([]);
+    }
+  });
+
+  it("점이 든 노트 임베드가 존재하지 않으면 경고한다", () => {
+    const out = findUnresolvedCitations(extractCitations("![[Release 9.9]]"), ["Release 1.2.md"]);
+    expect(out).toHaveLength(1);
+  });
+});
