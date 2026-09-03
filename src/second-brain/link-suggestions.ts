@@ -166,6 +166,21 @@ function pathWithoutExtension(path: string): string {
   return path.replace(/\.md$/i, "");
 }
 
+/** 위키링크 한 줄. 별칭이 대상과 같거나 없으면 표기를 늘리지 않는다. */
+function formatWikiLink(target: string, alias: string): string {
+  return alias === "" || alias === target ? `[[${target}]]` : `[[${target}|${alias}]]`;
+}
+
+/**
+ * 제안 1건이 노트에 기록될 위키링크 표기.
+ *
+ * 승인 화면이 이 함수를 쓴다. 화면이 표기를 따로 만들면 사용자가 본 것과 기록되는 것이
+ * 달라진다 — 실제로 화면은 `[[제목]]`을, 쓰기는 `[[경로|제목]]`을 쓰고 있었다.
+ */
+export function formatSuggestionLink(suggestion: LinkSuggestion): string {
+  return formatWikiLink(pathWithoutExtension(suggestion.targetPath), suggestion.targetTitle.trim());
+}
+
 /** 블록에서 되읽은 링크 1건. */
 interface ParsedLink {
   /** 링크 대상(헤딩 앵커 제외). */
@@ -241,7 +256,7 @@ export function mergeRelatedLinksBlock(
 
   const lines = ["## 관련 노트", ""];
   for (const { target, alias } of links) {
-    lines.push(alias === "" ? `- [[${target}]]` : `- [[${target}|${alias}]]`);
+    lines.push(`- ${formatWikiLink(target, alias)}`);
   }
   return lines.join("\n");
 }

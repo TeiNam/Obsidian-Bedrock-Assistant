@@ -8,6 +8,7 @@ import {
   RELATED_LINKS_BLOCK_KEY,
   mergeRelatedLinksBlock,
   parseRelatedLinksBlock,
+  formatSuggestionLink,
   type LinkSuggestion,
 } from "./link-suggestions";
 import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
@@ -330,5 +331,39 @@ describe("mergeRelatedLinksBlock — 이전 승인분 보존", () => {
     expect(doc).toContain("직접 쓴 내용.");
     expect(doc).toContain("[[A|알파]]");
     expect(doc).toContain("[[B|베타]]");
+  });
+});
+
+// ============================================
+// 승인 화면과 쓰기의 표기 일치
+// ============================================
+/**
+ * 승인 화면이 표기를 따로 만들면 사용자가 승인한 것과 노트에 들어가는 것이 달라진다.
+ * 실제로 화면은 `[[제목]]`을 보여주고 쓰기는 `[[경로|제목]]`을 넣고 있었다.
+ */
+describe("formatSuggestionLink", () => {
+  it("mergeRelatedLinksBlock이 쓰는 표기와 같다", () => {
+    const cases: LinkSuggestion[] = [
+      { sourcePath: "o.md", targetPath: "Notes/Alpha.md", targetTitle: "제목", similarity: 0.9 },
+      // 제목이 대상과 같으면 별칭을 붙이지 않는다.
+      { sourcePath: "o.md", targetPath: "Alpha.md", targetTitle: "Alpha", similarity: 0.9 },
+      // 제목이 비면 경로만 쓴다.
+      { sourcePath: "o.md", targetPath: "Notes/Beta.md", targetTitle: "", similarity: 0.9 },
+    ];
+
+    for (const s of cases) {
+      expect(mergeRelatedLinksBlock(null, [s])).toContain(`- ${formatSuggestionLink(s)}`);
+    }
+  });
+
+  it("확장자를 떼고 경로로 링크한다", () => {
+    expect(
+      formatSuggestionLink({
+        sourcePath: "o.md",
+        targetPath: "Notes/Alpha.md",
+        targetTitle: "알파",
+        similarity: 0.9,
+      })
+    ).toBe("[[Notes/Alpha|알파]]");
   });
 });

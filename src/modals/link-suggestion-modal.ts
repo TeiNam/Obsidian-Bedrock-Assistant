@@ -9,7 +9,7 @@
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { LinkSuggestion } from "../second-brain/link-suggestions";
-import { groupBySource } from "../second-brain/link-suggestions";
+import { formatSuggestionLink, groupBySource } from "../second-brain/link-suggestions";
 import { ApprovalListModal, type ApprovalLabels } from "./approval-list-modal";
 
 export class LinkSuggestionModal extends ApprovalListModal<LinkSuggestion> {
@@ -50,7 +50,12 @@ export class LinkSuggestionModal extends ApprovalListModal<LinkSuggestion> {
         // 전체 배열에서의 위치를 승인 키로 쓴다 — 그룹 내 위치가 아니다.
         this.createCheckbox(row, this.items.indexOf(suggestion));
 
-        row.createSpan({ cls: "ba-link-suggest-target", text: `[[${suggestion.targetTitle}]]` });
+        // 실제로 기록될 표기를 그대로 보여준다. 화면이 표기를 따로 만들면 사용자가
+        // 승인한 것과 노트에 들어가는 것이 달라진다.
+        row.createSpan({
+          cls: "ba-link-suggest-target",
+          text: formatSuggestionLink(suggestion),
+        });
         // 유사도를 보여줘야 사용자가 "왜 이게 후보인지"를 판단할 수 있다.
         row.createSpan({
           cls: "ba-link-suggest-score",
