@@ -7,7 +7,7 @@
 //
 // 핵심 보장:
 // - runReconcile은 검색·LLM 호출·리포트 반환만 수행하며 "어떤 노트도 수정하지 않는다"
-//   (비파괴, Req 8.2). 승인 후 반영(applyReconciliation)은 별도 2단계로 분리한다(Task 7.3).
+//   (비파괴, Req 8.2). 승인 후 반영(applyReconciliations)은 별도 2단계로 분리한다(Task 7.3).
 // - parseContradictionReport는 순수 함수이며, 파싱에 실패해도 예외를 던지지 않고
 //   빈 배열을 반환한다(Req 8.3).
 // - 모순 후보를 하나도 추출하지 못하면 "모순 없음"을 안내하고 노트를 변경하지 않는다(Req 8.5).
@@ -99,7 +99,7 @@ export function parseContradictionResult(
  * - 세 필드가 모두 비어 있으면(빈 항목) 유효하지 않은 것으로 보고 null을 반환한다.
  *
  * @param allowedPaths 주면 이 집합에 있는 노트 경로만 남기고, 남는 것이 없으면 항목을
- *   버린다. 승인 시 정정안이 이 경로의 노트에 기록되므로(applyReconciliation), 지어낸
+ *   버린다. 승인 시 정정안이 이 경로의 노트에 기록되므로(applyReconciliations), 지어낸
  *   경로가 통과하면 사용자가 승인한 정정이 엉뚱한 노트에 가거나 조용히 사라진다.
  */
 function normalizeContradiction(
@@ -220,7 +220,7 @@ function buildReconcilePrompt(topic: string, hits: SearchHit[]): string {
  * 7. 그 외에는 formatReconcileReport 리포트를 반환한다.
  *
  * ⚠️ 이 함수는 어떤 노트도 생성·수정·삭제하지 않는다(비파괴, Req 8.2). 정정안의 실제
- *    반영은 사용자 승인 후 별도 단계(applyReconciliation, Task 7.3)에서만 수행된다.
+ *    반영은 사용자 승인 후 별도 단계(applyReconciliations, Task 7.3)에서만 수행된다.
  *
  * @param ctx Second Brain 실행 컨텍스트
  * @param topic 모순을 점검할 주제
@@ -402,32 +402,6 @@ function applyToNoteContent(current: string, suggestion: string, now: string): s
   return updateLearnedAtMinimal(withSuggestion, now);
 }
 
-/**
- * 승인 후 반영 핸들러 (Req 8.4) — runReconcile과 분리된 명시적 2단계.
- *
- * 사용자가 모순 리포트의 특정 Contradiction(정정안)을 명시적으로 "승인"한 경우에만 호출된다.
- * 승인된 Contradiction의 대상 노트(approved.notePaths)만 다음과 같이 갱신한다.
- * - 기존 sentinel 병합 경로(processIfChanged로 원자적 upsert)로 정정안을 반영하되,
- *   Generated_Region만 교체하여 사람이 작성한 User_Region을 보존한다(비파괴 쓰기).
- * - 각 대상 노트의 Bi_Temporal `learned_at`을 갱신 시점(now)으로 업데이트한다.
- * - 존재하지 않는 경로는 건너뛴다(생성하지 않음). 승인되지 않은 노트는 일절 건드리지 않는다.
- *
- * ⚠️ 이 함수는 "명시적 사용자 승인" 경로에서만 호출되어야 한다. 스케줄러(자동) 경로는
- *    덮어쓰기성 작업에 사용자 확인을 유지하므로 이 함수를 절대 호출하지 않는다(Req 11.4, 8.4).
- *    그래서 runReconcile/scheduler와 분리된 별도 export 함수로 둔다.
- *
- * @param ctx Second Brain 실행 컨텍스트
- * @param approved 사용자가 승인한 단일 모순 항목(정정안 포함)
- * @param now YYYY-MM-DD 형식의 반영 시점(learned_at 갱신용, 주입)
- * @returns 반영 결과 요약 문자열
- */
-export async function applyReconciliation(
-  ctx: SecondBrainContext,
-  approved: Contradiction,
-  now: string,
-): Promise<string> {
-  return applyReconciliations(ctx, [approved], now);
-}
 
 /**
  * 노트 하나에 정정안을 반영한다. 실제로 썼으면 true.

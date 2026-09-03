@@ -18,7 +18,6 @@ import {
   parseContradictionResult,
   runReconcile,
   runReconcileDetailed,
-  applyReconciliation,
   applyReconciliations,
   type Contradiction,
 } from "./reconcile";
@@ -281,7 +280,7 @@ describe("parseContradictionReport — 견고성 (Req 8.3)", () => {
   });
 });
 
-// --- applyReconciliation: 승인 후 반영 (Req 8.4) ------------------------------
+// --- applyReconciliations: 승인 후 반영 (Req 8.4) ------------------------------
 // 승인된 Contradiction의 대상 노트만 갱신하고(learned_at + 정정안 본문), 승인되지 않은
 // 노트는 일절 건드리지 않으며, 자동(스케줄러) 경로는 이 함수를 절대 호출하지 않음을 검증한다.
 
@@ -295,7 +294,7 @@ function makeFile(path: string, content = ""): TFile {
 }
 
 /**
- * applyReconciliation용 Vault 더블. 경로→파일 맵으로 getAbstractFileByPath/read/modify를 제공한다.
+ * applyReconciliations용 Vault 더블. 경로→파일 맵으로 getAbstractFileByPath/read/modify를 제공한다.
  * create/delete/createFolder는 호출되면 안 되므로(생성하지 않음) 스파이로 감싸 단언에 사용한다.
  */
 function makeApplyVault(files: TFile[]) {
@@ -323,7 +322,7 @@ function makeApplyVault(files: TFile[]) {
   };
 }
 
-/** applyReconciliation 실행용 컨텍스트 더블. */
+/** applyReconciliations 실행용 컨텍스트 더블. */
 function makeApplyContext(files: TFile[]) {
   const vault = makeApplyVault(files);
   const ctx: SecondBrainContext = {
@@ -348,7 +347,7 @@ function contentOf(f: TFile): string {
   return (f as unknown as { content: string }).content ?? "";
 }
 
-describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
+describe("applyReconciliations — 승인 후 반영 (Req 8.4)", () => {
   it("승인된 AI-first 노트의 learned_at을 now로 갱신하고 정정안을 병합한다", async () => {
     // 기존 learned_at이 과거인 AI-first 노트를 만든다.
     const original = buildAiFirstNote(
@@ -367,7 +366,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       suggestion: "X는 조건부로 참이다.",
     };
 
-    const summary = await applyReconciliation(ctx, approved, "2024-06-15");
+    const summary = await applyReconciliations(ctx, [approved], "2024-06-15");
 
     // 승인 노트만 1회 갱신. 원자적 쓰기(process)를 써야 한다 — read→modify 왕복은
     // 읽은 뒤 쓰기 전에 들어온 사용자 편집을 덮어쓴다.
@@ -402,7 +401,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       suggestion: "정정안",
     };
 
-    await applyReconciliation(ctx, approved, "2024-06-15");
+    await applyReconciliations(ctx, [approved], "2024-06-15");
 
     // B.md는 읽기/쓰기 어느 것도 호출되지 않아야 한다.
     expect(vault.read).toHaveBeenCalledTimes(1);
@@ -422,7 +421,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       suggestion: "정정안",
     };
 
-    const summary = await applyReconciliation(ctx, approved, "2024-06-15");
+    const summary = await applyReconciliations(ctx, [approved], "2024-06-15");
 
     expect(vault.process).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
@@ -441,7 +440,7 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
       suggestion: "정정 제안",
     };
 
-    await applyReconciliation(ctx, approved, "2024-06-15");
+    await applyReconciliations(ctx, [approved], "2024-06-15");
 
     expect(vault.process).toHaveBeenCalledTimes(1);
     const updated = contentOf(fileA);
@@ -457,9 +456,9 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
     const fileA = makeFile("Second Brain/A.md", "내용");
     const { ctx, vault } = makeApplyContext([fileA]);
 
-    const summary = await applyReconciliation(
+    const summary = await applyReconciliations(
       ctx,
-      { notePaths: [], statements: [], suggestion: "x" },
+      [{ notePaths: [], statements: [], suggestion: "x" }],
       "2024-06-15",
     );
 
@@ -468,14 +467,14 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
     expect(summary).toContain("대상 노트가 없습니다");
   });
 
-  it("자동(스케줄러) 경로는 applyReconciliation을 호출하지 않는다", () => {
+  it("자동(스케줄러) 경로는 applyReconciliations을 호출하지 않는다", () => {
     // Req 8.4/11.4: 덮어쓰기성 반영은 명시적 사용자 승인 경로 전용이므로, 스케줄러 모듈은
-    // applyReconciliation을 절대 참조하지 않아야 한다. 소스 정적 검사로 분리됨을 단언한다.
+    // applyReconciliations을 절대 참조하지 않아야 한다. 소스 정적 검사로 분리됨을 단언한다.
     const schedulerSource = readFileSync(
       resolve(process.cwd(), "src/second-brain/scheduler.ts"),
       "utf-8",
     );
-    expect(schedulerSource).not.toContain("applyReconciliation");
+    expect(schedulerSource).not.toContain("applyReconciliations");
 
     // 또한 runReconcile 본문에서도 호출되지 않는다(비파괴 리포트 전용).
     const reconcileSource = readFileSync(
@@ -484,9 +483,9 @@ describe("applyReconciliation — 승인 후 반영 (Req 8.4)", () => {
     );
     const runReconcileBody = reconcileSource.slice(
       reconcileSource.indexOf("export async function runReconcile"),
-      reconcileSource.indexOf("export async function applyReconciliation"),
+      reconcileSource.indexOf("export async function applyReconciliations"),
     );
-    expect(runReconcileBody).not.toContain("applyReconciliation(");
+    expect(runReconcileBody).not.toContain("applyReconciliations(");
   });
 });
 
@@ -530,7 +529,7 @@ describe("runReconcileDetailed — 구조화된 결과", () => {
     expect(outcome.contradictions[0].notePaths).toEqual(["A.md", "B.md"]);
     expect(outcome.contradictions[1].suggestion).toContain("통일");
     expect(outcome.report).not.toBe("");
-    // 여전히 비파괴다 — 반영은 별도 단계(applyReconciliation)의 책임이다.
+    // 여전히 비파괴다 — 반영은 별도 단계(applyReconciliations)의 책임이다.
     expectNoVaultWrites(vault);
   });
 
@@ -579,7 +578,7 @@ describe("runReconcileDetailed — 구조화된 결과", () => {
 // 모순 대상 경로 제한
 // ============================================
 /**
- * 승인하면 applyReconciliation이 notePaths의 노트에 정정안을 기록한다. 지어낸 경로가
+ * 승인하면 applyReconciliations이 notePaths의 노트에 정정안을 기록한다. 지어낸 경로가
  * 통과하면 사용자가 승인한 정정이 엉뚱한 노트로 가거나 조용히 사라진다.
  */
 describe("parseContradictionResult — 허용 경로", () => {
@@ -640,7 +639,7 @@ describe("runReconcileDetailed — 후보가 전부 무효인 경우", () => {
  * "프론트매터가 닫혀 있다"뿐이라 모든 일반 노트가 통과했고, 재직렬화가 아는 키만 남기고
  * 나머지를 지웠다. 모순 반영 대상은 검색에 걸린 사용자 노트이므로 실제 데이터 손실이다.
  */
-describe("applyReconciliation — 프론트매터 보존", () => {
+describe("applyReconciliations — 프론트매터 보존", () => {
   const ORIGINAL = [
     "---",
     "aliases:",
@@ -675,11 +674,11 @@ describe("applyReconciliation — 프론트매터 보존", () => {
           getAbstractFileByPath: () => file,
         },
       },
-    } as unknown as Parameters<typeof applyReconciliation>[0];
+    } as unknown as Parameters<typeof applyReconciliations>[0];
 
-    await applyReconciliation(
+    await applyReconciliations(
       ctx,
-      { notePaths: ["Notes/내 노트.md"], statements: [], suggestion: "정정안 본문" },
+      [{ notePaths: ["Notes/내 노트.md"], statements: [], suggestion: "정정안 본문" }],
       "2026-09-03"
     );
 
