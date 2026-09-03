@@ -16,6 +16,7 @@ import {
 import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { combineAndRank } from "./graph-rag/score-combiner";
 import { filterIndex, isFilterEmpty, type SearchFilter } from "./graph-rag/entry-filter";
+import { fuseRanks } from "./graph-rag/rank-fusion";
 
 // === Graph_RAG_Search 결과 타입 (task 8.4) ===
 // 기존 search()의 반환 타입 Array<{path,title,excerpt,score}>을 대체하는 신규 API 시그니처.
@@ -61,7 +62,24 @@ export interface GraphRagResult {
    * 이 값이 크고 items가 비면 "인덱싱이 필요함"이 아니라 "조건이 좁음"이 원인이다.
    */
   filteredOutCount?: number;
+  /** 어휘 검색 결과를 벡터 결과와 융합해 순위를 만든 경우 true. */
+  usedHybrid?: boolean;
 }
+
+/**
+ * 융합에 넣을 어휘 검색 후보 수. limit보다 넉넉히 뽑아야 융합에 쓸 재료가 생긴다.
+ * limit=5로 요청했을 때 어휘 후보도 5개만 뽑으면, 정답이 어휘 6위인 경우를 못 살린다.
+ */
+const LEXICAL_POOL_SIZE = 30;
+
+/**
+ * 융합에서 어휘 목록에 주는 가중치. dense가 이 플러그인의 주 신호이므로 보조로 둔다.
+ *
+ * 1.0으로 두면 어떤 단어를 여러 번 반복한 노트가 의미적으로 더 맞는 노트를 밀어낼 수
+ * 있다. 0.5면 어휘 1위가 dense 4위권 정답을 상위로 끌어올리기에는 충분하면서
+ * (0.5/61 + 1/64 > 1/61), dense 1위를 뒤집지는 못한다.
+ */
+const LEXICAL_FUSION_WEIGHT = 0.5;
 
 /** 발췌(excerpt) 최대 길이. 검색 결과 미리보기와 LLM 컨텍스트에 사용된다. */
 const EXCERPT_MAX_CHARS = 500;
@@ -598,21 +616,55 @@ export class VaultIndexer {
       };
     }
 
-    // 8) limit 적용 (Req 6.5) 후 GraphRagSearchItem으로 매핑
-    const items: GraphRagSearchItem[] = combined.slice(0, limit).map((r) => ({
-      path: r.path,
-      title: r.title,
-      excerpt: r.excerpt,
-      combinedScore: r.combinedScore,
-      vectorScore: r.vectorScore,
-      hop: r.hop,
-      isSeed: r.isSeed,
-      seedPath: r.seedPath,
-      // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
-      seedTitle: r.seedPath ? candidates.get(r.seedPath)?.title ?? null : null,
-    }));
+    // 8) 어휘 검색과 순위 융합 (RRF).
+    //
+    //    dense 검색은 정확한 문자열에 약하다 — 에러 코드, 함수명, 버전 문자열, 사람
+    //    이름처럼 "그 문자열이 그대로 들어 있는 노트 한 개"를 임베딩 유사도가 상위권
+    //    밖으로 밀어내는 일이 흔하다. 어휘 검색은 그걸 정확히 잡는다.
+    //
+    //    과거에는 어휘 검색을 "임베딩이 아예 없을 때"의 폴백으로만 썼다. 즉 dense가
+    //    아무것도 못 찾을 때만 쓰고, dense가 엉뚱한 것을 찾을 때는 쓰지 않았다.
+    //    점수를 더하지 않고 순위만 섞는 이유는 rank-fusion.ts 주석에 있다.
+    const lexical = this.keywordSearch(query, LEXICAL_POOL_SIZE, candidates);
+    const fused = fuseRanks([
+      { name: "dense", paths: combined.map((r) => r.path) },
+      { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
+    ]);
 
-    return { items, ...(staleEmbeddings ? { staleEmbeddings } : {}) };
+    // 융합 순위로 항목을 재구성한다. dense 쪽 메타데이터(hop/isSeed/시드 정보)는
+    // 있으면 그대로 살리고, 어휘로만 잡힌 노트는 시드로 취급한다(그래프 경로가 없다).
+    const denseByPath = new Map(combined.map((r) => [r.path, r]));
+    const lexicalByPath = new Map(lexical.map((r) => [r.path, r]));
+
+    // RRF 점수는 절대값에 의미가 없으므로 최고점을 1.0으로 상대 정규화한다.
+    // combinedScore는 화면과 LLM에 백분율로 표시되는 값이어서 0.016 같은 원점수를
+    // 그대로 실으면 "관련도 1.6%"로 오해를 만든다. 키워드 폴백 경로도 같은 규칙이다.
+    const maxFused = fused.length > 0 ? fused[0].score : 0;
+
+    const items: GraphRagSearchItem[] = fused.slice(0, limit).map((f) => {
+      const d = denseByPath.get(f.path);
+      const l = lexicalByPath.get(f.path);
+      const base = d ?? l;
+      return {
+        path: f.path,
+        title: base?.title ?? f.path,
+        excerpt: base?.excerpt ?? "",
+        combinedScore: maxFused > 0 ? f.score / maxFused : 0,
+        vectorScore: d?.vectorScore ?? 0,
+        hop: d?.hop ?? 0,
+        isSeed: d?.isSeed ?? true,
+        seedPath: d?.seedPath ?? null,
+        // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
+        seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
+      };
+    });
+
+    return {
+      items,
+      ...(staleEmbeddings ? { staleEmbeddings } : {}),
+      ...filterInfo,
+      ...(lexical.length > 0 ? { usedHybrid: true } : {}),
+    };
   }
 
   /**

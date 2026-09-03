@@ -304,3 +304,119 @@ describe("VaultIndexer 빈 그래프/청크 엔트리 검색 무예외 검증", 
     await expect(indexer.search("노트")).resolves.toBeDefined();
   });
 });
+
+// ============================================
+// 하이브리드 융합: dense가 놓친 정확 일치를 어휘가 살린다
+// ============================================
+/**
+ * dense 검색의 알려진 실패를 인덱서 수준에서 재현한다.
+ *
+ * 시나리오: 질의 문자열이 그대로 들어 있는 노트가 딱 하나 있는데, 임베딩 유사도는
+ * 낮아서 MIN_COMBINED_SCORE(0.55) 임계값에서 아예 탈락한다. 에러 코드·함수명처럼
+ * 표기가 특이한 문자열에서 실제로 일어나는 일이다.
+ *
+ * 융합 전에는 이 노트가 결과에 없었다 — 어휘 검색은 "임베딩이 아예 없을 때"의
+ * 폴백으로만 돌았기 때문이다.
+ */
+describe("VaultIndexer 하이브리드 융합", () => {
+  const TERM = "CrashLoopBackOff";
+  /** 이 표시가 있는 본문만 질의 벡터와 직교하는 임베딩을 받는다. */
+  const FAR_MARKER = "쿠버네티스";
+
+  const CONTENTS: Record<string, string> = {
+    "ops/k8s.md": `# 운영\n${FAR_MARKER} 파드가 ${TERM} 상태로 재시작을 반복합니다.`,
+    "misc/a.md": "# 메모 A\n일반적인 메모입니다.",
+    "misc/b.md": "# 메모 B\n또 다른 메모입니다.",
+    "misc/c.md": "# 메모 C\n세 번째 메모입니다.",
+  };
+
+  function makeMultiApp(): ConstructorParameters<typeof VaultIndexer>[0] {
+    const files = Object.keys(CONTENTS).map((p) => makeTFile(p));
+    return {
+      vault: {
+        getMarkdownFiles: () => files,
+        cachedRead: async (f: TFile) => CONTENTS[f.path] ?? "",
+        getAbstractFileByPath: (p: string) => files.find((f) => f.path === p) ?? null,
+      },
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[0];
+  }
+
+  /**
+   * FAR_MARKER가 있는 본문은 [0,1], 나머지는 [1,0]을 준다.
+   * 질의 "CrashLoopBackOff"에는 마커가 없으므로 [1,0] — 즉 정답 노트와 코사인 0이다.
+   * 정규화하면 (0+1)/2 = 0.5로 MIN_COMBINED_SCORE(0.55) 아래라 dense에서 탈락한다.
+   */
+  function makeSplitClient(): ConstructorParameters<typeof VaultIndexer>[1] {
+    return {
+      getEmbedding: vi.fn(async (text: string) =>
+        text.includes(FAR_MARKER) ? [0, 1] : [1, 0]
+      ),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+  }
+
+  async function buildIndexer(): Promise<VaultIndexer> {
+    const indexer = new VaultIndexer(makeMultiApp(), makeSplitClient());
+    for (const path of Object.keys(CONTENTS)) {
+      const file = makeTFile(path);
+      await indexer.indexFile(file);
+    }
+    expect(indexer.size).toBe(4);
+    return indexer;
+  }
+
+  it("정확 일치 노트를 결과에 올리고 하이브리드를 표시한다", async () => {
+    const indexer = await buildIndexer();
+
+    const result = await indexer.search(TERM, 5);
+
+    // 융합 전이라면 이 노트는 임계값 탈락으로 결과에 없었다.
+    expect(result.items.map((i) => i.path)).toContain("ops/k8s.md");
+    expect(result.usedHybrid).toBe(true);
+    // 임베딩이 정상이므로 폴백 경로를 탄 것이 아니다.
+    expect(result.usedKeywordFallback).toBeUndefined();
+  });
+
+  it("어휘로만 잡힌 노트는 시드로 표기되고 벡터 점수는 0이다", async () => {
+    const indexer = await buildIndexer();
+
+    const hit = (await indexer.search(TERM, 5)).items.find((i) => i.path === "ops/k8s.md");
+
+    expect(hit).toBeDefined();
+    expect(hit?.isSeed).toBe(true);
+    expect(hit?.hop).toBe(0);
+    expect(hit?.seedPath).toBeNull();
+    expect(hit?.vectorScore).toBe(0);
+  });
+
+  it("combinedScore는 최고점을 1.0으로 정규화한다", async () => {
+    const indexer = await buildIndexer();
+
+    const items = (await indexer.search(TERM, 5)).items;
+
+    // RRF 원점수(0.016 등)를 그대로 실으면 "관련도 1.6%"로 오해를 만든다.
+    expect(items[0].combinedScore).toBeCloseTo(1);
+    for (const item of items) {
+      expect(item.combinedScore).toBeGreaterThan(0);
+      expect(item.combinedScore).toBeLessThanOrEqual(1);
+    }
+    // 내림차순이 유지된다.
+    for (let i = 1; i < items.length; i++) {
+      expect(items[i - 1].combinedScore).toBeGreaterThanOrEqual(items[i].combinedScore);
+    }
+  });
+
+  it("어휘 일치가 없는 질의는 dense 결과와 순서가 같다(융합이 무해하다)", async () => {
+    const indexer = await buildIndexer();
+
+    // 어떤 노트에도 없는 단어 → 어휘 목록이 비고 융합은 통과 동작이 된다.
+    const result = await indexer.search("존재하지않는단어xyz", 5);
+
+    expect(result.usedHybrid).toBeUndefined();
+  });
+
+  it("limit을 초과해 반환하지 않는다", async () => {
+    const indexer = await buildIndexer();
+
+    expect((await indexer.search(TERM, 2)).items).toHaveLength(2);
+  });
+});

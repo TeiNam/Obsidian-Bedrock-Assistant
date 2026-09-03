@@ -452,9 +452,14 @@ export class ToolExecutor {
 
     // 결과 헤더 — 키워드 폴백이 사용된 경우 대체 검색 사실을 표시 (Req 4.6)
     const scope = filterDesc ? ` — 필터: ${filterDesc}` : "";
-    const header = result.usedKeywordFallback
-      ? `검색 결과 (키워드 검색 — 임베딩 인덱스가 없어 키워드 검색으로 대체됨)${scope}:`
-      : `검색 결과 (Graph RAG)${scope}:`;
+    // 어떤 신호로 찾았는지 밝힌다. 하이브리드 표시가 있으면 정확한 문자열 일치가
+    // 순위에 반영됐다는 뜻이므로, 모델이 결과를 다르게 해석할 근거가 된다.
+    const mode = result.usedKeywordFallback
+      ? "키워드 검색 — 임베딩 인덱스가 없어 키워드 검색으로 대체됨"
+      : result.usedHybrid
+        ? "Graph RAG + 키워드 융합"
+        : "Graph RAG";
+    const header = `검색 결과 (${mode})${scope}:`;
 
     const body = result.items
       .map((item, i) => this.formatSearchItem(item, i + 1))
