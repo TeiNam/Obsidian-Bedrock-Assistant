@@ -1776,3 +1776,29 @@ body.theme-light .ba-message-content pre {
   width: 1em;
   height: 1em;
 }
+
+/* 인용 검증 경고 — 응답이 밝힌 노트 경로를 볼트에서 찾지 못한 경우 */
+.ba-citation-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--background-modifier-error-hover);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ba-citation-warning-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-warning);
+  flex-shrink: 0;
+}
+
+.ba-citation-warning-icon svg {
+  width: 14px;
+  height: 14px;
+}

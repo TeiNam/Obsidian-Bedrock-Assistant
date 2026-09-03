@@ -79,6 +79,8 @@ export const VIEW_I18N = {
       `.${ext} attachments need a backend that forwards images and documents. The ${backend} backend would drop it silently — switch to AWS Bedrock, or paste the content as text.`,
     binaryDropped: (names: string) =>
       `Not sent: ${names}. The current backend cannot forward image or document attachments.`,
+    citationsUnresolved: (targets: string) =>
+      `Cited notes not found in your vault: ${targets}. Verify these before trusting the answer.`,
     unsupportedExt: (ext: string) => `Unsupported file format: .${ext}`,
     webSearchHint: "[Web search enabled: When current or external information is needed, search the web (via the available web search tool) and include source URLs in your answer.]",
     webSearchNoMcp: "Web search requires a search MCP (fetch, exa, or brave). Configure one in Settings → MCP first.",
@@ -192,6 +194,8 @@ ${content}`,
       `.${ext} 첨부는 이미지·문서를 전달하는 백엔드가 필요합니다. ${backend} 백엔드에서는 조용히 버려지므로, AWS Bedrock으로 바꾸거나 내용을 텍스트로 붙여넣으세요.`,
     binaryDropped: (names: string) =>
       `전송하지 않았습니다: ${names}. 현재 백엔드는 이미지·문서 첨부를 전달할 수 없습니다.`,
+    citationsUnresolved: (targets: string) =>
+      `볼트에서 찾을 수 없는 인용입니다: ${targets}. 답변을 신뢰하기 전에 확인하세요.`,
     unsupportedExt: (ext: string) => `지원하지 않는 파일 형식입니다: .${ext}`,
     webSearchHint: "[웹 서치 활성화됨: 최신 정보나 외부 정보가 필요하면 웹을 검색(사용 가능한 웹 서치 도구 이용)하고, 출처 URL을 함께 제공하세요.]",
     webSearchNoMcp: "웹 서치를 사용하려면 검색 MCP(fetch, exa, brave 중 하나)가 필요합니다. 먼저 설정 → MCP에서 구성하세요.",
@@ -305,6 +309,8 @@ ${content}`,
       `.${ext}の添付には画像・文書を転送できるバックエンドが必要です。${backend}バックエンドでは黙って破棄されるため、AWS Bedrockに切り替えるか、内容をテキストとして貼り付けてください。`,
     binaryDropped: (names: string) =>
       `送信しませんでした: ${names}。現在のバックエンドは画像・文書の添付を転送できません。`,
+    citationsUnresolved: (targets: string) =>
+      `ボルト内に見つからない引用です: ${targets}。回答を信頼する前に確認してください。`,
     unsupportedExt: (ext: string) => `サポートされていないファイル形式: .${ext}`,
     webSearchHint: "[Web検索有効: 最新情報や外部情報が必要な場合は、Webを検索（利用可能なWeb検索ツールを使用）し、出典URLも回答に含めてください。]",
     webSearchNoMcp: "Web検索には検索MCP(fetch、exa、braveのいずれか)が必要です。先に設定 → MCPで構成してください。",

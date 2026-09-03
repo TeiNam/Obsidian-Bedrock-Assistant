@@ -12,6 +12,7 @@ import { WebClipperModal } from "./web-clipper";
 import { VIEW_I18N, type ViewLang } from "./chat-view-i18n";
 // 모델 변경 시 effort 허용 집합 보정에 사용
 import { clampEffort, supportsBinaryAttachments } from "./provider-utils";
+import { extractCitations, findUnresolvedCitations } from "./citation-check";
 import { createTodoNote } from "./todo-manager";
 import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
@@ -732,6 +733,9 @@ export class ChatView extends ItemView {
           const nextThinking = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
           this.scrollToBottom();
         }
+
+        // 인용 검증 — 모델이 지어낸 노트 경로를 표시한다.
+        this.appendCitationWarning(msgEl, fullText);
 
         // 응답 시간 표시
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1776,6 +1780,38 @@ export class ChatView extends ItemView {
     } else {
       this.sendBtn.removeClass("ba-disabled");
       this.stopBtn.removeClass("visible");
+    }
+  }
+
+  /**
+   * 응답이 인용한 노트 경로 중 볼트에서 찾을 수 없는 것을 경고로 덧붙인다.
+   *
+   * 시스템 프롬프트가 근거 경로를 밝히라고 지시하므로 모델은 경로를 쓴다. 그런데 그
+   * 경로가 실재하는지는 아무도 확인하지 않았다 — 지어낸 인용을 잡지 못하면 사용자는
+   * 클릭해봐야 알고, 그때까지 답변을 근거 있는 것으로 믿는다.
+   *
+   * 인덱스가 비어 있으면(인덱싱 전) 경고하지 않는다. 실패는 삼킨다 — 검증이
+   * 응답 표시를 막아선 안 된다.
+   */
+  private appendCitationWarning(container: HTMLElement, text: string): void {
+    try {
+      if (!text) return;
+
+      const citations = extractCitations(text);
+      if (citations.length === 0) return;
+
+      const paths = this.plugin.indexer.getEntries().map((e) => e.path);
+      const unresolved = findUnresolvedCitations(citations, paths);
+      if (unresolved.length === 0) return;
+
+      const box = container.createDiv({ cls: "ba-citation-warning" });
+      const icon = box.createDiv({ cls: "ba-citation-warning-icon" });
+      setIcon(icon, "alert-triangle");
+      box.createSpan({
+        text: this.t.citationsUnresolved(unresolved.map((c) => c.target).join(", ")),
+      });
+    } catch (e) {
+      console.error("인용 검증 실패:", e);
     }
   }
 
