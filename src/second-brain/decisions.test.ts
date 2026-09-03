@@ -9,6 +9,7 @@ import {
   formatLedger,
   buildDecisionPrompt,
   parseLedger,
+  parseLedgerDetailed,
   type DecisionEntry,
 } from "./decisions";
 
@@ -631,5 +632,89 @@ describe("effectiveStatus", () => {
       const found = merged.find((m) => decisionKey(m.decision) === decisionKey(entry.decision));
       expect(found?.status).toBe(effectiveStatus(entry));
     }
+  });
+});
+
+// ============================================
+// 해석하지 못한 행 보존
+// ============================================
+/**
+ * 사용자가 상태 헤딩을 바꾸거나 근거 칸을 일반 텍스트로 고치면 그 행을 항목으로 만들 수
+ * 없다. 그냥 버리면 다음 승인이 생성 블록을 교체할 때 그 행이 삭제된다 — 사용자가 손으로
+ * 쓴 것을 도구가 지우는 것이므로 최악의 실패다.
+ */
+describe("parseLedgerDetailed — 보존", () => {
+  it("근거가 위키링크가 아닌 행을 원문으로 남긴다", () => {
+    const md = [
+      "### 열림 (2)",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| 정상 결정 | 이유 | — | — | — | [[a]] |",
+      "| 손으로 쓴 결정 | 이유 | 김 | — | — | 회의에서 들음 |",
+    ].join("\n");
+
+    const out = parseLedgerDetailed(md);
+
+    expect(out.entries.map((e) => e.decision)).toEqual(["정상 결정"]);
+    expect(out.unparsed).toHaveLength(1);
+    expect(out.unparsed[0]).toContain("손으로 쓴 결정");
+  });
+
+  it("상태 헤딩을 못 읽은 표의 행도 남긴다", () => {
+    const md = [
+      "### 내가 바꾼 제목",
+      "",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| 어떤 결정 | 이유 | — | — | — | [[a]] |",
+    ].join("\n");
+
+    const out = parseLedgerDetailed(md);
+
+    expect(out.entries).toEqual([]);
+    expect(out.unparsed).toHaveLength(1);
+    expect(out.unparsed[0]).toContain("어떤 결정");
+  });
+
+  it("헤더와 구분선은 보존 대상이 아니다", () => {
+    // formatLedger가 다시 만든다.
+    const md = [
+      "### 내가 바꾼 제목",
+      "| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |",
+      "| --- | --- | --- | --- | --- | --- |",
+    ].join("\n");
+
+    expect(parseLedgerDetailed(md).unparsed).toEqual([]);
+  });
+
+  it("formatLedger가 보존 행을 다시 쓴다", () => {
+    const raw = "| 손으로 쓴 결정 | 이유 | 김 | — | — | 회의에서 들음 |";
+    const out = formatLedger([decision({ decision: "정상" })], [raw]);
+
+    expect(out).toContain("정상");
+    expect(out).toContain("손으로 쓴 결정");
+    expect(out).toContain("해석하지 못한 행");
+  });
+
+  it("왕복해도 보존 행이 사라지지 않는다", () => {
+    const raw = "| 손으로 쓴 결정 | 이유 | 김 | — | — | 회의에서 들음 |";
+    let block = formatLedger([decision({ decision: "정상" })], [raw]);
+
+    // 다음 승인: 되읽어 병합하고 다시 쓴다.
+    for (let i = 0; i < 3; i++) {
+      const parsed = parseLedgerDetailed(block);
+      block = formatLedger(mergeLedger(parsed.entries, []), parsed.unparsed);
+    }
+
+    expect(block).toContain("손으로 쓴 결정");
+    expect(block).toContain("정상");
+    // 중복되지 않는다.
+    expect(block.match(/손으로 쓴 결정/g)).toHaveLength(1);
+  });
+
+  it("항목이 없고 보존 행만 있어도 그것을 쓴다", () => {
+    const raw = "| 손으로 쓴 결정 | 이유 | 김 | — | — | 회의 |";
+    expect(formatLedger([], [raw])).toContain("손으로 쓴 결정");
   });
 });

@@ -70,7 +70,7 @@ import {
 import {
   buildDecisionPrompt,
   parseDecisionReport,
-  parseLedger,
+  parseLedgerDetailed,
   mergeLedger,
   formatLedger,
   DECISION_BLOCK_KEY,
@@ -802,8 +802,15 @@ export default class GeminiAssistantPlugin extends Plugin {
           // 원장을 되읽어 병합한다. 사용자가 원장에서 직접 고친 값을 유지하려면
           // 그 값을 읽어와야 한다.
           await this.app.vault.process(existing, (content) => {
-            merged = mergeLedger(parseLedger(content), approved);
-            return upsertGeneratedBlock(content, DECISION_BLOCK_KEY, formatLedger(merged));
+            // 해석하지 못한 행은 원문으로 되돌려 쓴다. 생성 블록 전체가 교체되므로
+            // 넘기지 않으면 사용자가 손으로 고친 행이 이 승인으로 삭제된다.
+            const parsed = parseLedgerDetailed(getGeneratedBlock(content, DECISION_BLOCK_KEY) ?? content);
+            merged = mergeLedger(parsed.entries, approved);
+            return upsertGeneratedBlock(
+              content,
+              DECISION_BLOCK_KEY,
+              formatLedger(merged, parsed.unparsed)
+            );
           });
         } else {
           // 위키 폴더가 아직 없으면 create가 실패한다 — 첫 실행에서 항상 그렇다.
@@ -1038,7 +1045,8 @@ export default class GeminiAssistantPlugin extends Plugin {
    *     재임베딩은 순수한 낭비이고, mtime도 안 바뀌어 indexFile은 즉시 반환한다.
    *  3. metadataCache 해석이 끝난 뒤 링크 정보를 한 번 더 읽어 수렴시킨다. 쓰기 직후의
    *     `resolvedLinks`는 아직 이전 상태일 수 있고, 그 값이 최신 mtime과 함께 굳으면
-   *     이후 증분 색인이 건너뛰어 그래프가 영구히 낡는다.
+   *     이후 증분 색인이 건너뛰어 그래프가 영구히 낡는다. 리스너는 (1)보다 먼저 등록한다 —
+   *     임베딩을 기다리는 동안 이벤트가 지나가면 놓친다.
    *
    * @param changed 본문이 바뀐 노트 경로
    * @param linkedTo 링크가 새로 향한 노트 경로(생성된 블록의 위키링크 대상 등)
@@ -1050,6 +1058,15 @@ export default class GeminiAssistantPlugin extends Plugin {
     const changedPaths = [...changed];
     const linkedPaths = [...linkedTo];
 
+    // 수렴 리스너를 **재색인보다 먼저** 등록한다. indexFile은 임베딩 호출까지 기다리므로
+    // 그 사이에 resolved 이벤트가 지나갈 수 있고, 그러면 리스너가 그 이벤트를 놓친다.
+    // 이벤트가 색인보다 먼저 와도 손해가 없다 — refreshGraphMetadata는 링크 정보만 다시
+    // 읽으므로 몇 번 불려도 결과가 같다.
+    this.onceMetadataResolved(() => {
+      for (const path of changedPaths) this.indexer.refreshGraphMetadata(path);
+      for (const path of linkedPaths) this.indexer.refreshGraphMetadata(path);
+    });
+
     for (const path of changedPaths) {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) await this.indexer.indexFile(file);
@@ -1059,11 +1076,6 @@ export default class GeminiAssistantPlugin extends Plugin {
     for (const path of linkedPaths) {
       if (!changedSet.has(path)) this.indexer.refreshGraphMetadata(path);
     }
-
-    this.onceMetadataResolved(() => {
-      for (const path of changedPaths) this.indexer.refreshGraphMetadata(path);
-      for (const path of linkedPaths) this.indexer.refreshGraphMetadata(path);
-    });
   }
 
   /**

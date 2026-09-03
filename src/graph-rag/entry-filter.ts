@@ -82,20 +82,42 @@ export function normalizeSearchFilter(raw: Record<string, unknown>): {
   const filter: SearchFilter = {};
   const problems: string[] = [];
 
-  if (typeof raw.folder === "string" && raw.folder.trim() !== "") {
-    filter.folder = normalizeFolder(raw.folder);
+  // 값을 조용히 버리지 않는다. 버리면 필터가 비어 **볼트 전체**를 검색하게 되고, 모델은
+  // 범위를 좁혀 물었는데 범위 밖 노트로 답하게 된다. 날짜 필터와 같은 규약으로 오류를 낸다.
+  if (raw.folder !== undefined) {
+    if (typeof raw.folder !== "string") {
+      problems.push(`folder는 문자열이어야 합니다: ${JSON.stringify(raw.folder)}`);
+    } else if (raw.folder.trim() !== "") {
+      const folder = normalizeFolder(raw.folder);
+      if (folder === "") problems.push(`folder를 해석할 수 없습니다: ${raw.folder}`);
+      else filter.folder = folder;
+    }
   }
 
-  if (Array.isArray(raw.tags)) {
-    const tags = raw.tags
-      .filter((t): t is string => typeof t === "string")
-      .map(normalizeTag)
-      .filter((t) => t !== "");
-    if (tags.length > 0) filter.tags = Array.from(new Set(tags));
-  } else if (typeof raw.tags === "string" && raw.tags.trim() !== "") {
-    // 단일 문자열도 받아준다. 모델이 배열 대신 문자열을 넘기는 일이 잦다.
-    const one = normalizeTag(raw.tags);
-    if (one !== "") filter.tags = [one];
+  if (raw.tags !== undefined) {
+    if (Array.isArray(raw.tags)) {
+      const nonStrings = raw.tags.filter((t) => typeof t !== "string");
+      if (nonStrings.length > 0) {
+        problems.push(`tags의 원소는 문자열이어야 합니다: ${JSON.stringify(nonStrings)}`);
+      }
+      const tags = raw.tags
+        .filter((t): t is string => typeof t === "string")
+        .map(normalizeTag)
+        .filter((t) => t !== "");
+      if (tags.length > 0) filter.tags = Array.from(new Set(tags));
+      else if (raw.tags.length > 0 && nonStrings.length === 0) {
+        problems.push(`tags를 해석할 수 없습니다: ${JSON.stringify(raw.tags)}`);
+      }
+    } else if (typeof raw.tags === "string") {
+      // 단일 문자열도 받아준다. 모델이 배열 대신 문자열을 넘기는 일이 잦다.
+      if (raw.tags.trim() !== "") {
+        const one = normalizeTag(raw.tags);
+        if (one === "") problems.push(`tags를 해석할 수 없습니다: ${raw.tags}`);
+        else filter.tags = [one];
+      }
+    } else {
+      problems.push(`tags는 문자열 또는 문자열 배열이어야 합니다: ${JSON.stringify(raw.tags)}`);
+    }
   }
 
   for (const key of ["modifiedAfter", "modifiedBefore"] as const) {

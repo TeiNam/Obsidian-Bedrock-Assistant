@@ -199,3 +199,59 @@ describe("filterIndex", () => {
     expect(filterIndex(index, { folder: "Nope" }).size).toBe(0);
   });
 });
+
+// ============================================
+// 스키마 위반은 조용히 버리지 않는다
+// ============================================
+/**
+ * 값을 버리면 필터가 비어 **볼트 전체**를 검색한다. 모델은 범위를 좁혀 물었는데 범위 밖
+ * 노트로 답하게 되므로, 날짜 필터와 같은 규약으로 오류를 낸다.
+ */
+describe("normalizeSearchFilter — 타입 위반", () => {
+  it("folder가 문자열이 아니면 문제로 보고한다", () => {
+    const out = normalizeSearchFilter({ folder: 42 });
+
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0]).toContain("folder");
+    expect(out.filter.folder).toBeUndefined();
+  });
+
+  it("tags 원소가 문자열이 아니면 문제로 보고한다", () => {
+    const out = normalizeSearchFilter({ tags: [123] });
+
+    expect(out.problems).toHaveLength(1);
+    expect(out.filter.tags).toBeUndefined();
+  });
+
+  it("tags가 배열도 문자열도 아니면 문제로 보고한다", () => {
+    expect(normalizeSearchFilter({ tags: { a: 1 } }).problems).toHaveLength(1);
+  });
+
+  it("문자열 원소가 섞여 있으면 그것만 살리고 나머지를 보고한다", () => {
+    const out = normalizeSearchFilter({ tags: ["work", 5] });
+
+    expect(out.filter.tags).toEqual(["work"]);
+    expect(out.problems).toHaveLength(1);
+  });
+
+  it("정규화 후 비는 값도 보고한다", () => {
+    // "#" 하나만 준 경우처럼 정규화하면 아무것도 남지 않는 입력이다.
+    const out = normalizeSearchFilter({ tags: ["#"] });
+    expect(out.problems).toHaveLength(1);
+  });
+
+  it("빈 문자열은 '지정하지 않음'으로 본다", () => {
+    const out = normalizeSearchFilter({ folder: "", tags: "" });
+
+    expect(out.problems).toEqual([]);
+    expect(out.filter).toEqual({});
+  });
+
+  it("정상 입력에는 문제가 없다", () => {
+    const out = normalizeSearchFilter({ folder: "Projects", tags: ["#Work", "idea"] });
+
+    expect(out.problems).toEqual([]);
+    expect(out.filter.folder).toBe("Projects");
+    expect(out.filter.tags).toEqual(["work", "idea"]);
+  });
+});

@@ -767,9 +767,13 @@ export class VaultIndexer {
     //      있는 노트는 합산되어 올라가지만, 어휘에만 있는 노트는 limit으로 자를 때 항상
     //      사라진다 — 하이브리드를 넣은 이유가 바로 그 경우다(자세한 산수는 reserveSlots).
     const densePaths = new Set(combined.map((r) => r.path));
+    // 예약은 limit - 1을 넘지 않는다. limit=1에서 하나를 예약하면 dense 1위가 밀려나고,
+    // limit=2에서 둘을 예약하면 dense 결과가 전부 사라진다 — dense를 주 신호로 두는
+    // 규약이 뒤집힌다.
+    const reserveCount = Math.max(0, Math.min(LEXICAL_RESERVED_SLOTS, limit - 1));
     const lexicalOnly = lexical
       .filter((l) => !densePaths.has(l.path))
-      .slice(0, LEXICAL_RESERVED_SLOTS)
+      .slice(0, reserveCount)
       .map((l) => l.path);
 
     // 융합 순위로 항목을 재구성한다. dense 쪽 메타데이터(hop/isSeed/시드 정보)는

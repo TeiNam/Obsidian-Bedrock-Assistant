@@ -263,3 +263,22 @@ describe("RRF 가중치의 한계 (reserveSlots가 필요한 이유)", () => {
     expect(reserveSlots(paths, ["정확일치.md"], 10)).toContain("정확일치.md");
   });
 });
+
+describe("reserveSlots — 작은 limit", () => {
+  it("limit 1에서 예약이 dense 1위를 밀어낼 수 있다", () => {
+    // 순수 함수는 요청대로 동작한다 — 예약 수를 제한하는 것은 호출부 책임이다.
+    expect(reserveSlots(["dense1"], ["lex1"], 1)).toEqual(["lex1"]);
+  });
+
+  it("호출부가 limit - 1로 제한하면 dense 1위가 남는다", () => {
+    const reserve = (count: number, limit: number) =>
+      reserveSlots(["d1", "d2", "d3", "lex1", "lex2"], ["lex1", "lex2"].slice(0, count), limit);
+
+    // limit=1 → 예약 0개
+    expect(reserve(Math.max(0, Math.min(2, 1 - 1)), 1)).toEqual(["d1"]);
+    // limit=2 → 예약 1개
+    expect(reserve(Math.max(0, Math.min(2, 2 - 1)), 2)).toEqual(["d1", "lex1"]);
+    // limit=3 → 예약 2개
+    expect(reserve(Math.max(0, Math.min(2, 3 - 1)), 3)).toEqual(["d1", "lex1", "lex2"]);
+  });
+});

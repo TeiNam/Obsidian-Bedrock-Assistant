@@ -204,8 +204,11 @@ const STATUS_LABEL: Record<DecisionStatus, string> = {
  * 상태 순(열림 → 완료 → 대체됨)으로 묶는다. 열린 약속을 먼저 보여주는 것이 원장을
  * 여는 주된 이유이고, 뒤집힌 결정이 위에 있으면 유효한 결정을 가린다.
  */
-export function formatLedger(entries: readonly DecisionEntry[]): string {
-  if (entries.length === 0) return "기록된 결정이 없습니다.";
+export function formatLedger(
+  entries: readonly DecisionEntry[],
+  unparsed: readonly string[] = []
+): string {
+  if (entries.length === 0 && unparsed.length === 0) return "기록된 결정이 없습니다.";
 
   const order: DecisionStatus[] = ["open", "done", "superseded"];
   const lines: string[] = [];
@@ -228,6 +231,17 @@ export function formatLedger(entries: readonly DecisionEntry[]): string {
           `${cell(e.due)} | ${cell(e.supersededBy)} | ${cell(sources)} |`
       );
     }
+    lines.push("");
+  }
+
+  // 해석하지 못한 행은 원문 그대로 뒤에 붙인다. 사용자가 손으로 쓴 것을 도구가 지우지
+  // 않는다 — 형식이 어긋난 행이 하나 있다고 그 행을 삭제하는 것은 최악의 실패다.
+  if (unparsed.length > 0) {
+    lines.push("### 해석하지 못한 행", "");
+    lines.push("아래 행은 형식이 달라 자동 병합 대상이 아닙니다. 직접 정리하거나 그대로 두세요.", "");
+    lines.push("| 결정 | 이유 | 담당 | 기한 | 대체 | 근거 |");
+    lines.push("| --- | --- | --- | --- | --- | --- |");
+    for (const line of unparsed) lines.push(line.trim());
     lines.push("");
   }
 
@@ -302,7 +316,26 @@ function uncell(value: string): string {
  *    새 추출이 값을 갖고 있으면 그때 채워진다.
  */
 export function parseLedger(markdown: string): DecisionEntry[] {
+  return parseLedgerDetailed(markdown).entries;
+}
+
+/** 되읽기 결과. `unparsed`는 표 행인데 항목으로 해석하지 못한 원문 줄이다. */
+export interface LedgerParseResult {
+  entries: DecisionEntry[];
+  /**
+   * 해석하지 못한 표 행의 원문.
+   *
+   * 사용자가 상태 헤딩을 바꾸거나 근거 칸을 일반 텍스트·마크다운 링크로 고치면 그 행을
+   * 항목으로 만들 수 없다. 그냥 버리면 다음 승인이 생성 블록을 교체할 때 **그 행이
+   * 삭제된다** — 사용자가 손으로 쓴 것을 도구가 지우는 것이므로 원문을 돌려준다.
+   */
+  unparsed: string[];
+}
+
+/** parseLedger의 상세 형태. 해석하지 못한 행까지 돌려준다. */
+export function parseLedgerDetailed(markdown: string): LedgerParseResult {
   const out: DecisionEntry[] = [];
+  const unparsed: string[] = [];
   let status: DecisionStatus | null = null;
 
   for (const line of markdown.split("\n")) {
@@ -313,7 +346,12 @@ export function parseLedger(markdown: string): DecisionEntry[] {
     }
 
     const trimmed = line.trim();
-    if (status === null || !trimmed.startsWith("|")) continue;
+    if (!trimmed.startsWith("|")) continue;
+    // 상태 헤딩을 못 읽었으면 그 아래 표 행도 항목으로 만들 수 없다. 원문을 보존한다.
+    if (status === null) {
+      if (!isTableFurniture(trimmed)) unparsed.push(line);
+      continue;
+    }
 
     // 이스케이프된 파이프(\|)를 칸 구분자로 오인하지 않도록 분리한다.
     const rawCells = trimmed
@@ -321,15 +359,17 @@ export function parseLedger(markdown: string): DecisionEntry[] {
       .replace(/\|$/, "")
       .split(/(?<!\\)\|/)
       .map((c) => c.trim());
-    if (rawCells.length < 5) continue;
-
-    // 헤더 행과 구분선은 건너뛴다.
+    // 헤더 행과 구분선은 건너뛴다(보존 대상도 아니다 — formatLedger가 다시 만든다).
     //
     // 접두어("| ---" / "| 결정 |")로 판정하면 안 된다 — `---`로 시작하는 결정 문구나
     // "결정"이라는 결정 문구가 그 행을 구분선/헤더로 오인시켜 **항목이 사라진다**.
     // 칸 내용으로 판정하면 그런 오인이 없다.
-    if (rawCells.every((c) => /^:?-{2,}:?$/.test(c))) continue;
-    if (rawCells[0] === "결정" && rawCells[1] === "이유") continue;
+    if (isTableFurniture(trimmed)) continue;
+
+    if (rawCells.length < 5) {
+      unparsed.push(line);
+      continue;
+    }
 
     const cells = rawCells.map(uncell);
 
@@ -340,13 +380,21 @@ export function parseLedger(markdown: string): DecisionEntry[] {
     const supersededBy = hasSupersededColumn ? cells[4] : "";
     const sourceCell = hasSupersededColumn ? cells[5] : cells[4];
 
-    if (decision === "") continue;
+    if (decision === "") {
+      unparsed.push(line);
+      continue;
+    }
 
     // 위키링크에서 경로를 되읽는다. .md는 formatLedger가 떼므로 다시 붙인다.
     const sources = [...sourceCell.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) =>
       m[1].endsWith(".md") ? m[1] : `${m[1]}.md`
     );
-    if (sources.length === 0) continue;
+    // 근거 칸을 일반 텍스트나 마크다운 링크로 고친 행이 여기 온다. 항목으로 만들 수는
+    // 없지만 사용자가 쓴 것이므로 지우지 않는다.
+    if (sources.length === 0) {
+      unparsed.push(line);
+      continue;
+    }
 
     out.push({
       decision,
@@ -360,5 +408,16 @@ export function parseLedger(markdown: string): DecisionEntry[] {
     });
   }
 
-  return out;
+  return { entries: out, unparsed };
+}
+
+/** 표의 헤더 행이거나 구분선인지. formatLedger가 다시 만들므로 보존 대상이 아니다. */
+function isTableFurniture(trimmedLine: string): boolean {
+  const cells = trimmedLine
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim());
+  if (cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c))) return true;
+  return cells[0] === "결정" && cells[1] === "이유";
 }
