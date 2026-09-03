@@ -803,6 +803,15 @@ describe("decisionKey — 기호", () => {
     expect(decisionKey("F#로 간다")).not.toBe(decisionKey("F로 간다"));
   });
 
+  it("하이픈·슬래시 차이는 여전히 합친다", () => {
+    // 지울 문자를 열거하는 대신 남길 것만 두는 이유: 열거하면 빠뜨린 문자가 생기고
+    // 그때 같은 결함이 다시 난다. 대신 이전 병합 동작이 그대로 유지된다.
+    expect(decisionKey("모놀리식-마이크로서비스 전환")).toBe(
+      decisionKey("모놀리식 마이크로서비스 전환")
+    );
+    expect(decisionKey("A/B 테스트를 한다")).toBe(decisionKey("A B 테스트를 한다"));
+  });
+
   it("장식용 문장부호 차이는 여전히 합친다", () => {
     expect(decisionKey("Bedrock을 쓴다!")).toBe(decisionKey("  bedrock을   쓴다  "));
     expect(decisionKey("A로 간다.")).toBe(decisionKey("A로 간다"));

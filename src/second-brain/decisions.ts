@@ -100,16 +100,15 @@ export function parseDecisionReport(llmText: unknown, allowedPaths?: ReadonlySet
  * `A > B`와 `A < B`가 같은 키가 되어 mergeLedger가 서로 다른 결정을 하나로 합친다 —
  * 하나가 사라지고 상태·근거까지 섞인다.
  *
- * 남기는 것: 프로그래밍 언어·비교에 쓰이는 `# + < > = / & * -`.
- * 지우는 것: 문장 끝 장식(`. , ! ? ; :`)과 괄호·인용부호처럼 같은 결정을 다르게 적을 때
- * 흔히 달라지는 것들.
+ * 예외 목록을 열거하는 대신 **남길 것만** 둔다: `# + < >`. 지울 문자를 열거하면 빠뜨린
+ * 문자가 생기고, 그때 다시 같은 결함이 난다.
  */
-const DECORATIVE_PUNCTUATION = /[.,!?;:'"“”‘’()[\]{}·…]+/gu;
-
 export function decisionKey(decision: string): string {
   return decision
     .toLowerCase()
-    .replace(DECORATIVE_PUNCTUATION, " ")
+    // 문자·숫자·공백과 위 네 기호만 남긴다. 나머지는 공백으로 바꿔 같은 결정을 다르게
+    // 적은 경우(괄호·마침표·인용부호 차이)를 합친다.
+    .replace(/[^\p{L}\p{N}\s#+<>]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
