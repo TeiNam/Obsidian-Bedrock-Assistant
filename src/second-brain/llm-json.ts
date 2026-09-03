@@ -30,8 +30,12 @@ export interface JsonArrayParseResult<T> {
 /**
  * 텍스트에서 JSON 배열 구간을 추출한다.
  * - 코드펜스(```json ... ```)로 감싼 경우 내부만 취한다.
- * - 그 외에는 첫 '['부터 마지막 ']'까지를 배열 후보로 본다.
+ * - 그 외에는 **JSON 배열로 파싱되는** 최상위 구간을 앞에서부터 찾는다.
  * - 배열 구간을 찾지 못하면 null.
+ *
+ * 첫 `[`부터 마지막 `]`까지 자르면 안 된다. LLM이 `Result [draft]: [{"path":"a.md"}]`처럼
+ * 대괄호가 든 설명을 덧붙이면 `[draft]: [{...}]`가 되어 JSON이 깨지고, "앞뒤 설명을
+ * 허용한다"는 이 파서의 계약과 달리 모든 응답이 형식 오류가 된다.
  */
 export function extractJsonArray(text: string): string | null {
   let t = text;
@@ -40,10 +44,57 @@ export function extractJsonArray(text: string): string | null {
   if (fenceMatch) {
     t = fenceMatch[1].trim();
   }
-  const start = t.indexOf("[");
-  const end = t.lastIndexOf("]");
-  if (start < 0 || end < 0 || end < start) return null;
-  return t.slice(start, end + 1);
+
+  // 여는 `[`를 앞에서부터 시도한다. 균형이 맞는 것만으로는 부족하다 — `Result [draft]:`의
+  // `[draft]`도 균형이 맞는다. **JSON 배열로 파싱되는** 첫 후보를 찾는다.
+  for (let start = t.indexOf("["); start >= 0; start = t.indexOf("[", start + 1)) {
+    const end = findBalancedEnd(t, start);
+    if (end < 0) continue;
+    const candidate = t.slice(start, end + 1);
+    if (isJsonArray(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** 문자열이 JSON 배열로 파싱되는지. */
+function isJsonArray(text: string): boolean {
+  try {
+    return Array.isArray(JSON.parse(text));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `open` 위치의 `[`와 짝이 맞는 `]`의 인덱스. 없으면 -1.
+ *
+ * 문자열 안의 괄호는 세지 않는다 — `[{"note":"a]b"}]`처럼 값에 `]`가 들어 있으면
+ * 균형 계산이 어긋난다.
+ */
+function findBalancedEnd(text: string, open: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') inString = true;
+    else if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) return ch === "]" ? i : -1;
+      if (depth < 0) return -1;
+    }
+  }
+  return -1;
 }
 
 /**

@@ -86,3 +86,53 @@ describe("toStringArray / toTrimmedString", () => {
     expect(toTrimmedString(42)).toBe("");
   });
 });
+
+// ============================================
+// 설명 속 대괄호
+// ============================================
+/**
+ * 첫 `[`부터 마지막 `]`까지 자르면 LLM이 대괄호가 든 설명을 붙일 때 JSON이 깨지고,
+ * "앞뒤 설명을 허용한다"는 계약과 달리 모든 응답이 형식 오류가 된다.
+ */
+describe("extractJsonArray — 균형 잡힌 배열", () => {
+  it("설명 속 대괄호를 건너뛴다", () => {
+    const out = extractJsonArray('Result [draft]: [{"path":"a.md"}]');
+    expect(out).toBe('[{"path":"a.md"}]');
+    expect(JSON.parse(out ?? "")).toEqual([{ path: "a.md" }]);
+  });
+
+  it("뒤에 대괄호가 있는 설명도 처리한다", () => {
+    const out = extractJsonArray('[{"a":1}] 참고 [끝]');
+    expect(JSON.parse(out ?? "")).toEqual([{ a: 1 }]);
+  });
+
+  it("값에 든 대괄호를 괄호 균형에 세지 않는다", () => {
+    const out = extractJsonArray('[{"note":"a]b"}]');
+    expect(JSON.parse(out ?? "")).toEqual([{ note: "a]b" }]);
+  });
+
+  it("이스케이프된 따옴표를 문자열 끝으로 오인하지 않는다", () => {
+    const out = extractJsonArray('[{"note":"따옴표 \\" 그리고 ]"}]');
+    expect(JSON.parse(out ?? "")).toEqual([{ note: '따옴표 " 그리고 ]' }]);
+  });
+
+  it("중첩 배열을 온전히 가져온다", () => {
+    const out = extractJsonArray('앞말 [{"tags":["a","b"]}] 뒷말');
+    expect(JSON.parse(out ?? "")).toEqual([{ tags: ["a", "b"] }]);
+  });
+
+  it("JSON 배열이 없으면 null이다", () => {
+    expect(extractJsonArray("[잘린 배열")).toBeNull();
+    // `[단어]`는 괄호 균형이 맞지만 JSON이 아니다.
+    expect(extractJsonArray("설명 [단어] 만 있음")).toBeNull();
+  });
+
+  it("전체 파싱 경로에서도 동작한다", () => {
+    const out = parseJsonArray('Result [draft]: ["살아남음"]', (raw) =>
+      typeof raw === "string" ? raw : null
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.items).toEqual(["살아남음"]);
+  });
+});

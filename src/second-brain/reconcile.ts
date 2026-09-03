@@ -237,6 +237,13 @@ export interface ReconcileOutcome {
    * 정보 손실이다.
    */
   contradictions: Contradiction[];
+  /**
+   * 인덱스가 낡아 검색 품질이 떨어진 경우의 경고. 없으면 빈 문자열.
+   *
+   * 리포트 문자열에만 담으면 승인 화면 경로가 그것을 버린다 — 사용자는 검색이 낡은
+   * 인덱스로 돌았다는 사실을 모른 채 노트 수정을 승인하게 된다.
+   */
+  staleWarning: string;
 }
 
 /**
@@ -249,7 +256,11 @@ export async function runReconcileDetailed(
 ): Promise<ReconcileOutcome> {
   const trimmedTopic = topic.trim();
   if (trimmedTopic === "") {
-    return { report: "모순을 점검할 주제(topic)가 필요합니다.", contradictions: [] };
+    return {
+      report: "모순을 점검할 주제(topic)가 필요합니다.",
+      contradictions: [],
+      staleWarning: "",
+    };
   }
 
   // 1) 기존 Graph RAG 검색 재사용 (읽기 전용, 비파괴)
@@ -263,6 +274,7 @@ export async function runReconcileDetailed(
     return {
       report: `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 점검할 모순이 없습니다.${staleNote}`,
       contradictions: [],
+      staleWarning: staleNote.trim(),
     };
   }
 
@@ -292,6 +304,7 @@ export async function runReconcileDetailed(
         "어떤 노트도 변경하지 않았습니다.",
       ].join("\n"),
       contradictions: [],
+      staleWarning: staleNote.trim(),
     };
   }
 
@@ -310,11 +323,13 @@ export async function runReconcileDetailed(
           `어떤 노트도 변경하지 않았습니다.${staleNote}`,
         ].join("\n"),
         contradictions: [],
+        staleWarning: staleNote.trim(),
       };
     }
     return {
       report: `발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.${staleNote}`,
       contradictions: [],
+      staleWarning: staleNote.trim(),
     };
   }
 
@@ -322,6 +337,7 @@ export async function runReconcileDetailed(
   return {
     report: `${formatReconcileReport(contradictions)}${staleNote}`,
     contradictions,
+    staleWarning: staleNote.trim(),
   };
 }
 

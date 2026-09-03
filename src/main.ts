@@ -10,7 +10,9 @@ import {
   TFolder,
 } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
+import type { App } from "obsidian";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
+import { stripFrontmatterFromContent } from "./graph-rag/graph-extractor";
 import { ToolExecutor } from "./obsidian-tools";
 import { ChatView, VIEW_TYPE } from "./chat-view";
 import { GeminiSettingTab } from "./settings-tab";
@@ -115,16 +117,26 @@ const INDEX_DEBOUNCE_MS = 2000;
 const TRIAGE_EXCERPT_CHARS = 500;
 
 /**
- * 텍스트에 든 위키링크의 대상 경로(확장자 보정 포함).
+ * 텍스트에 든 위키링크가 **실제로 가리키는** 노트 경로.
  *
  * 생성된 블록이 다른 노트로 링크하면 그 노트의 백링크가 바뀐다. mtime은 그대로이므로
  * 인덱서가 스스로 알아채지 못해 대상을 명시적으로 넘겨야 한다.
+ *
+ * 링크 텍스트에 `.md`를 붙여 경로로 쓰면 안 된다. `[[Note]]`가 실제로는
+ * `Folder/Note.md`를 가리킬 수 있고, 그러면 존재하지 않는 `Note.md`만 갱신해 실제 대상의
+ * 백링크가 영구히 낡는다. 옵시디언의 해석기(getFirstLinkpathDest)에 맡긴다.
+ *
+ * @param sourcePath 링크가 적힌 노트. 상대 해석의 기준이다.
  */
-function wikiLinkTargets(text: string): string[] {
-  return [...text.matchAll(/\[\[([^\]\n]+)\]\]/g)]
-    .map((m) => (m[1].split("|")[0] ?? "").split("#")[0].trim())
-    .filter((path) => path !== "")
-    .map((path) => (path.toLowerCase().endsWith(".md") ? path : `${path}.md`));
+function wikiLinkTargets(app: App, text: string, sourcePath: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) {
+    const linkpath = (m[1].split("|")[0] ?? "").split("#")[0].trim();
+    if (linkpath === "") continue;
+    const dest = app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
+    if (dest) out.push(dest.path);
+  }
+  return out;
 }
 
 const SCHEDULER_TICK_MS = 30 * 60 * 1000;
@@ -630,8 +642,9 @@ export default class GeminiAssistantPlugin extends Plugin {
           try {
             const content = await this.app.vault.cachedRead(f);
             // 프론트매터를 빼야 YAML이 발췌를 채워 LLM이 본문을 못 보는 일을 막는다.
-            const end = this.app.metadataCache.getFileCache(f)?.frontmatterPosition?.end?.offset;
-            const body = typeof end === "number" && end >= 0 ? content.slice(end) : content;
+            // 경계는 **읽은 내용에서** 계산한다 — 방금 만든 노트는 metadataCache의 오프셋이
+            // 아직 없거나 낡아서, 캐시를 쓰면 YAML이 발췌에 들어가거나 본문 앞이 잘린다.
+            const body = stripFrontmatterFromContent(content);
             return { path: f.path, excerpt: body.slice(0, TRIAGE_EXCERPT_CHARS).trim() };
           } catch (error) {
             // 읽기 실패는 인덱스 발췌로 폴백한다 — 한 파일 때문에 검토 전체를 막지 않는다.
@@ -832,7 +845,23 @@ export default class GeminiAssistantPlugin extends Plugin {
         return;
       }
 
-      new DecisionReviewModal(this.app, this, parsed.items, async (approved) => {
+      new DecisionReviewModal(this.app, this, parsed.items, async (rawApproved) => {
+        // 검색 이후 근거 노트가 지워지거나 이름이 바뀔 수 있다. allowedPaths 검사는 검색
+        // 시점의 스냅샷만 봤으므로, 병합 직전에 다시 확인하지 않으면 원장에 확인할 수 없는
+        // 깨진 근거 링크가 남는다 — 원장의 가치는 근거를 되짚을 수 있다는 것뿐이다.
+        const approved = rawApproved
+          .map((entry) => ({
+            ...entry,
+            sources: entry.sources.filter(
+              (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile
+            ),
+          }))
+          .filter((entry) => entry.sources.length > 0);
+
+        if (approved.length === 0) {
+          return { merged: 0, total: 0 };
+        }
+
         const wikiFolder = this.settings.secondBrain.wikiFolder;
         const ledgerPath = normalizePath(`${wikiFolder}/${DECISION_LEDGER_FILE}`);
         const existing = this.app.vault.getAbstractFileByPath(ledgerPath);
@@ -905,10 +934,21 @@ export default class GeminiAssistantPlugin extends Plugin {
       let aliases = 0;
       /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
       const touched = new Set<string>();
+      /** 정본이 링크한 중복 노트. 백링크가 바뀌므로 갱신 대상이다. */
+      const linkedDuplicates = new Set<string>();
 
-      for (const cluster of approved) {
-        const file = this.app.vault.getAbstractFileByPath(cluster.canonical.path);
+      for (const rawCluster of approved) {
+        const file = this.app.vault.getAbstractFileByPath(rawCluster.canonical.path);
         if (!(file instanceof TFile)) continue;
+
+        // 승인 화면이 열려 있는 동안 중복 노트가 지워지거나 이름이 바뀔 수 있다. 군집은
+        // 인덱스 스냅샷에서 왔으므로 낡은 목록을 그대로 쓰면 존재하지 않는 노트의 별칭과
+        // 깨진 링크가 정본에 기록된다 — 살아 있는 후보만으로 다시 구성한다.
+        const liveDuplicates = rawCluster.duplicates.filter(
+          (d) => this.app.vault.getAbstractFileByPath(d.path) instanceof TFile
+        );
+        if (liveDuplicates.length === 0) continue;
+        const cluster = { ...rawCluster, duplicates: liveDuplicates };
 
         // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
         // 형식이 뭉개진다.
@@ -938,15 +978,13 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (blockChanged || addedAliases > 0) {
           notes++;
           touched.add(cluster.canonical.path);
+          for (const d of liveDuplicates) linkedDuplicates.add(d.path);
         }
       }
 
       // 중복 후보 블록은 각 중복 노트로 향하는 위키링크를 담는다 — 그 노트들의 백링크도
-      // 갱신 대상이다.
-      await this.syncIndexAfterApply(
-        touched,
-        approved.flatMap((c) => c.duplicates.map((d) => d.path))
-      );
+      // 갱신 대상이다. 실제로 기록된(살아 있는) 대상만 넘긴다.
+      await this.syncIndexAfterApply(touched, linkedDuplicates);
 
       return { notes, aliases };
     }).open();
@@ -1064,6 +1102,10 @@ export default class GeminiAssistantPlugin extends Plugin {
       return;
     }
 
+    // 후보가 있어도 검색이 낡은 인덱스로 돌았다면 그 사실을 알린다. 리포트에만 담아
+    // 모달로 넘기면 사용자는 검색 품질이 떨어진 것을 모른 채 노트 수정을 승인한다.
+    if (outcome.staleWarning !== "") new Notice(outcome.staleWarning, 10000);
+
     new ReconcileReviewModal(
       this.app,
       this,
@@ -1082,7 +1124,11 @@ export default class GeminiAssistantPlugin extends Plugin {
         // mtime은 바뀌지 않아 백링크가 계속 낡는다.
         await this.syncIndexAfterApply(
           new Set(approved.flatMap((item) => item.notePaths)),
-          approved.flatMap((item) => wikiLinkTargets(item.suggestion))
+          approved.flatMap((item) =>
+            item.notePaths.flatMap((notePath) =>
+              wikiLinkTargets(this.app, item.suggestion, notePath)
+            )
+          )
         );
 
         return summary;

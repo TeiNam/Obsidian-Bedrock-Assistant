@@ -952,3 +952,32 @@ describe("applyReconciliations — 실행 사이 누적", () => {
     expect(process).not.toHaveBeenCalled();
   });
 });
+
+describe("runReconcileDetailed — staleWarning", () => {
+  it("낡은 인덱스 경고를 별 필드로 돌려준다", async () => {
+    // 리포트 문자열에만 담으면 승인 화면 경로가 그것을 버린다 — 사용자는 검색이 낡은
+    // 인덱스로 돌았다는 사실을 모른 채 노트 수정을 승인한다.
+    const stale = {
+      items: [makeItem({ path: "A.md" })],
+      staleEmbeddings: true,
+      usedKeywordFallback: true,
+    };
+    const text = JSON.stringify([
+      { notePaths: ["A.md"], statements: ["x", "y"], suggestion: "합친다" },
+    ]);
+    const { ctx } = makeContext(stale, text);
+
+    const outcome = await runReconcileDetailed(ctx, "주제 X");
+
+    expect(outcome.contradictions).toHaveLength(1);
+    expect(outcome.staleWarning).not.toBe("");
+    // 리포트에도 여전히 들어 있다(도구 응답 경로용).
+    expect(outcome.report).toContain(outcome.staleWarning.trim());
+  });
+
+  it("인덱스가 정상이면 빈 문자열이다", async () => {
+    const { ctx } = makeContext({ items: [makeItem({ path: "A.md" })] }, "[]");
+
+    expect((await runReconcileDetailed(ctx, "주제 X")).staleWarning).toBe("");
+  });
+});

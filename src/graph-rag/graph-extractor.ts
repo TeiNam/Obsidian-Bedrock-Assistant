@@ -156,11 +156,22 @@ export function stripFrontmatter(content: string, source: MetadataSource, path: 
 }
 
 /**
+ * 원문에서 frontmatter를 제거한 본문. 캐시 없이 쓸 수 있는 형태다.
+ *
+ * 발췌를 만드는 곳처럼 metadataCache를 거칠 이유가 없는 호출부가 쓴다 — 캐시를 쓰면
+ * 방금 만든 노트에서 오프셋이 낡아 YAML이 발췌를 채운다.
+ */
+/**
  * 원문에서 frontmatter가 끝나는 오프셋(닫는 `---` 줄의 끝). 없으면 null.
  *
  * 옵시디언과 같은 규칙: 문서 첫 줄이 `---`이고, 그 뒤에 `---`만 있는 줄이 나오면 거기까지가
  * frontmatter다. 닫는 줄을 찾지 못하면 frontmatter가 아니라고 본다(손상된 YAML).
  */
+export function stripFrontmatterFromContent(content: string): string {
+  const end = frontmatterEndFromContent(content);
+  return end === null ? content : content.slice(end);
+}
+
 function frontmatterEndFromContent(content: string): number | null {
   if (!/^---[ \t]*\r?\n/.test(content)) return null;
 
