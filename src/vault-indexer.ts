@@ -28,6 +28,17 @@ import { fuseRanks, reserveSlots } from "./graph-rag/rank-fusion";
 
 /** Graph_RAG_Search 단일 결과 항목 (시드/이웃 구분 및 관계 정보 포함, Req 7.2~7.4). */
 /**
+ * 검색 결과에 실을 적중 본문의 최대 길이.
+ *
+ * 청크 크기는 사용자 설정이고 상한이 MAX_CHUNK_SIZE(100만 자)다. 적중 본문은 그대로
+ * LLM 프롬프트에 들어가므로(toSearchHits → 종합·모순·결정 추출) 경계를 두지 않으면
+ * 설정 하나로 프롬프트가 무제한 커진다.
+ *
+ * 기본 청크 크기(2000)와 같게 잡아 기본 설정에서는 아무것도 잘리지 않는다.
+ */
+const MATCHED_TEXT_MAX_CHARS = 2000;
+
+/**
  * 적중 청크에서 검색 결과에 실을 필드를 뽑는다.
  *
  * 본문이 빈 청크(레거시 폴백)에는 matchedText를 붙이지 않는다 — 빈 문자열을 실으면
@@ -38,7 +49,7 @@ function matchedFields(
   match: { heading: string | null; text: string } | null
 ): { heading: string | null; matchedText?: string } {
   if (match === null) return { heading: null };
-  const text = match.text.trim();
+  const text = match.text.trim().slice(0, MATCHED_TEXT_MAX_CHARS);
   return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
 }
 

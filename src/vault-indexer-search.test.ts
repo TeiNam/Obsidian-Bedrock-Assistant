@@ -302,6 +302,40 @@ describe("VaultIndexer 적중 청크 본문", () => {
     expect(result.items[0].excerpt).toBe("도입부 문장입니다");
   });
 
+  it("적중 본문에 상한을 둔다", async () => {
+    // 청크 크기는 사용자 설정이고 상한이 100만 자다. 적중 본문은 그대로 프롬프트에
+    // 들어가므로 경계가 없으면 설정 하나로 프롬프트가 무제한 커진다.
+    const huge = "가".repeat(5000);
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "huge.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "큰 노트",
+          excerpt: "도입부",
+          searchText: huge,
+          chunks: [{ index: 0, text: huge, embedding: [1, 0, 0], charStart: 0 }],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(payload);
+
+    const result = await indexer.search("가");
+
+    expect(result.items[0].matchedText?.length).toBe(2000);
+  });
+
   it("도입부가 맞으면 도입부 본문을 싣는다", async () => {
     const client = {
       getEmbedding: vi.fn(async () => [1, 0, 0]),
