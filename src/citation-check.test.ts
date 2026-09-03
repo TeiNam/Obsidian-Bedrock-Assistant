@@ -477,3 +477,26 @@ describe("extractCitations — 마크다운 링크의 앵커", () => {
     expect(out).toHaveLength(1);
   });
 });
+
+describe("extractCitations — 잘못된 URI 이스케이프", () => {
+  it("디코딩 실패가 다른 인용의 검증을 막지 않는다", () => {
+    // decodeURIComponent가 던지면 호출부의 try/catch가 검증 전체를 포기한다 —
+    // 인용 하나의 형식 오류가 검증 기능을 끄는 셈이다.
+    const text = "[깨진](Note%ZZ.md) 그리고 [[없는노트]]";
+
+    const out = extractCitations(text);
+
+    expect(out.map((c) => c.target)).toContain("없는노트");
+    // 깨진 것도 원문 그대로 대상으로 남는다.
+    expect(out.map((c) => c.target)).toContain("Note%ZZ.md");
+  });
+
+  it("퍼센트만 든 경로도 예외를 던지지 않는다", () => {
+    expect(() => extractCitations("[x](100%.md)")).not.toThrow();
+    expect(() => extractCitations("[x](Note.md#100%)")).not.toThrow();
+  });
+
+  it("정상 인코딩은 여전히 디코딩한다", () => {
+    expect(extractCitations("[x](%ED%8F%B4%EB%8D%94/Note.md)")[0].target).toBe("폴더/Note.md");
+  });
+});

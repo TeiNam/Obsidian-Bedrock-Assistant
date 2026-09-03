@@ -99,6 +99,21 @@ function looksLikeUrl(target: string): boolean {
  * 같은 대상이 여러 번 인용되면 한 번만 반환한다(대상 기준 중복 제거).
  */
 /**
+ * URI 디코딩. 실패하면 원문을 그대로 쓴다.
+ *
+ * `decodeURIComponent`는 `%ZZ`처럼 잘못된 이스케이프에 URIError를 던진다. 그대로 두면
+ * 호출부의 try/catch가 검증 **전체**를 포기해서, 같은 응답의 다른 깨진 인용도 경고되지
+ * 않는다 — 인용 하나의 형식 오류가 검증 기능을 끄는 셈이다.
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
  * 대상이 마크다운이 아닌 파일을 가리키는지.
  *
  * 확장자가 있고 그것이 `.md`가 아니면 첨부 파일로 본다. 확장자가 없으면 노트다 —
@@ -145,8 +160,8 @@ export function extractCitations(markdown: string): Citation[] {
   // 2) 마크다운 링크 중 .md 대상. 헤딩 앵커(`Note.md#절`)까지 받는다 —
   //    받지 않으면 그 형태로 존재하지 않는 노트·절을 인용해도 검증되지 않는다.
   for (const m of text.matchAll(/\[[^\]\n]*\]\(([^)\s#]+\.md)(#[^)\s]*)?(?:\s[^)]*)?\)/gi)) {
-    const target = decodeURIComponent(m[1]);
-    const anchor = m[2] === undefined ? "" : decodeURIComponent(m[2]);
+    const target = safeDecode(m[1]);
+    const anchor = m[2] === undefined ? "" : safeDecode(m[2]);
     add(m[0], splitTarget(`${target}${anchor}`));
   }
 

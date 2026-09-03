@@ -114,6 +114,19 @@ const INDEX_DEBOUNCE_MS = 2000;
  */
 const TRIAGE_EXCERPT_CHARS = 500;
 
+/**
+ * 텍스트에 든 위키링크의 대상 경로(확장자 보정 포함).
+ *
+ * 생성된 블록이 다른 노트로 링크하면 그 노트의 백링크가 바뀐다. mtime은 그대로이므로
+ * 인덱서가 스스로 알아채지 못해 대상을 명시적으로 넘겨야 한다.
+ */
+function wikiLinkTargets(text: string): string[] {
+  return [...text.matchAll(/\[\[([^\]\n]+)\]\]/g)]
+    .map((m) => (m[1].split("|")[0] ?? "").split("#")[0].trim())
+    .filter((path) => path !== "")
+    .map((path) => (path.toLowerCase().endsWith(".md") ? path : `${path}.md`));
+}
+
 const SCHEDULER_TICK_MS = 30 * 60 * 1000;
 
 /** 접근 이력 저장 디바운스 지연(ms). 노트를 열 때마다 디스크에 쓰지 않기 위함이다. */
@@ -1043,11 +1056,21 @@ export default class GeminiAssistantPlugin extends Plugin {
       async (approved) => {
         // 항목별로 따로 반영하면 두 항목이 같은 노트를 가리킬 때 뒤엣것이 앞엣것을
         // 덮어쓴다(둘 다 같은 Sentinel_Block 키를 쓴다). 노트 단위로 합쳐 한 번씩 쓴다.
-        return applyReconciliations(
+        const summary = await applyReconciliations(
           this.buildSecondBrainContext(),
           approved,
           buildDateStr(new Date())
         );
+
+        // 본문과 learned_at이 바뀌었으므로 인덱스를 맞춘다. 디바운스 재색인만 믿으면
+        // 그 전에 앱이 닫히면 갱신이 사라지고, 정정안에 위키링크가 있으면 대상 노트의
+        // mtime은 바뀌지 않아 백링크가 계속 낡는다.
+        await this.syncIndexAfterApply(
+          new Set(approved.flatMap((item) => item.notePaths)),
+          approved.flatMap((item) => wikiLinkTargets(item.suggestion))
+        );
+
+        return summary;
       }
     ).open();
   }

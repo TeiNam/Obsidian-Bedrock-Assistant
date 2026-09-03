@@ -156,6 +156,29 @@ describe("인덱싱 도중 삭제: 삭제된 노트가 부활하지 않는다", 
     expect(indexer.size).toBe(0);
   });
 
+  it("본문을 읽는 도중 삭제되면 기록하지 않는다", async () => {
+    // 세대를 첫 await **뒤에** 잡으면 cachedRead 도중 삭제된 노트를 되살린다 — 삭제된
+    // 민감 내용이 검색에 남는다. 임베딩 도중 삭제와 같은 보장이어야 한다.
+    const file = makeTFile("note.md");
+
+    let indexer: VaultIndexer;
+    const app = {
+      vault: {
+        getMarkdownFiles: () => [file],
+        cachedRead: async () => {
+          indexer.removeFile("note.md");
+          return "# 노트\n본문";
+        },
+        getAbstractFileByPath: (p: string) => (p === file.path ? file : null),
+      },
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[0];
+
+    indexer = new VaultIndexer(app, makeClient());
+    await indexer.indexFile(file);
+
+    expect(indexer.size).toBe(0);
+  });
+
   it("복원 후 다시 삭제되면 그 작업도 취소된다", async () => {
     // 세대 번호가 누적되므로 두 번째 사이클도 같게 동작해야 한다.
     const file = makeTFile("note.md");

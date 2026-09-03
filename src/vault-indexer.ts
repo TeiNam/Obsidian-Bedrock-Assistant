@@ -412,8 +412,10 @@ export class VaultIndexer {
 
     // lastModified 체크 없이 강제 인덱싱
     private async forceIndexFile(file: TFile): Promise<void> {
-      // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+      // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다(indexFile과 같은 이유 — 세대를
+      // 첫 await 뒤에 잡으면 cachedRead 도중 삭제된 노트를 되살린다).
       const readMtime = file.stat.mtime;
+      const generation = this.currentGeneration(file.path);
       const content = await this.app.vault.cachedRead(file);
       // 내용이 비워진 노트는 인덱스에서 제거한다. 그냥 반환하면 이전 본문과 임베딩이
       // 계속 검색되어, 사용자가 지운 내용이 LLM에 노출된다.
@@ -422,7 +424,6 @@ export class VaultIndexer {
         return;
       }
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
-      const generation = this.currentGeneration(file.path);
       const entry = await this.buildEntry(file, content, readMtime);
       // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
       this.commitEntry(file.path, entry, generation);
@@ -603,8 +604,12 @@ export class VaultIndexer {
       return;
     }
 
-    // 본문을 읽기 전에 mtime을 캡처한다(임베딩 완료 후 읽으면 TOCTOU 발생).
+    // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다.
+    // - mtime: 임베딩 완료 후 읽으면 TOCTOU 발생
+    // - 세대: **첫 await 전에** 잡아야 한다. cachedRead 도중 삭제되면 이미 증가한 값을
+    //   잡게 되고, commitEntry가 정상 작업으로 판단해 삭제된 노트를 되살린다.
     const readMtime = file.stat.mtime;
+    const generation = this.currentGeneration(file.path);
     const content = await this.app.vault.cachedRead(file);
     // 내용이 비워진 노트는 인덱스에서 제거한다(이전 본문이 계속 검색되는 것을 방지).
     if (!content.trim()) {
@@ -613,7 +618,6 @@ export class VaultIndexer {
     }
 
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
-    const generation = this.currentGeneration(file.path);
     const entry = await this.buildEntry(file, content, readMtime);
     // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
     this.commitEntry(file.path, entry, generation);
