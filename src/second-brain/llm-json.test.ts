@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import fc from "fast-check";
 import { parseJsonArray, extractJsonArray, toStringArray, toTrimmedString } from "./llm-json";
 
 /** 문자열만 통과시키는 최소 정규화기. */
@@ -134,5 +135,96 @@ describe("extractJsonArray — 균형 잡힌 배열", () => {
 
     expect(out.ok).toBe(true);
     expect(out.items).toEqual(["살아남음"]);
+  });
+});
+
+// ============================================
+// Property: 유효한 배열은 어떤 설명에 감싸여도 추출된다
+// ============================================
+/**
+ * 이 파서는 모든 Second Brain LLM 응답이 통과하는 관문이다. 여기서 유효한 배열을 놓치면
+ * 기능 전체가 "형식 오류"로 멈춘다.
+ */
+describe("Property: extractJsonArray", () => {
+  /** 앞뒤에 붙을 수 있는 설명. 대괄호·중괄호·따옴표를 포함한다. */
+  const prose = fc.constantFrom(
+    "",
+    "결과: ",
+    "Result [draft]: ",
+    "다음과 같습니다 {요약} ",
+    '설명 "인용" ',
+    "[1] 참고 ",
+    "```json\n",
+    "\n"
+  );
+
+  /**
+   * 실제 스키마 모양의 배열 — **객체 원소 1개 이상**.
+   *
+   * 원시값 배열이나 빈 배열은 산문 속 각주 표기(`[1] 참고`)와 구분할 수 없다. 어느 쪽이
+   * 의도인지 알 방법이 없어 파서는 앞에 있는 것을 택한다(소스의 ponytail 주석 참고).
+   * 여기서는 보장할 수 있는 것만 보장한다.
+   */
+  const arrayArb = fc.array(
+    fc.record({
+      path: fc.stringMatching(/^[가-힣A-Za-z0-9 /._-]{1,20}$/),
+      tags: fc.array(fc.stringMatching(/^[a-z-]{1,8}$/), { maxLength: 3 }),
+    }),
+    { minLength: 1, maxLength: 4 }
+  );
+
+  it("설명에 감싸인 객체 배열을 원본 그대로 되살린다", () => {
+    fc.assert(
+      fc.property(prose, arrayArb, prose, (before, arr, after) => {
+        // parseJsonArray로 검증한다 — 후보가 여러 개일 때 고르는 것은 정규화기의 일이다.
+        const out = parseJsonArray(`${before}${JSON.stringify(arr)}${after}`, (raw) =>
+          raw !== null && typeof raw === "object" ? raw : null
+        );
+
+        expect(out.ok).toBe(true);
+        expect(out.items).toEqual(arr);
+      }),
+      { numRuns: 500 }
+    );
+  });
+
+  it("추출 결과는 항상 JSON 배열로 파싱된다", () => {
+    fc.assert(
+      fc.property(fc.string({ maxLength: 60 }), (text) => {
+        const out = extractJsonArray(text);
+        if (out === null) return;
+        expect(Array.isArray(JSON.parse(out))).toBe(true);
+      }),
+      { numRuns: 500 }
+    );
+  });
+
+  it("각주 표기가 앞에 있어도 실제 응답을 고른다", () => {
+    // extractJsonArray는 첫 후보를 준다(하위 호환).
+    expect(extractJsonArray('[1] 참고 [{"path":"a.md"}]')).toBe("[1]");
+    // parseJsonArray는 정규화를 통과한 항목이 가장 많은 후보를 고른다.
+    const out = parseJsonArray('[1] 참고 [{"path":"a.md"}]', (raw) =>
+      raw !== null && typeof raw === "object" ? (raw as { path: string }) : null
+    );
+
+    expect(out.items).toEqual([{ path: "a.md" }]);
+    expect(out.dropped).toBe(0);
+  });
+
+  it("전부 0건이면 앞의 후보를 택한다", () => {
+    // 빈 배열 응답이 이 경로다. 어느 쪽을 택해도 결과가 같다.
+    const out = parseJsonArray("[1] 참고 []", (raw) => (typeof raw === "string" ? raw : null));
+    expect(out.ok).toBe(true);
+    expect(out.items).toEqual([]);
+  });
+
+  it("parseJsonArray는 유효 배열을 항상 ok로 받는다", () => {
+    fc.assert(
+      fc.property(prose, arrayArb, (before, arr) => {
+        const out = parseJsonArray(`${before}${JSON.stringify(arr)}`, (raw) => raw ?? null);
+        expect(out.ok).toBe(true);
+      }),
+      { numRuns: 500 }
+    );
   });
 });

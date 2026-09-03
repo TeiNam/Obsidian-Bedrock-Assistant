@@ -45,15 +45,33 @@ export function extractJsonArray(text: string): string | null {
     t = fenceMatch[1].trim();
   }
 
-  // 여는 `[`를 앞에서부터 시도한다. 균형이 맞는 것만으로는 부족하다 — `Result [draft]:`의
-  // `[draft]`도 균형이 맞는다. **JSON 배열로 파싱되는** 첫 후보를 찾는다.
+  return extractJsonArrayCandidates(t)[0] ?? null;
+}
+
+/**
+ * 텍스트에서 JSON 배열로 파싱되는 모든 구간을 등장 순서대로 돌려준다.
+ *
+ * 후보가 여러 개인 이유: 산문에 각주 표기(`[1] 참고`)나 예시가 섞이면 그것도 유효한 JSON
+ * 배열이다. 어느 것이 응답인지는 **원소를 정규화해 봐야** 알 수 있으므로(정규화기를 가진
+ * parseJsonArray가 판단한다) 여기서는 고르지 않고 전부 준다.
+ */
+export function extractJsonArrayCandidates(text: string): string[] {
+  let t = text;
+  const fenceMatch = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) t = fenceMatch[1].trim();
+
+  const out: string[] = [];
   for (let start = t.indexOf("["); start >= 0; start = t.indexOf("[", start + 1)) {
     const end = findBalancedEnd(t, start);
     if (end < 0) continue;
     const candidate = t.slice(start, end + 1);
-    if (isJsonArray(candidate)) return candidate;
+    if (isJsonArray(candidate)) {
+      out.push(candidate);
+      // 이 배열 안쪽의 `[`는 같은 구간을 다시 잡을 뿐이므로 건너뛴다.
+      start = end;
+    }
   }
-  return null;
+  return out;
 }
 
 /** 문자열이 JSON 배열로 파싱되는지. */
@@ -114,26 +132,31 @@ export function parseJsonArray<T>(
   const text = llmText.trim();
   if (text === "") return { ok: false, items: [], dropped: 0 };
 
-  const jsonText = extractJsonArray(text);
-  if (jsonText === null) return { ok: false, items: [], dropped: 0 };
+  const candidates = extractJsonArrayCandidates(text);
+  if (candidates.length === 0) return { ok: false, items: [], dropped: 0 };
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    return { ok: false, items: [], dropped: 0 };
+  // 후보가 여러 개면 **정규화를 통과한 항목이 가장 많은** 것을 응답으로 본다.
+  //
+  // 산문에 각주 표기가 섞이면(`[1] 참고 [{"path":"a.md"}]`) 앞에 있는 `[1]`도 유효한 JSON
+  // 배열이다. 앞에서부터 첫 후보를 집으면 실제 응답이 버려진다. 정규화기가 스키마를 알기
+  // 때문에 여기서만 가릴 수 있다.
+  //
+  // 동수면 앞에 있는 것을 택한다 — 전부 0건인 경우(빈 배열 응답)가 여기 온다.
+  let best: { items: T[]; dropped: number } | null = null;
+  for (const candidate of candidates) {
+    const parsed = JSON.parse(candidate) as unknown[];
+    const items: T[] = [];
+    let dropped = 0;
+    for (const raw of parsed) {
+      const item = normalize(raw);
+      if (item === null) dropped++;
+      else items.push(item);
+    }
+    if (best === null || items.length > best.items.length) best = { items, dropped };
   }
 
-  if (!Array.isArray(parsed)) return { ok: false, items: [], dropped: 0 };
-
-  const items: T[] = [];
-  let dropped = 0;
-  for (const raw of parsed) {
-    const item = normalize(raw);
-    if (item === null) dropped++;
-    else items.push(item);
-  }
-  return { ok: true, items, dropped };
+  // 후보가 하나 이상이므로 best는 반드시 채워진다. 단정 대신 기본값으로 표현한다.
+  return { ok: true, items: best?.items ?? [], dropped: best?.dropped ?? 0 };
 }
 
 /** 값이 문자열 배열이면 문자열 원소만 추려 반환하고, 아니면 빈 배열을 반환한다. */
