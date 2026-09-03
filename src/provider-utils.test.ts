@@ -15,7 +15,14 @@ import {
 	toOpenAIMessages,
 	toOllamaMessages,
 	supportsEffort,
-	supportsBinaryAttachments,
+	supportsAttachmentKind,
+	supportsAttachmentFormat,
+	attachmentKindOf,
+	attachmentMimeType,
+	bytesToBase64,
+	backendsSupportingFormat,
+	supportsPromptCaching,
+	MIN_CACHEABLE_PREFIX_CHARS,
 	supportsPromptCaching,
 	MIN_CACHEABLE_PREFIX_CHARS,
 	effortLevels,
@@ -1297,61 +1304,155 @@ describe("provider-utils embeddingSignature", () => {
 });
 
 // ============================================
-// supportsBinaryAttachments: 변환기 실제 동작과의 결합
+// 첨부 능력 판정 + 변환기 실제 동작과의 결합
 // ============================================
 /**
- * chat-view는 이미지·문서 첨부를 Bedrock Converse 규격 블록으로 만들고,
- * supportsBinaryAttachments가 false인 백엔드에서는 첨부 자체를 거절한다.
+ * chat-view는 이미지·문서 첨부를 Bedrock Converse 규격 블록으로 만들고, 백엔드가 그
+ * 형식을 전달하지 못하면 첨부 자체를 거절한다.
  *
- * 이 판정이 변환기의 실제 동작과 어긋나면 두 방향으로 조용히 틀린다:
+ * 판정이 변환기의 실제 동작과 어긋나면 두 방향으로 조용히 틀린다:
  *  - false인데 변환기가 처리할 수 있으면 → 쓸 수 있는 기능을 막는다.
  *  - true인데 변환기가 못 하면 → 사용자가 첨부를 봤다고 믿은 채 엉뚱한 답을 받는다.
  *
- * 그래서 "변환 결과에 첨부 흔적이 남는가"로 실제 능력을 재고, 판정과 비교한다.
- * 나중에 toOpenAIMessages 등에 블록 변환을 구현하면 여기서 먼저 실패하므로
- * 판정을 함께 고치도록 강제된다.
+ * 그래서 "변환 결과에 첨부 흔적이 남는가"로 실제 능력을 재고 판정과 비교한다.
  */
-describe("supportsBinaryAttachments — 변환기 실제 동작과 일치", () => {
-	/** chat-view의 buildBinaryContentBlock이 만드는 것과 같은 모양의 이미지 블록. */
+describe("첨부 능력 판정", () => {
+	it("확장자의 종류를 분류한다", () => {
+		expect(attachmentKindOf("png")).toBe("image");
+		expect(attachmentKindOf("JPEG")).toBe("image");
+		expect(attachmentKindOf("pdf")).toBe("document");
+		expect(attachmentKindOf("docx")).toBe("document");
+		// 텍스트로 인라인하는 형식과 미지원 형식은 바이너리 첨부가 아니다.
+		expect(attachmentKindOf("md")).toBeNull();
+		expect(attachmentKindOf("zip")).toBeNull();
+		expect(attachmentKindOf("")).toBeNull();
+	});
+
+	it("이미지는 네 백엔드 모두 지원한다", () => {
+		for (const p of ["bedrock", "gemini", "openai", "ollama"] as const) {
+			expect(supportsAttachmentKind(p, "image")).toBe(true);
+			expect(supportsAttachmentFormat(p, "png")).toBe(true);
+		}
+	});
+
+	it("문서는 Bedrock과 Gemini만 지원한다", () => {
+		expect(supportsAttachmentKind("bedrock", "document")).toBe(true);
+		expect(supportsAttachmentKind("gemini", "document")).toBe(true);
+		// OpenAI는 type:"file" 규격이 모델·커스텀 엔드포인트에 따라 달라 제외했다.
+		expect(supportsAttachmentKind("openai", "document")).toBe(false);
+		expect(supportsAttachmentKind("ollama", "document")).toBe(false);
+	});
+
+	it("Gemini는 PDF만 문서로 받고 Office 형식은 거절한다", () => {
+		// 종류 단위 판정만으로는 이 구분을 못 한다 — 그래서 형식 단위 함수가 따로 있다.
+		expect(supportsAttachmentFormat("gemini", "pdf")).toBe(true);
+		expect(supportsAttachmentFormat("gemini", "docx")).toBe(false);
+		expect(supportsAttachmentFormat("gemini", "xlsx")).toBe(false);
+		// Bedrock은 Office 형식을 네이티브로 받는다.
+		expect(supportsAttachmentFormat("bedrock", "docx")).toBe(true);
+	});
+
+	it("MIME 타입을 형식별로 매핑한다", () => {
+		expect(attachmentMimeType("png")).toBe("image/png");
+		expect(attachmentMimeType("jpg")).toBe("image/jpeg");
+		expect(attachmentMimeType("pdf")).toBe("application/pdf");
+		expect(attachmentMimeType("zip")).toBeNull();
+	});
+
+	it("바이트열을 base64로 인코딩한다", () => {
+		expect(bytesToBase64(new Uint8Array([104, 105]))).toBe("aGk=");
+		expect(bytesToBase64(new Uint8Array([]))).toBe("");
+	});
+});
+
+describe("변환기가 첨부를 실제로 전달한다", () => {
+	const PNG_BYTES = new Uint8Array([137, 80, 78, 71]);
 	const imageMessage = [
 		{
 			role: "user" as const,
 			content: [
-				{ image: { format: "png", source: { bytes: new Uint8Array([1, 2, 3]) } } },
+				{ image: { format: "png", source: { bytes: PNG_BYTES } } },
 				{ text: "이 이미지를 설명해줘" },
 			],
 		},
 	];
 
-	it("Bedrock은 지원한다고 판정한다", () => {
-		// bedrock-client는 content를 ConverseStreamCommand에 그대로 넘긴다.
-		expect(supportsBinaryAttachments("bedrock")).toBe(true);
+	it("OpenAI는 이미지를 image_url 데이터 URL로 보낸다", () => {
+		const out = toOpenAIMessages(imageMessage) as Array<Record<string, unknown>>;
+
+		expect(out).toHaveLength(1);
+		const parts = out[0].content as Array<Record<string, unknown>>;
+		expect(Array.isArray(parts)).toBe(true);
+		const image = parts.find((p) => p.type === "image_url");
+		expect((image?.image_url as Record<string, string>).url).toBe(
+			`data:image/png;base64,${bytesToBase64(PNG_BYTES)}`
+		);
+		// 같은 메시지의 텍스트도 함께 실린다.
+		expect(parts.find((p) => p.type === "text")?.text).toBe("이 이미지를 설명해줘");
 	});
 
-	it("이미지 블록을 버리는 변환기의 백엔드는 지원한다고 판정하지 않는다", () => {
-		const openai = JSON.stringify(toOpenAIMessages(imageMessage));
-		const ollama = JSON.stringify(toOllamaMessages(imageMessage));
+	it("Ollama는 이미지를 메시지 레벨 images 배열로 보낸다", () => {
+		const out = toOllamaMessages(imageMessage) as Array<Record<string, unknown>>;
 
-		// 이미지 흔적("png")이 남지 않는다 = 변환기가 블록을 버렸다.
-		expect(openai).not.toContain("png");
-		expect(ollama).not.toContain("png");
-		// 버리는 백엔드는 지원한다고 주장해선 안 된다.
-		expect(supportsBinaryAttachments("openai")).toBe(false);
-		expect(supportsBinaryAttachments("ollama")).toBe(false);
+		expect(out).toHaveLength(1);
+		expect(out[0].images).toEqual([bytesToBase64(PNG_BYTES)]);
+		expect(out[0].content).toBe("이 이미지를 설명해줘");
 	});
 
-	it("이미지 블록을 버려도 같은 메시지의 텍스트는 보존한다", () => {
-		// 첨부만 사라지고 질문은 전달되므로 사용자가 눈치채기 어렵다 — 게이팅의 근거다.
-		expect(JSON.stringify(toOpenAIMessages(imageMessage))).toContain("이 이미지를 설명해줘");
-		expect(JSON.stringify(toOllamaMessages(imageMessage))).toContain("이 이미지를 설명해줘");
+	it("이미지가 없으면 content는 문자열 그대로다(기존 동작 유지)", () => {
+		const textOnly = [{ role: "user" as const, content: [{ text: "안녕" }] }];
+
+		expect((toOpenAIMessages(textOnly)[0] as Record<string, unknown>).content).toBe("안녕");
+		const ollama = toOllamaMessages(textOnly)[0] as Record<string, unknown>;
+		expect(ollama.content).toBe("안녕");
+		expect(ollama.images).toBeUndefined();
 	});
 
-	it("Gemini는 지원하지 않는다고 판정한다", () => {
-		// gemini-client의 parts 빌더는 text/toolUse/toolResult 분기뿐이다.
-		expect(supportsBinaryAttachments("gemini")).toBe(false);
+	it("문서 블록은 OpenAI·Ollama에서 실리지 않는다(지원하지 않는다고 판정한 것과 일치)", () => {
+		const doc = [
+			{
+				role: "user" as const,
+				content: [
+					{ document: { format: "pdf", name: "x", source: { bytes: PNG_BYTES } } },
+					{ text: "요약해줘" },
+				],
+			},
+		];
+
+		expect(JSON.stringify(toOpenAIMessages(doc))).not.toContain("base64");
+		expect(JSON.stringify(toOllamaMessages(doc))).not.toContain("base64");
+		// 텍스트는 유실되지 않는다.
+		expect(JSON.stringify(toOpenAIMessages(doc))).toContain("요약해줘");
+	});
+
+	it("바이트가 없는 media 블록은 무시한다", () => {
+		const empty = [
+			{
+				role: "user" as const,
+				content: [
+					{ image: { format: "png", source: { bytes: new Uint8Array([]) } } },
+					{ text: "질문" },
+				],
+			},
+		];
+
+		const out = toOpenAIMessages(empty)[0] as Record<string, unknown>;
+		// 전달할 것이 없으므로 파트 배열로 바꾸지 않는다.
+		expect(out.content).toBe("질문");
+	});
+
+	it("이미지만 붙이고 질문 없이 보내도 메시지가 만들어진다", () => {
+		const imageOnly = [
+			{
+				role: "user" as const,
+				content: [{ image: { format: "png", source: { bytes: PNG_BYTES } } }],
+			},
+		];
+
+		expect(toOpenAIMessages(imageOnly)).toHaveLength(1);
+		expect(toOllamaMessages(imageOnly)).toHaveLength(1);
 	});
 });
-
 // ============================================
 // supportsPromptCaching
 // ============================================
@@ -1403,5 +1504,30 @@ describe("supportsPromptCaching", () => {
 	it("두 자리 버전을 낮은 버전으로 오판하지 않는다", () => {
 		expect(supportsPromptCaching("bedrock", "claude-sonnet-12", LONG)).toBe(true);
 		expect(supportsPromptCaching("bedrock", "gpt-10-terra", LONG)).toBe(true);
+	});
+});
+
+describe("backendsSupportingFormat", () => {
+	it("이미지는 네 백엔드 모두를 돌려준다", () => {
+		expect(backendsSupportingFormat("png").sort()).toEqual([
+			"bedrock",
+			"gemini",
+			"ollama",
+			"openai",
+		]);
+	});
+
+	it("PDF는 Bedrock과 Gemini만이다", () => {
+		expect(backendsSupportingFormat("pdf").sort()).toEqual(["bedrock", "gemini"]);
+	});
+
+	it("Office 형식은 Bedrock만이다", () => {
+		expect(backendsSupportingFormat("docx")).toEqual(["bedrock"]);
+		expect(backendsSupportingFormat("xlsx")).toEqual(["bedrock"]);
+	});
+
+	it("첨부 대상이 아닌 형식은 빈 배열이다", () => {
+		// 안내 문구가 "어떤 백엔드도 지원하지 않습니다"로 갈리는 분기다.
+		expect(backendsSupportingFormat("zip")).toEqual([]);
 	});
 });

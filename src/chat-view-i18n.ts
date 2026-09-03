@@ -75,8 +75,10 @@ export const VIEW_I18N = {
     chatRetroComplete: "Retrospective has been added to today's To-Do.",
     chatRetroFailed: (e: string) => `Retrospective failed: ${e}`,
     searchPlaceholder: "Search for a note to attach...",
-    binaryUnsupported: (ext: string, backend: string) =>
-      `.${ext} attachments need a backend that forwards images and documents. The ${backend} backend would drop it silently — switch to AWS Bedrock, or paste the content as text.`,
+    binaryUnsupported: (ext: string, backend: string, supported: string) =>
+      supported === ""
+        ? `.${ext} attachments are not supported by any backend. Paste the content as text instead.`
+        : `The ${backend} backend cannot forward .${ext} attachments — it would be dropped silently. Backends that can: ${supported}.`,
     binaryDropped: (names: string) =>
       `Not sent: ${names}. The current backend cannot forward image or document attachments.`,
     citationsUnresolved: (targets: string) =>
@@ -212,8 +214,10 @@ ${content}`,
     chatRetroComplete: "오늘자 To-Do에 회고가 추가되었습니다.",
     chatRetroFailed: (e: string) => `회고 작성 실패: ${e}`,
     searchPlaceholder: "첨부할 노트를 검색하세요...",
-    binaryUnsupported: (ext: string, backend: string) =>
-      `.${ext} 첨부는 이미지·문서를 전달하는 백엔드가 필요합니다. ${backend} 백엔드에서는 조용히 버려지므로, AWS Bedrock으로 바꾸거나 내용을 텍스트로 붙여넣으세요.`,
+    binaryUnsupported: (ext: string, backend: string, supported: string) =>
+      supported === ""
+        ? `.${ext} 첨부는 어떤 백엔드도 지원하지 않습니다. 내용을 텍스트로 붙여넣어 주세요.`
+        : `${backend} 백엔드는 .${ext} 첨부를 전달할 수 없어 조용히 버려집니다. 전달 가능한 백엔드: ${supported}.`,
     binaryDropped: (names: string) =>
       `전송하지 않았습니다: ${names}. 현재 백엔드는 이미지·문서 첨부를 전달할 수 없습니다.`,
     citationsUnresolved: (targets: string) =>
@@ -349,8 +353,10 @@ ${content}`,
     chatRetroComplete: "今日のTo-Doに振り返りが追加されました。",
     chatRetroFailed: (e: string) => `振り返り作成失敗: ${e}`,
     searchPlaceholder: "添付するノートを検索...",
-    binaryUnsupported: (ext: string, backend: string) =>
-      `.${ext}の添付には画像・文書を転送できるバックエンドが必要です。${backend}バックエンドでは黙って破棄されるため、AWS Bedrockに切り替えるか、内容をテキストとして貼り付けてください。`,
+    binaryUnsupported: (ext: string, backend: string, supported: string) =>
+      supported === ""
+        ? `.${ext}の添付はどのバックエンドもサポートしていません。内容をテキストとして貼り付けてください。`
+        : `${backend}バックエンドは.${ext}の添付を転送できず、黙って破棄されます。転送可能なバックエンド: ${supported}。`,
     binaryDropped: (names: string) =>
       `送信しませんでした: ${names}。現在のバックエンドは画像・文書の添付を転送できません。`,
     citationsUnresolved: (targets: string) =>

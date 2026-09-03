@@ -8,7 +8,7 @@ import type {
   ModelInfo,
 } from "./types";
 import { isAbortError } from "./abort-utils";
-import { buildEffortParams } from "./provider-utils";
+import { buildEffortParams, attachmentMimeType, bytesToBase64 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -89,6 +89,21 @@ export class GeminiClient {
               textPart.thoughtSignature = b.thoughtSignature;
             }
             parts.push(textPart);
+          } else if ("image" in b || "document" in b) {
+            // 바이너리 첨부 → inlineData. 이 분기가 없으면 블록이 어느 조건에도 걸리지
+            // 않아 조용히 사라지고, 사용자는 모델이 첨부를 봤다고 오해한다.
+            //
+            // Gemini는 이미지와 PDF를 inlineData로 받는다. Office 문서는 지원하지 않아
+            // 첨부 단계에서 이미 거절된다(supportsAttachmentFormat).
+            const inner = (b.image ?? b.document) as Record<string, unknown> | undefined;
+            const source = inner?.source as Record<string, unknown> | undefined;
+            const bytes = source?.bytes;
+            const mimeType = attachmentMimeType(
+              typeof inner?.format === "string" ? inner.format : ""
+            );
+            if (bytes instanceof Uint8Array && bytes.length > 0 && mimeType !== null) {
+              parts.push({ inlineData: { mimeType, data: bytesToBase64(bytes) } });
+            }
           } else if ("toolResult" in b) {
             // 도구 결과 → functionResponse
             const tr = b.toolResult as Record<string, unknown>;

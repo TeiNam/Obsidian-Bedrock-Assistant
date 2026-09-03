@@ -270,23 +270,113 @@ export function supportsPromptCaching(
 	return CACHING_MODEL_PATTERNS.some((re) => re.test(id));
 }
 
+/** 바이너리 첨부의 종류. 백엔드 지원 범위가 종류별로 다르다. */
+export type AttachmentKind = "image" | "document";
+
 /**
- * 백엔드가 바이너리 첨부(이미지·문서) 콘텐츠 블록을 실제로 모델까지 전달하는지 판별한다.
+ * 백엔드별로 모델까지 전달할 수 있는 첨부 종류.
  *
- * chat-view의 buildBinaryContentBlock은 Bedrock Converse 규격으로 블록을 만든다
- * (`{image:{format,source:{bytes}}}` / `{document:{format,name,source:{bytes}}}`).
- * Bedrock 클라이언트는 이 블록을 ConverseStreamCommand에 그대로 넘기므로 동작한다.
+ * chat-view의 buildBinaryContentBlock은 Bedrock Converse 규격으로 블록을 만들고
+ * (`{image:{format,source:{bytes}}}` / `{document:{...}}`), 각 클라이언트가 자기 규격으로
+ * 번역한다. 번역이 없는 조합은 블록이 조용히 사라져 사용자가 "모델이 첨부를 보고
+ * 틀렸다"고 오해하므로, 여기 없는 조합은 첨부 자체를 거절한다.
  *
- * 나머지 백엔드의 변환기는 text·tool_use·tool_result만 인식한다 — toOpenAIMessages와
- * toOllamaMessages는 normalizeBlock이 null을 주면 `continue`로 넘기고, gemini-client의
- * parts 빌더도 `"text" in b` / `"toolResult" in b` / `"toolUse" in b` 분기뿐이다.
- * 즉 이미지·문서 블록은 예외 없이 조용히 사라진다. 게이팅이 없으면 사용자는 모델이
- * 첨부를 봤다고 믿은 채 엉뚱한 답을 받는다 — 가장 나쁜 실패 방식이다.
- *
- * 새 백엔드에 블록 변환을 구현하면 반드시 여기에도 등록해야 한다.
+ * 범위를 좁게 잡은 이유:
+ *  - openai: 이미지는 `image_url` 데이터 URL로 확실히 전달된다. PDF는 `type:"file"`
+ *    규격이 모델과 엔드포인트에 따라 달라지고, 이 플러그인은 OpenAI 호환 커스텀
+ *    base URL을 허용하므로(그쪽이 지원할 보장이 없다) 문서는 제외한다.
+ *  - ollama: 메시지의 `images` 배열로 이미지만 보낼 수 있다. 문서 규격은 없다.
+ *    이미지도 비전 모델이어야 실제로 보이지만, 올바른 API로 보내면 못 보는 모델은
+ *    오류를 돌려준다 — 조용히 사라지는 것보다 낫다.
+ *  - gemini: inlineData로 이미지와 PDF를 보낸다. Office 문서는 지원하지 않으므로
+ *    chat-view가 pdf만 document로 허용하는지는 종류 단위로 판정할 수 없다 —
+ *    형식 단위 판정은 supportsAttachmentFormat이 담당한다.
  */
-export function supportsBinaryAttachments(provider: AiProvider): boolean {
-	return provider === "bedrock";
+const ATTACHMENT_SUPPORT: Record<AiProvider, readonly AttachmentKind[]> = {
+	bedrock: ["image", "document"],
+	gemini: ["image", "document"],
+	openai: ["image"],
+	ollama: ["image"],
+};
+
+/** 백엔드가 해당 종류의 첨부를 전달할 수 있는지. */
+export function supportsAttachmentKind(provider: AiProvider, kind: AttachmentKind): boolean {
+	return ATTACHMENT_SUPPORT[provider]?.includes(kind) ?? false;
+}
+
+/** 확장자 → 첨부 종류. 목록에 없으면 첨부 대상이 아니다. */
+const IMAGE_FORMATS: Record<string, string> = {
+	png: "png",
+	jpg: "jpeg",
+	jpeg: "jpeg",
+	gif: "gif",
+	webp: "webp",
+};
+const DOCUMENT_FORMATS: Record<string, string> = {
+	pdf: "pdf",
+	doc: "doc",
+	docx: "docx",
+	xls: "xls",
+	xlsx: "xlsx",
+};
+
+/** 확장자의 첨부 종류를 판정한다. 바이너리 첨부가 아니면 null. */
+export function attachmentKindOf(ext: string): AttachmentKind | null {
+	const e = (ext ?? "").toLowerCase();
+	if (IMAGE_FORMATS[e]) return "image";
+	if (DOCUMENT_FORMATS[e]) return "document";
+	return null;
+}
+
+/**
+ * 백엔드가 이 확장자를 실제로 전달할 수 있는지 판별한다.
+ *
+ * 종류 단위 판정으로는 부족하다 — Gemini는 document를 지원하지만 PDF만이고 Office는
+ * 못 받는다. 형식까지 봐야 "docx를 붙였는데 조용히 사라지는" 경우를 막을 수 있다.
+ */
+export function supportsAttachmentFormat(provider: AiProvider, ext: string): boolean {
+	const kind = attachmentKindOf(ext);
+	if (kind === null) return false;
+	if (!supportsAttachmentKind(provider, kind)) return false;
+
+	// Gemini의 inlineData는 PDF만 문서로 받는다. Office 형식은 Bedrock 전용이다.
+	if (kind === "document" && provider !== "bedrock") {
+		return (ext ?? "").toLowerCase() === "pdf";
+	}
+	return true;
+}
+
+/**
+ * 이 형식을 전달할 수 있는 백엔드 목록. 거절 안내에서 "그럼 어디로 바꿔야 하나"에
+ * 답하기 위해 쓴다. 능력 행렬이 바뀌면 안내 문구도 자동으로 따라간다.
+ */
+export function backendsSupportingFormat(ext: string): AiProvider[] {
+	const all: AiProvider[] = ["bedrock", "gemini", "openai", "ollama"];
+	return all.filter((p) => supportsAttachmentFormat(p, ext));
+}
+
+/** 첨부 형식의 MIME 타입. inlineData·데이터 URL에 필요하다. */
+export function attachmentMimeType(ext: string): string | null {
+	const e = (ext ?? "").toLowerCase();
+	if (IMAGE_FORMATS[e]) return `image/${IMAGE_FORMATS[e]}`;
+	if (e === "pdf") return "application/pdf";
+	if (e === "doc") return "application/msword";
+	if (e === "docx") {
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+	}
+	if (e === "xls") return "application/vnd.ms-excel";
+	if (e === "xlsx") {
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+	}
+	return null;
+}
+
+/**
+ * 바이트열을 base64로 인코딩한다.
+ * Electron 렌더러와 Node(테스트) 모두 Buffer를 제공하므로 그것을 쓴다.
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+	return Buffer.from(bytes).toString("base64");
 }
 
 /** effort 값의 강도 순서(약함 → 강함). clampEffort의 근접 값 선택 기준. */
@@ -648,7 +738,16 @@ export function ollamaToolCallsToBlocks(
 type NormalizedBlock =
 	| { kind: "text"; text: string }
 	| { kind: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-	| { kind: "tool_result"; id: string; content: string };
+	| { kind: "tool_result"; id: string; content: string }
+	| {
+			kind: "media";
+			mediaKind: AttachmentKind;
+			/** Bedrock 규격의 형식 문자열("png", "pdf" 등). */
+			format: string;
+			bytes: Uint8Array;
+			/** 문서 블록의 표시 이름. 이미지에는 없다. */
+			name?: string;
+	  };
 
 /**
  * tool_result 콘텐츠를 평탄한 문자열로 추출한다.
@@ -737,12 +836,44 @@ function normalizeBlock(block: unknown): NormalizedBlock | null {
 		};
 	}
 
+	// Bedrock 규격 이미지 블록: { image: { format, source: { bytes } } }
+	if ("image" in b && typeof b.image === "object" && b.image !== null) {
+		const media = normalizeMedia(b.image as Record<string, unknown>, "image");
+		if (media) return media;
+	}
+
+	// Bedrock 규격 문서 블록: { document: { format, name, source: { bytes } } }
+	if ("document" in b && typeof b.document === "object" && b.document !== null) {
+		const media = normalizeMedia(b.document as Record<string, unknown>, "document");
+		if (media) return media;
+	}
+
 	// 텍스트 블록(중첩/평면 공통: text 필드 보유)
 	if (typeof b.text === "string") {
 		return { kind: "text", text: b.text };
 	}
 
 	return null;
+}
+
+/** image/document 블록 내부를 정규화한다. 바이트가 없으면 null(전달할 것이 없다). */
+function normalizeMedia(
+	inner: Record<string, unknown>,
+	mediaKind: AttachmentKind
+): NormalizedBlock | null {
+	const source = inner.source;
+	if (typeof source !== "object" || source === null) return null;
+
+	const bytes = (source as Record<string, unknown>).bytes;
+	if (!(bytes instanceof Uint8Array) || bytes.length === 0) return null;
+
+	return {
+		kind: "media",
+		mediaKind,
+		format: typeof inner.format === "string" ? inner.format : "",
+		bytes,
+		...(typeof inner.name === "string" ? { name: inner.name } : {}),
+	};
 }
 
 /**
@@ -763,6 +894,8 @@ export function toOpenAIMessages(messages: ConverseMessage[]): unknown[] {
 		const textSegments: string[] = [];
 		const toolCalls: unknown[] = [];
 		const toolResultMessages: unknown[] = [];
+		/** 이미지 파트. 있으면 user content를 배열 형태로 바꿔야 한다. */
+		const imageParts: unknown[] = [];
 
 		for (const nb of blocks) {
 			if (nb === null) continue;
@@ -778,12 +911,23 @@ export function toOpenAIMessages(messages: ConverseMessage[]): unknown[] {
 						arguments: JSON.stringify(nb.input),
 					},
 				});
-			} else {
+			} else if (nb.kind === "tool_result") {
 				// tool_result → role:"tool" 별도 메시지. tool_call_id로 원 호출과 매칭.
 				toolResultMessages.push({
 					role: "tool",
 					tool_call_id: nb.id,
 					content: nb.content,
+				});
+			} else {
+				// media: 이미지만 전달한다. 문서(PDF 등)는 type:"file" 규격이 모델·엔드포인트에
+				// 따라 달라지고 이 플러그인은 OpenAI 호환 커스텀 base URL을 허용하므로,
+				// 첨부 단계에서 이미 거절된다(supportsAttachmentFormat).
+				if (nb.mediaKind !== "image") continue;
+				const mime = attachmentMimeType(nb.format);
+				if (mime === null) continue;
+				imageParts.push({
+					type: "image_url",
+					image_url: { url: `data:${mime};base64,${bytesToBase64(nb.bytes)}` },
 				});
 			}
 		}
@@ -807,7 +951,14 @@ export function toOpenAIMessages(messages: ConverseMessage[]): unknown[] {
 			for (const trm of toolResultMessages) {
 				result.push(trm);
 			}
-			if (textSegments.length > 0) {
+			// 이미지가 있으면 content를 파트 배열로 보낸다. 문자열 content에는 이미지를
+			// 실을 자리가 없다. 이미지를 먼저 두면 모델이 텍스트 질문을 이미지 문맥에서 읽는다.
+			if (imageParts.length > 0) {
+				const parts: unknown[] = [...imageParts];
+				const text = textSegments.join("");
+				if (text !== "") parts.push({ type: "text", text });
+				result.push({ role: "user", content: parts });
+			} else if (textSegments.length > 0) {
 				result.push({ role: "user", content: textSegments.join("") });
 			}
 		}
@@ -834,6 +985,8 @@ export function toOllamaMessages(messages: ConverseMessage[]): unknown[] {
 		const textSegments: string[] = [];
 		const toolCalls: unknown[] = [];
 		const toolResultMessages: unknown[] = [];
+		/** Ollama는 이미지를 메시지 레벨 images 배열(base64 문자열)로 받는다. */
+		const images: string[] = [];
 
 		for (const nb of blocks) {
 			if (nb === null) continue;
@@ -847,11 +1000,15 @@ export function toOllamaMessages(messages: ConverseMessage[]): unknown[] {
 						arguments: nb.input,
 					},
 				});
-			} else {
+			} else if (nb.kind === "tool_result") {
 				toolResultMessages.push({
 					role: "tool",
 					content: nb.content,
 				});
+			} else {
+				// media: Ollama에는 문서 규격이 없다. 이미지만 전달한다.
+				if (nb.mediaKind !== "image") continue;
+				images.push(bytesToBase64(nb.bytes));
 			}
 		}
 
@@ -871,7 +1028,10 @@ export function toOllamaMessages(messages: ConverseMessage[]): unknown[] {
 			for (const trm of toolResultMessages) {
 				result.push(trm);
 			}
-			if (textSegments.length > 0) {
+			if (images.length > 0) {
+				// content가 비어도 메시지를 만든다 — 이미지만 붙이고 질문 없이 보내는 경우가 있다.
+				result.push({ role: "user", content: textSegments.join(""), images });
+			} else if (textSegments.length > 0) {
 				result.push({ role: "user", content: textSegments.join("") });
 			}
 		}
