@@ -7,6 +7,7 @@ import {
   getAllTags,
   normalizePath,
   MarkdownView,
+  TFolder,
 } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
@@ -582,19 +583,16 @@ export default class GeminiAssistantPlugin extends Plugin {
 
       // 볼트의 기존 폴더와 자주 쓰는 태그를 프롬프트에 함께 준다. 주지 않으면 LLM이
       // 매번 새 폴더·태그 체계를 지어내고 볼트가 비슷한 뜻으로 갈라진다.
-      const folders = [
-        ...new Set(
-          this.app.vault
-            .getMarkdownFiles()
-            // 루트 노트("메모.md")는 lastIndexOf("/")가 -1이라 slice(0, -1)이
-            // "메모.m"이 된다 — 존재하지 않는 폴더가 허용 목록에 들어간다.
-            .map((f) => {
-              const at = f.path.lastIndexOf("/");
-              return at < 0 ? "" : f.path.slice(0, at);
-            })
-            .filter((d) => d !== "" && d !== target && !d.startsWith(`${target}/`))
-        ),
-      ].sort();
+      // 실재하는 폴더를 직접 열거한다. 마크다운 파일의 부모만 모으면 비어 있는 폴더와
+      // 중간 조상 폴더가 빠진다 — `Projects/Client/a.md`만 있으면 `Projects`가 목록에
+      // 없고, 그러면 parseTriageReport가 실재하는 폴더로의 이동 제안을 거부한다.
+      const folders = this.app.vault
+        .getAllLoadedFiles()
+        .filter((f): f is TFolder => f instanceof TFolder)
+        .map((f) => f.path)
+        // 루트 폴더("/")와 Inbox 자신·그 하위는 이동 대상이 아니다.
+        .filter((d) => d !== "" && d !== "/" && d !== target && !d.startsWith(`${target}/`))
+        .sort();
 
       const tagCounts = new Map<string, number>();
       for (const entry of entries) {
@@ -757,7 +755,9 @@ export default class GeminiAssistantPlugin extends Plugin {
 
       const prompt = buildDecisionPrompt(
         trimmed,
-        search.items.map((i) => ({ path: i.path, excerpt: i.excerpt }))
+        // 적중 청크를 우선 준다. excerpt는 노트 앞 500자로 고정이라 결정이 뒤쪽에 있으면
+        // 검색은 성공해도 LLM에 결정 문장이 전달되지 않는다.
+        search.items.map((i) => ({ path: i.path, excerpt: i.matchedText || i.excerpt }))
       );
       const response = await this.aiClient.converseLight(
         prompt,
@@ -956,11 +956,15 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (!wrote) continue;
         links += added;
         touched.add(sourcePath);
+        // 링크 **대상**도 재색인한다. backlinks는 대상 엔트리에 역산해 저장되므로,
+        // 소스만 갱신하면 대상의 mtime은 그대로여서 증분 색인도 건너뛴다 — 대상에서
+        // 시작한 그래프 순회와 고아·스텁 판정이 새 링크를 계속 못 본다.
+        for (const s of group) touched.add(s.targetPath);
       }
 
       // 링크가 바뀌었으므로 인덱스의 그래프도 갱신해야 다음 검색에 반영된다.
-      for (const sourcePath of touched) {
-        const file = this.app.vault.getAbstractFileByPath(sourcePath);
+      for (const path of touched) {
+        const file = this.app.vault.getAbstractFileByPath(path);
         if (file instanceof TFile) await this.indexer.indexFile(file);
       }
 

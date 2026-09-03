@@ -1784,6 +1784,9 @@ export class ChatView extends ItemView {
         const msgEl = this.messagesEl.createDiv({ cls: "ba-message ba-message-assistant" });
         const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
         await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
+        // 경고는 저장되지 않으므로 복원할 때 다시 검증한다. 그러지 않으면 세션을 다시
+        // 열었을 때 같은 허위 인용이 아무 표시 없이 근거처럼 보인다.
+        this.appendCitationWarning(msgEl, msg.content);
       }
     }
     this.plugin.saveChatHistory(this.messages);
@@ -1894,6 +1897,8 @@ export class ChatView extends ItemView {
             this.addAssistantLabel(msgEl);
             const contentEl = msgEl.createDiv({ cls: "ba-message-content" });
             await MarkdownRenderer.render(this.app, msg.content, contentEl, "", this);
+            // 경고는 저장되지 않으므로 사이드바를 다시 열 때 다시 검증한다.
+            this.appendCitationWarning(msgEl, msg.content);
 
             // 마지막 어시스턴트 메시지에 재생성 버튼 footer 추가
             if (i === lastAssistantIdx) {

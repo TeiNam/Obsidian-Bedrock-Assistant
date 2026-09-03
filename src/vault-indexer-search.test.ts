@@ -245,6 +245,79 @@ describe("VaultIndexer 키워드 폴백 검증 (임베딩 0개)", () => {
  * 못한다. dense가 임계값으로 걸러낸 노트를 어휘가 되살릴 수 있는데, 그 통로가 상위
  * 30개로 막혀 있으면 결과에 들어올 방법이 없다.
  */
+// ============================================
+// 적중 청크 본문을 결과에 싣는다
+// ============================================
+/**
+ * excerpt는 노트 맨 앞 500자로 고정이다. 검색이 뒤쪽 청크로 노트를 찾아냈을 때 그
+ * 사실을 결과가 전달하지 않으면, LLM은 "찾긴 찾았는데 근거는 못 본" 상태로 답한다.
+ */
+describe("VaultIndexer 적중 청크 본문", () => {
+  /** 도입부와 뒤쪽 문단이 서로 다른 벡터를 갖는 노트. */
+  function makeTwoChunkPayload(): string {
+    return JSON.stringify({
+      schemaVersion: 2,
+      entries: [
+        {
+          path: "long.md",
+          embedding: [1, 0, 0],
+          lastModified: 1000,
+          title: "긴 노트",
+          excerpt: "도입부 문장입니다",
+          searchText: "도입부 문장입니다 뒤쪽 결정 문단입니다",
+          chunks: [
+            { index: 0, text: "도입부 문장입니다", embedding: [1, 0, 0], charStart: 0 },
+            {
+              index: 1,
+              text: "뒤쪽 결정 문단입니다",
+              embedding: [0, 1, 0],
+              charStart: 100,
+              heading: "결정",
+            },
+          ],
+          outlinks: [],
+          backlinks: [],
+          tags: [],
+          frontmatter: {},
+        },
+      ],
+    });
+  }
+
+  it("질의와 맞은 청크의 본문을 matchedText로 싣는다", async () => {
+    // 쿼리 벡터를 두 번째 청크에 맞춘다.
+    const client = {
+      getEmbedding: vi.fn(async () => [0, 1, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeTwoChunkPayload());
+
+    const result = await indexer.search("결정");
+
+    expect(result.items[0].matchedText).toBe("뒤쪽 결정 문단입니다");
+    // 헤딩도 그 청크에서 온다.
+    expect(result.items[0].heading).toBe("결정");
+    // excerpt는 도입부 그대로 남는다 — 소비자가 무엇을 쓸지 고를 수 있어야 한다.
+    expect(result.items[0].excerpt).toBe("도입부 문장입니다");
+  });
+
+  it("도입부가 맞으면 도입부 본문을 싣는다", async () => {
+    const client = {
+      getEmbedding: vi.fn(async () => [1, 0, 0]),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), client);
+    indexer.deserialize(makeTwoChunkPayload());
+
+    const result = await indexer.search("도입부");
+
+    expect(result.items[0].matchedText).toBe("도입부 문장입니다");
+    // 도입부 청크에는 헤딩이 없다.
+    expect(result.items[0].heading).toBeNull();
+  });
+});
+
 describe("VaultIndexer 어휘 후보 풀과 limit", () => {
   /** 쿼리와 정렬된 벡터를 돌려주는 클라이언트. */
   function makeAlignedClient() {

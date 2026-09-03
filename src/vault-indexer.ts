@@ -27,6 +27,21 @@ import { fuseRanks, reserveSlots } from "./graph-rag/rank-fusion";
 // 유일 호출처인 obsidian-tools.ts의 searchVault()는 task 9.1에서 함께 갱신된다.
 
 /** Graph_RAG_Search 단일 결과 항목 (시드/이웃 구분 및 관계 정보 포함, Req 7.2~7.4). */
+/**
+ * 적중 청크에서 검색 결과에 실을 필드를 뽑는다.
+ *
+ * 본문이 빈 청크(레거시 폴백)에는 matchedText를 붙이지 않는다 — 빈 문자열을 실으면
+ * 소비자의 `matchedText || excerpt` 폴백이 의도대로 동작하지만, 필드가 있는데 비어
+ * 있는 상태는 "맞은 내용이 없다"와 구분되지 않아 읽는 쪽을 헷갈리게 한다.
+ */
+function matchedFields(
+  match: { heading: string | null; text: string } | null
+): { heading: string | null; matchedText?: string } {
+  if (match === null) return { heading: null };
+  const text = match.text.trim();
+  return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
+}
+
 export interface GraphRagSearchItem {
   /** 노트의 볼트 루트 기준 경로 */
   path: string;
@@ -38,6 +53,15 @@ export interface GraphRagSearchItem {
   combinedScore: number;
   /** 0.0~1.0 으로 정규화된 벡터 유사도 */
   vectorScore: number;
+  /**
+   * 질의와 가장 잘 맞은 청크의 본문. 어휘로만 잡힌 노트와 v1 인덱스는 없다.
+   *
+   * `excerpt`는 본문 **맨 앞 500자로 고정**된 값이다(buildEntry). 검색은 뒤쪽 청크가
+   * 맞아서 노트를 반환할 수 있는데, 그때 excerpt만 LLM에 주면 정작 맞은 내용이 전달되지
+   * 않는다 — 결정 추출·모순 점검·종합이 모두 "검색은 찾았는데 근거는 못 본" 상태로
+   * 답하게 된다. 맞은 청크를 함께 실어 소비자가 그것을 우선 쓰게 한다.
+   */
+  matchedText?: string;
   /** 시드로부터의 그래프 거리(hop). 0이면 시드 (Req 7.4) */
   hop: number;
   /** 시드 여부 (hop 0) (Req 7.3) */
@@ -699,10 +723,10 @@ export class VaultIndexer {
         seedPath: d?.seedPath ?? null,
         // 이웃 결과는 연결된 시드의 제목을 인덱스에서 조회해 채운다 (Req 7.4)
         seedTitle: d?.seedPath ? candidates.get(d.seedPath)?.title ?? null : null,
-        // 헤딩은 **임베딩으로 맞은 청크**의 헤딩이다. dense가 못 찾아 어휘로만 들어온
-        // 노트에는 붙이지 않는다 — 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"이라고
+        // 헤딩·적중 본문은 **임베딩으로 맞은 청크**에서 온다. dense가 못 찾아 어휘로만
+        // 들어온 노트에는 붙이지 않는다 — 어휘가 맞힌 위치와 무관한 절을 "맞은 구간"이라고
         // 표시하면 인용 앵커가 엉뚱한 곳을 가리킨다.
-        heading: d ? this.bestChunkMatch(queryEmbedding, path)?.heading ?? null : null,
+        ...(d ? matchedFields(this.bestChunkMatch(queryEmbedding, path)) : { heading: null }),
       };
     });
 
@@ -731,22 +755,22 @@ export class VaultIndexer {
   private bestChunkMatch(
     queryEmbedding: number[],
     path: string
-  ): { score: number; heading: string | null } | null {
+  ): { score: number; heading: string | null; text: string } | null {
     const entry = this.index.get(path);
     if (!entry) return null;
 
-    let best: { score: number; heading: string | null } | null = null;
+    let best: { score: number; heading: string | null; text: string } | null = null;
     for (const chunk of entry.chunks ?? []) {
       const sim = compareVectors(queryEmbedding, chunk.embedding);
       if (sim === null) continue;
       if (best === null || sim > best.score) {
-        best = { score: sim, heading: chunk.heading ?? null };
+        best = { score: sim, heading: chunk.heading ?? null, text: chunk.text };
       }
     }
-    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다(헤딩 정보는 없다).
+    // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다(헤딩·본문 정보는 없다).
     if (best === null) {
       const legacy = compareVectors(queryEmbedding, entry.embedding);
-      if (legacy !== null) best = { score: legacy, heading: null };
+      if (legacy !== null) best = { score: legacy, heading: null, text: "" };
     }
     return best;
   }

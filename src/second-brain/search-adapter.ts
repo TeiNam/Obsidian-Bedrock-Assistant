@@ -24,7 +24,11 @@ export interface SearchHit {
 
 /**
  * GraphRagResult → SearchHit[] 변환 (순수 함수, Req 7.5 공유 토대).
- * items의 path/title/excerpt만 추출한다(점수·hop은 종합/사고에 불필요).
+ * items의 path/title과 LLM에 줄 본문만 추출한다(점수·hop은 종합/사고에 불필요).
+ *
+ * 본문은 **적중 청크를 우선**한다. `excerpt`는 노트 맨 앞 500자로 고정된 값이어서,
+ * 검색이 뒤쪽 청크로 노트를 찾아낸 경우 정작 맞은 내용이 LLM에 전달되지 않는다 —
+ * 종합·모순 점검·사고 도구가 모두 "검색은 찾았는데 근거는 못 본" 상태로 답한다.
  */
 export function toSearchHits(result: GraphRagResult): SearchHit[] {
   // items가 없을 수도 있는 방어적 처리 — 빈 배열로 안전하게 수렴
@@ -32,7 +36,7 @@ export function toSearchHits(result: GraphRagResult): SearchHit[] {
   return items.map((item) => ({
     path: item.path,
     title: item.title,
-    excerpt: item.excerpt,
+    excerpt: item.matchedText || item.excerpt,
   }));
 }
 

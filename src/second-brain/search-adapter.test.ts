@@ -96,3 +96,76 @@ describe("SECOND_BRAIN_SYSTEM_PROMPT", () => {
     expect(lowered).not.toContain("anthropic");
   });
 });
+
+// ============================================
+// 적중 청크 우선
+// ============================================
+/**
+ * `excerpt`는 노트 맨 앞 500자로 고정된 값이다. 검색은 뒤쪽 청크가 맞아서 노트를 반환할
+ * 수 있는데, 그때 excerpt만 LLM에 주면 정작 맞은 내용이 전달되지 않는다 — 종합·모순
+ * 점검·결정 추출이 모두 "검색은 찾았는데 근거는 못 본" 상태로 답한다.
+ */
+describe("toSearchHits — 적중 청크 우선", () => {
+  it("matchedText가 있으면 그것을 쓴다", () => {
+    const hits = toSearchHits({
+      items: [
+        {
+          path: "a.md",
+          title: "노트",
+          excerpt: "앞 500자 도입부",
+          matchedText: "실제로 맞은 뒤쪽 문단",
+          combinedScore: 0.9,
+          vectorScore: 0.8,
+          hop: 0,
+          isSeed: true,
+          seedPath: null,
+          seedTitle: null,
+        },
+      ],
+    });
+
+    expect(hits[0].excerpt).toBe("실제로 맞은 뒤쪽 문단");
+  });
+
+  it("matchedText가 없으면 excerpt로 폴백한다", () => {
+    // 어휘로만 잡힌 노트와 v1 인덱스가 이 경로다.
+    const hits = toSearchHits({
+      items: [
+        {
+          path: "a.md",
+          title: "노트",
+          excerpt: "도입부",
+          combinedScore: 0.9,
+          vectorScore: 0,
+          hop: 0,
+          isSeed: true,
+          seedPath: null,
+          seedTitle: null,
+        },
+      ],
+    });
+
+    expect(hits[0].excerpt).toBe("도입부");
+  });
+
+  it("matchedText가 빈 문자열이면 excerpt로 폴백한다", () => {
+    const hits = toSearchHits({
+      items: [
+        {
+          path: "a.md",
+          title: "노트",
+          excerpt: "도입부",
+          matchedText: "",
+          combinedScore: 0.9,
+          vectorScore: 0,
+          hop: 0,
+          isSeed: true,
+          seedPath: null,
+          seedTitle: null,
+        },
+      ],
+    });
+
+    expect(hits[0].excerpt).toBe("도입부");
+  });
+});
