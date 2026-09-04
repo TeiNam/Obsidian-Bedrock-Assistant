@@ -884,8 +884,10 @@ export class GeminiSettingTab extends PluginSettingTab {
           .addOption("ja", "日本語")
           .setValue(this.plugin.settings.language)
           .onChange(async (value) => {
-            this.plugin.settings.language = value as "en" | "ko" | "ja";
+            this.plugin.settings.language = value as Locale;
             await this.plugin.saveSettings();
+            // MCP 연결은 설정을 참조하지 않으므로 언어를 직접 밀어준다.
+            this.plugin.mcpManager?.setLocale(value as Locale);
             // 열려있는 채팅 뷰 UI 즉시 재빌드
             const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
             for (const leaf of leaves) {

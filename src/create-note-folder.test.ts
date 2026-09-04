@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TFile } from "obsidian";
 import { ToolExecutor } from "./obsidian-tools";
+import { TOOL_I18N } from "./tool-result-i18n";
 
 /**
  * createNote() 폴더 자동 생성 테스트
@@ -71,7 +72,7 @@ describe("createNote() 폴더 자동 생성", () => {
       });
 
       // 노트가 성공적으로 생성되어야 함
-      expect(result).toContain("노트가 생성되었습니다");
+      expect(result).toContain(TOOL_I18N.en.noteCreated(""));
 
       // 부모 폴더 "folder/sub"에 대해 createFolder가 호출되어야 함
       expect(app.vault.createFolder).toHaveBeenCalledWith("folder/sub");
@@ -83,7 +84,7 @@ describe("createNote() 폴더 자동 생성", () => {
         content: "테스트 내용",
       });
 
-      expect(result).toContain("노트가 생성되었습니다");
+      expect(result).toContain(TOOL_I18N.en.noteCreated(""));
       expect(app.vault.createFolder).toHaveBeenCalledWith("folder");
     });
 
@@ -96,7 +97,7 @@ describe("createNote() 폴더 자동 생성", () => {
         content: "테스트 내용",
       });
 
-      expect(result).toContain("노트가 생성되었습니다");
+      expect(result).toContain(TOOL_I18N.en.noteCreated(""));
       // 폴더가 이미 존재하므로 createFolder가 호출되지 않아야 함
       expect(app.vault.createFolder).not.toHaveBeenCalled();
     });
@@ -129,7 +130,7 @@ describe("createNote() 폴더 자동 생성", () => {
         content: "루트 레벨 노트",
       });
 
-      expect(result).toContain("노트가 생성되었습니다");
+      expect(result).toContain(TOOL_I18N.en.noteCreated(""));
       // 루트 레벨이므로 폴더 생성이 필요 없음
       expect(app.vault.createFolder).not.toHaveBeenCalled();
     });
@@ -152,7 +153,7 @@ describe("createNote() 폴더 자동 생성", () => {
         content: "중복 노트",
       });
 
-      expect(result).toContain("파일이 이미 존재합니다");
+      expect(result).toContain(TOOL_I18N.en.alreadyExists(""));
       // 파일이 이미 존재하므로 create와 createFolder 모두 호출되지 않아야 함
       expect(app.vault.create).not.toHaveBeenCalled();
       expect(app.vault.createFolder).not.toHaveBeenCalled();
@@ -166,7 +167,7 @@ describe("createNote() 폴더 자동 생성", () => {
         content: "쓰이면 안 됨",
       });
 
-      expect(result).toContain("볼트를 벗어나는 경로");
+      expect(result).toContain(TOOL_I18N.en.escapesVault("", ""));
       expect(app.vault.create).not.toHaveBeenCalled();
     });
 
@@ -189,7 +190,7 @@ describe("createNote() 폴더 자동 생성", () => {
         destination_path: "Archive/old.md",
       });
 
-      expect(result).toContain("이동했습니다");
+      expect(result).toBe(TOOL_I18N.en.moved(TOOL_I18N.en.kindFile, "old.md", "Archive/old.md"));
       expect(renameFile).toHaveBeenCalledWith(file, "Archive/old.md");
       expect(moveApp.vault.rename).not.toHaveBeenCalled();
     });

@@ -19,6 +19,8 @@ import type { VaultIndexEntry } from "../types";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
+import { toolI18n } from "../tool-result-i18n";
+import type { Locale } from "../types";
 
 /** 스텁(내용 부족) 판정 기준 본문 길이. 이보다 짧으면 후보가 된다. */
 export const STUB_MAX_CHARS = 200;
@@ -220,9 +222,9 @@ const KIND_ORDER: GapKind[] = ["missing", "stub", "orphan", "one-way"];
  * 노트 경로는 위키링크로 표기해 클릭 이동이 되게 한다. 아직 없는 노트(missing)도
  * 위키링크로 두면 클릭해서 바로 만들 수 있다.
  */
-export function buildGapReport(candidates: GapCandidate[]): string {
+export function buildGapReport(candidates: GapCandidate[], locale?: Locale): string {
   if (candidates.length === 0) {
-    return "발견된 구조적 공백이 없습니다.";
+    return toolI18n(locale).gapsNone;
   }
 
   const lines: string[] = [];

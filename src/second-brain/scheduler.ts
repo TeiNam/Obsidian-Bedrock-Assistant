@@ -27,6 +27,7 @@ import {
   type CatalogEntry,
 } from "./wiki-structure";
 import { collectGaps, buildGapReport, writeGapReport } from "./knowledge-gaps";
+import type { Locale } from "../types";
 
 /**
  * Second Brain 실행 컨텍스트 (실행 래퍼에 주입).
@@ -51,6 +52,13 @@ export interface SecondBrainContext {
   settings: SecondBrainSettings;
   /** 정규화된 Wiki_Folder 경로 (settings.wikiFolder) */
   wikiFolder: string;
+  /**
+   * 표시 언어. 도구가 돌려주는 문자열은 화면에 그대로 뜨므로 사용자 언어를 따른다.
+   *
+   * `settings`는 SecondBrainSettings(Second Brain 전용)라 language를 갖지 않는다.
+   * 미지정 시 en으로 폴백한다.
+   */
+  locale?: Locale;
   /**
    * settings 변경(lastScheduledRun 등)을 디스크에 영속화하는 콜백 (Req 11.6).
    * main.ts에서 `() => this.saveSettings()`를 주입하여 기존 저장 경로를 재사용한다.
@@ -162,7 +170,7 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
           category: inferCategory(entry.path, ctx.wikiFolder),
         }));
 
-      const catalog = buildIndexCatalog(catalogEntries);
+      const catalog = buildIndexCatalog(catalogEntries, ctx.locale);
       // 카탈로그 본문은 catalog Sentinel_Block으로만 교체된다(User_Region 보존, Req 4.4).
       await writeIndexCatalog(ctx.app, ctx.wikiFolder, catalog);
     },
@@ -180,7 +188,7 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
           | { unresolvedLinks?: Record<string, Record<string, number>> }
           | undefined)?.unresolvedLinks ?? {};
       const gaps = collectGaps(ctx.indexer.getEntries(), unresolved, ctx.wikiFolder);
-      await writeGapReport(ctx.app, ctx.wikiFolder, buildGapReport(gaps));
+      await writeGapReport(ctx.app, ctx.wikiFolder, buildGapReport(gaps, ctx.locale));
     },
   },
   {

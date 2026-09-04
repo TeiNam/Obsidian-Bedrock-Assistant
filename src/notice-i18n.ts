@@ -155,8 +155,6 @@ export const NOTICE_I18N = {
 
     // ---- Notice: 도구 실행 결과 ----
     // 도구의 반환 문자열은 LLM이 읽으므로 번역하지 않는다. 사용자에게 보이는 Notice만 번역한다.
-    kindFolder: "Folder",
-    kindFile: "File",
     toolNoteCreated: (path: string) => `Note created: ${path}`,
     toolNotePatched: (path: string) => `Note partially updated: ${path}`,
     toolNoteEdited: (path: string) => `Note updated: ${path}`,
@@ -315,8 +313,6 @@ export const NOTICE_I18N = {
     mcpConfigBadDisabled: (name: string) => `MCP 서버 "${name}"의 disabled는 boolean이어야 합니다.`,
 
     // ---- Notice: 도구 실행 결과 ----
-    kindFolder: "폴더",
-    kindFile: "파일",
     toolNoteCreated: (path: string) => `노트 생성됨: ${path}`,
     toolNotePatched: (path: string) => `노트 부분 수정됨: ${path}`,
     toolNoteEdited: (path: string) => `노트 수정됨: ${path}`,
@@ -475,8 +471,6 @@ export const NOTICE_I18N = {
     mcpConfigBadDisabled: (name: string) => `MCPサーバー "${name}" の disabled は boolean である必要があります。`,
 
     // ---- Notice: 도구 실행 결과 ----
-    kindFolder: "フォルダ",
-    kindFile: "ファイル",
     toolNoteCreated: (path: string) => `ノートを作成しました: ${path}`,
     toolNotePatched: (path: string) => `ノートを部分更新しました: ${path}`,
     toolNoteEdited: (path: string) => `ノートを更新しました: ${path}`,

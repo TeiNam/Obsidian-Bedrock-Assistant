@@ -78,6 +78,7 @@ import { TFile } from "obsidian";
 import { runArchitect, ARCHITECTURE_SECTION_KEYS } from "./architect";
 import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
 import type { SecondBrainContext } from "./scheduler";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 const ARCH_WIKI = "Second Brain";
 const ARCH_NOTE_PATH = `${ARCH_WIKI}/Architecture.md`;
@@ -176,7 +177,7 @@ describe("runArchitect — 재실행 보존 (Req 10.4)", () => {
 
     // 기존 노트는 새로 생성하지 않고 원자적 쓰기(process)로 갱신한다.
     // read→modify 왕복은 읽은 뒤 쓰기 전에 들어온 사용자 편집을 덮어쓴다.
-    expect(result).toContain("갱신");
+    expect(result).toContain(TOOL_I18N.en.architectUpdated(""));
     expect(vault.process).toHaveBeenCalledTimes(1);
     expect(vault.modify).not.toHaveBeenCalled();
     expect(vault.create).not.toHaveBeenCalled();

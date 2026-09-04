@@ -2,6 +2,7 @@ import { App, TFile, Notice } from "obsidian";
 import type { IAiClient, Locale, VaultIndexEntry, IndexResult, IndexFailure, IndexChunk, SerializedIndex } from "./types";
 import { CURRENT_INDEX_SCHEMA_VERSION } from "./types";
 import { noticeI18n } from "./notice-i18n";
+import { toolI18n } from "./tool-result-i18n";
 import {
   splitIntoChunkSlices,
   normalizeChunkConfig,
@@ -832,7 +833,7 @@ export class VaultIndexer {
   async search(query: string, limit = 10, filter: SearchFilter = {}): Promise<GraphRagResult> {
     // 1) limit 범위 검증 (Req 6.7) — 범위를 벗어나면 결과 없이 오류를 던진다
     if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
-      throw new Error(`limit은 1 이상 100 이하여야 합니다 (입력값: ${limit}).`);
+      throw new Error(toolI18n(this.locale).searchLimitRange(limit));
     }
 
     // 2) 빈/공백 쿼리 검증 (Req 4.7) — Vector_Search를 수행하지 않고 무효 표시와 함께 빈 결과 반환

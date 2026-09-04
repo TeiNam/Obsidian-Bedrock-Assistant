@@ -26,6 +26,7 @@ import {
   normalizeSecondBrainSettings,
   type SecondBrainSettings,
 } from "../types";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 // ---------------------------------------------------------------------------
 // 1) 설정 저장/로드 라운드트립 (Req 12.2)
@@ -199,7 +200,7 @@ describe("옵트인 격리 — enabled=false면 second-brain 도구가 쓰기를
       const result = await executor.execute(toolName, input);
 
       // 비활성 안내 메시지 반환 (Req 6.4 패턴 / Req 12.4)
-      expect(result).toContain("비활성");
+      expect(result).toContain(TOOL_I18N.en.sbDisabled);
       // 어떤 쓰기 경로도 호출되지 않는다
       expectNoWrites(vault);
     },

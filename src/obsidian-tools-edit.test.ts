@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ToolExecutor } from "./obsidian-tools";
 import { TFile } from "obsidian";
 import { isToolError } from "./tool-failure-tracker";
+import { TOOL_I18N } from "./tool-result-i18n";
 
 /**
  * editNote() replaceAll 동작 테스트
@@ -51,7 +52,7 @@ describe("editNote() replaceAll 동작", () => {
         replace: "DONE",
       });
 
-      expect(result).toContain("부분 수정되었습니다");
+      expect(result).toContain(TOOL_I18N.en.notePatched(""));
 
       // modify에 전달된 내용에서 모든 TODO가 DONE으로 교체되었는지 확인
       const modifiedContent = app.vault.modify.mock.calls[0][1] as string;
@@ -74,7 +75,7 @@ describe("editNote() replaceAll 동작", () => {
         replace: "최종본",
       });
 
-      expect(result).toContain("부분 수정되었습니다");
+      expect(result).toContain(TOOL_I18N.en.notePatched(""));
       const modifiedContent = app.vault.modify.mock.calls[0][1] as string;
       expect(modifiedContent).toBe("제목: 최종본\n본문 내용입니다.");
     });
@@ -94,7 +95,7 @@ describe("editNote() replaceAll 동작", () => {
         replace: "새텍스트",
       });
 
-      expect(result).toContain("교체 대상 텍스트를 찾을 수 없습니다");
+      expect(result).toContain(TOOL_I18N.en.findNotFound("존재하지않는텍스트"));
       expect(isToolError(result)).toBe(true);
       expect(app.vault.modify).not.toHaveBeenCalled();
     });
@@ -115,7 +116,7 @@ describe("editNote() replaceAll 동작", () => {
         replace: "$5.00",
       });
 
-      expect(result).toContain("부분 수정되었습니다");
+      expect(result).toContain(TOOL_I18N.en.notePatched(""));
       const modifiedContent = app.vault.modify.mock.calls[0][1] as string;
       expect(modifiedContent).toBe("가격: $5.00 할인: $5.00");
     });
@@ -134,7 +135,7 @@ describe("도구 실패 계약", () => {
     const result = await executor.execute("read_note", { path: "missing.md" });
 
     expect(isToolError(result)).toBe(true);
-    expect(result).toContain("파일을 찾을 수 없습니다");
+    expect(result).toContain(TOOL_I18N.en.notFound(""));
   });
 });
 

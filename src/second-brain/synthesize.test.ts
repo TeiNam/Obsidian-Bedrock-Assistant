@@ -11,6 +11,7 @@ import type { SearchHit } from "./search-adapter";
 import type { SecondBrainContext } from "./scheduler";
 import type { GraphRagResult, GraphRagSearchItem, VaultIndexer } from "../vault-indexer";
 import type { IAiClient } from "../types";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 // 임의의 SearchHit 제너레이터 — path/title/excerpt를 자유 문자열로 채워
 // 다양한 입력(빈 문자열, 유니코드, 특수문자 등)에서 제목 포함 보장을 자극한다.
@@ -178,6 +179,6 @@ describe("runSynthesize — 실행 단위 테스트 (Req 7.2, 7.4, 7.6)", () => 
     expect(vault.modify).not.toHaveBeenCalled();
 
     // 관련 노트가 없어 종합 노트를 만들지 않았음을 안내한다.
-    expect(message).toContain("관련된 노트를 찾지 못해");
+    expect(message).toContain(TOOL_I18N.en.synthesizeNoHits("없는 주제", ""));
   });
 });

@@ -89,3 +89,37 @@ describe("updateFailureCount", () => {
     expect(result).toEqual({ count: 1, shouldStop: true });
   });
 });
+
+/**
+ * 언어에 따라 접두어가 달라지므로, 판별이 한 언어만 알면 언어를 바꾼 순간 실패가 성공으로
+ * 집계된다. 그러면 연속 실패 카운터가 리셋되어 무한 루프 차단이 무력해진다.
+ */
+describe("도구 실패 판별의 언어 독립성", () => {
+  const LOCALES = ["en", "ko", "ja"] as const;
+
+  it("모든 언어의 접두어를 실패로 인식한다", () => {
+    for (const locale of LOCALES) {
+      const message = formatToolError("something broke", locale);
+      expect(isToolError(message), `${locale}: ${message}`).toBe(true);
+    }
+  });
+
+  it("언어별 접두어가 서로 다르다 (같으면 이 검사가 헛돈다)", () => {
+    const prefixes = LOCALES.map((l) => formatToolError("x", l));
+    expect(new Set(prefixes).size).toBe(LOCALES.length);
+  });
+
+  it("언어를 바꿔도 연속 실패가 계속 누적된다", () => {
+    // ko로 한 번 실패한 뒤 언어를 en으로 바꿔도 카운터가 리셋되지 않아야 한다.
+    let state = updateFailureCount(0, formatToolError("첫 실패", "ko"));
+    state = updateFailureCount(state.count, formatToolError("second failure", "en"));
+    state = updateFailureCount(state.count, formatToolError("三回目", "ja"));
+    expect(state).toEqual({ count: 3, shouldStop: true });
+  });
+
+  it("실패가 아닌 결과는 어떤 언어에서도 성공으로 본다", () => {
+    for (const locale of LOCALES) {
+      expect(isToolError(`Note created: a.md (${locale})`)).toBe(false);
+    }
+  });
+});

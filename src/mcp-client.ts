@@ -5,6 +5,7 @@ import type { ToolDefinition } from "./types";
 import { BRANDING } from "./branding";
 import { formatToolError } from "./tool-failure-tracker";
 import { noticeI18n } from "./notice-i18n";
+import { toolI18n } from "./tool-result-i18n";
 import type { Locale } from "./types";
 
 // PATH에서 실행 파일의 절대 경로를 찾는 유틸리티 (GUI 앱에서 which 대체)
@@ -143,6 +144,8 @@ class McpServerConnection {
   private _connected = false;
   // MCP 요청 타임아웃 (밀리초)
   private _timeoutMs = 30000;
+  // 오류 문구 표시 언어 (McpManager가 주입)
+  private _locale: Locale | undefined;
 
   // 자동 재연결 관련 속성
   private reconnectAttempts = 0;
@@ -162,6 +165,20 @@ class McpServerConnection {
   // 타임아웃 설정 (초 단위 입력 → 밀리초로 변환)
   setTimeoutSeconds(seconds: number): void {
     this._timeoutMs = seconds * 1000;
+  }
+
+  /**
+   * 오류 문구의 표시 언어. 이 오류들은 도구 결과로 화면에 그대로 뜨므로 번역 대상이다.
+   *
+   * 연결 객체는 플러그인 설정을 참조하지 않으므로 McpManager가 주입한다(타임아웃과 같은 경로).
+   */
+  setLocale(locale: Locale | undefined): void {
+    this._locale = locale;
+  }
+
+  /** 현재 언어의 도구 결과 레이블. */
+  private get t() {
+    return toolI18n(this._locale);
   }
 
   get tools(): ToolDefinition[] {
@@ -218,7 +235,7 @@ class McpServerConnection {
       this._connected = false;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new Error(`MCP 서버 종료 (code: ${code})`));
+        p.reject(new Error(this.t.mcpServerExited(code)));
       }
       this.pending.clear();
 
@@ -293,14 +310,19 @@ class McpServerConnection {
     })) as { content?: unknown[]; structuredContent?: unknown; isError?: boolean };
 
     const text = formatMcpToolResult(result);
-    return result.isError ? formatToolError(`MCP ${originalName}: ${text || "실행 실패"}`) : text;
+    return result.isError
+      ? formatToolError(
+          this.t.mcpToolFailed(originalName, text || this.t.mcpToolFailedNoDetail),
+          this._locale
+        )
+      : text;
   }
 
   // JSON-RPC 요청 전송
   private sendRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!this.process?.stdin?.writable) {
-        reject(new Error("MCP 서버에 연결되지 않음"));
+        reject(new Error(this.t.mcpNotConnected));
         return;
       }
 
@@ -309,7 +331,7 @@ class McpServerConnection {
       const timer = setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
-          reject(new Error(`MCP 요청 타임아웃: ${method}`));
+          reject(new Error(this.t.mcpRequestTimeout(method)));
         }
       }, this._timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
@@ -381,7 +403,7 @@ class McpServerConnection {
           this.pending.delete(msg.id);
           clearTimeout(p.timer);
           if (msg.error) {
-            p.reject(new Error(`MCP 오류: ${msg.error.message}`));
+            p.reject(new Error(this.t.mcpError(msg.error.message)));
           } else {
             p.resolve(msg.result);
           }
@@ -417,7 +439,7 @@ class McpServerConnection {
     }
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
-      p.reject(new Error("MCP 서버 연결 종료"));
+      p.reject(new Error(this.t.mcpConnectionClosed));
     }
     this.pending.clear();
   }
@@ -428,8 +450,17 @@ export class McpManager {
   private servers = new Map<string, McpServerConnection>();
   private config: McpConfig = { mcpServers: {} };
   private _timeoutSeconds = 30;
+  private _locale: Locale | undefined;
   // prefixedName → serverName 매핑 (서버 이름에 _가 포함된 경우에도 정확한 라우팅 보장)
   private toolServerMap = new Map<string, string>();
+
+  /** 모든 서버의 오류 문구 표시 언어를 설정한다. 이후 새로 만드는 연결에도 적용된다. */
+  setLocale(locale: Locale | undefined): void {
+    this._locale = locale;
+    for (const server of this.servers.values()) {
+      server.setLocale(locale);
+    }
+  }
 
   // 모든 서버의 타임아웃 설정 (초 단위)
   setTimeout(seconds: number): void {
@@ -452,6 +483,10 @@ export class McpManager {
 
   // 설정 로드 및 서버 연결
   async loadConfig(configJson: string, locale?: Locale): Promise<{ connected: string[]; failed: string[] }> {
+    // 여기서 setLocale()로 기존 연결에 전파하지 않는다 — 이 함수가 곧 전부 교체하므로
+    // 의미가 없고, 파싱 실패로 되돌아갈 때 낡은 연결을 건드린 흔적만 남는다.
+    // 새 연결은 생성 시점에 _locale을 받는다.
+    if (locale !== undefined) this._locale = locale;
     const nextConfig = parseMcpConfig(configJson, locale);
     this.disconnectAll();
     this.config = nextConfig;
@@ -464,6 +499,7 @@ export class McpManager {
       const conn = new McpServerConnection(name, serverConfig);
       // initialize/tools/list도 사용자 설정 타임아웃을 사용해야 한다.
       conn.setTimeoutSeconds(this._timeoutSeconds);
+      conn.setLocale(this._locale);
       conn.onReconnect = () => this.updateToolServerMap();
       try {
         await conn.connect();
@@ -504,12 +540,12 @@ export class McpManager {
   async executeTool(prefixedName: string, input: Record<string, unknown>): Promise<string> {
     const serverName = this.toolServerMap.get(prefixedName);
     if (!serverName) {
-      return formatToolError(`잘못된 MCP 도구 이름: ${prefixedName}`);
+      return formatToolError(toolI18n(this._locale).mcpBadToolName(prefixedName), this._locale);
     }
 
     const server = this.servers.get(serverName);
     if (!server || !server.connected) {
-      return formatToolError(`MCP 서버에 연결되지 않음: ${serverName}`);
+      return formatToolError(toolI18n(this._locale).mcpNotConnectedTo(serverName), this._locale);
     }
 
     // prefixedName에서 원래 도구 이름 추출: "mcp_{serverName}_{toolName}" 형식
