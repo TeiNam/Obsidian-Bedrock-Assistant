@@ -26,6 +26,7 @@ import { runChallenge, runConnect, runEmerge } from "./second-brain/thinking-too
 import { ensureWithinFolder, escapesVault } from "./second-brain/vault-path-guard";
 import type { SecondBrainContext } from "./second-brain/scheduler";
 import { formatToolError } from "./tool-failure-tracker";
+import type { AiChangeLedger } from "./ai-change-ledger";
 
 // Obsidian 제어 도구 목록
 export const TOOLS: ToolDefinition[] = [
@@ -33,8 +34,8 @@ export const TOOLS: ToolDefinition[] = [
     name: "search_vault",
     description:
       "볼트에서 시맨틱 검색을 수행합니다. 사용자의 노트 중 질문과 관련된 내용을 찾습니다. " +
-      "folder/tags/수정 기간으로 후보를 좁힐 수 있습니다 — \"지난달 회의록\", " +
-      "\"Projects 폴더의 노트\", \"#urgent 태그가 붙은 것\" 같은 요청에 사용하세요. " +
+      "folder/tags/수정 기간/프론트매터 속성으로 후보를 좁힐 수 있습니다 — \"지난달 회의록\", " +
+      "\"Projects 폴더의 노트\", \"#urgent 태그\", \"status=active\" 같은 요청에 사용하세요. " +
       "날짜는 시스템 프롬프트의 현재 날짜를 기준으로 직접 계산해 YYYY-MM-DD로 넘기세요.",
     input_schema: {
       type: "object",
@@ -57,6 +58,12 @@ export const TOOLS: ToolDefinition[] = [
         modifiedBefore: {
           type: "string",
           description: "이 날짜(포함)까지 수정된 노트만. \"YYYY-MM-DD\".",
+        },
+        properties: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "프론트매터 속성 조건(AND). 예: [\"status=active\", \"type=meeting\", \"confidence>=0.8\"]. 지원 연산자: =, !=, >, >=, <, <=, ~.",
         },
       },
       required: ["query"],
@@ -316,6 +323,7 @@ export class ToolExecutor {
   private getSecondBrain?: () => SecondBrainSettings;
   private getAiClient?: () => IAiClient;
   private getLocale?: () => Locale;
+  private changeLedger?: AiChangeLedger;
 
   constructor(
     app: App,
@@ -325,6 +333,7 @@ export class ToolExecutor {
     getSecondBrain?: () => SecondBrainSettings,
     getAiClient?: () => IAiClient,
     getLocale?: () => Locale,
+    changeLedger?: AiChangeLedger,
   ) {
     this.app = app;
     this.indexer = indexer;
@@ -332,6 +341,7 @@ export class ToolExecutor {
     this.getSecondBrain = getSecondBrain;
     this.getAiClient = getAiClient;
     this.getLocale = getLocale;
+    this.changeLedger = changeLedger;
   }
 
   /** 사용자에게 보이는 Notice 문구. */
@@ -379,61 +389,122 @@ export class ToolExecutor {
         }
         input[key] = normalizePath(value);
       }
-      switch (toolName) {
-        case "search_vault":
-          return await this.searchVault(input.query as string, (input.limit as number) || 10, input);
-        case "read_note":
-          return await this.readNote(input.path as string);
-        case "create_note":
-          return await this.createNote(input.path as string, input.content as string);
-        case "edit_note":
-          return await this.editNote(input.path as string, input.content as string | undefined, input.find as string | undefined, input.replace as string | undefined);
-        case "append_to_note":
-          return await this.appendToNote(input.path as string, input.content as string);
-        case "list_files":
-          return this.listFiles((input.folder as string) || "");
-        case "get_active_note":
-          return await this.getActiveNote();
-        case "open_note":
-          return await this.openNote(input.path as string);
-        case "list_templates":
-          return this.listTemplates();
-        case "save_template":
-          return await this.saveTemplate(input.name as string, input.content as string);
-        case "apply_template":
-          return await this.applyTemplate(
-            input.template_name as string,
-            input.output_path as string,
-            (input.variables as Record<string, string>) || {}
-          );
-        case "move_file":
-          return await this.moveFile(
-            input.source_path as string,
-            input.destination_path as string
-          );
-        case "delete_file":
-          return await this.deleteFile(input.path as string);
-        case "create_wiki_note":
-          return await this.createWikiNote(input);
-        case "update_index":
-          return await this.updateIndex();
-        case "synthesize_topic":
-          return await this.synthesizeTopic(input);
-        case "reconcile_topic":
-          return await this.reconcileTopic(input);
-        case "architect":
-          return await this.architect(input);
-        case "challenge":
-          return await this.challenge(input);
-        case "connect":
-          return await this.connect(input);
-        case "emerge":
-          return await this.emerge(input);
-        default:
-          return this.toolError(this.tt.unknownTool(toolName));
-      }
+      const run = () => this.executeResolved(toolName, input);
+      const paths = this.changePathsForTool(toolName, input);
+      return this.changeLedger && paths.length > 0
+        ? await this.changeLedger.run(toolName, paths, run)
+        : await run();
     } catch (error) {
       return formatToolError(`${toolName}: ${(error as Error).message}`);
+    }
+  }
+
+  private async executeResolved(
+    toolName: string,
+    input: Record<string, unknown>
+  ): Promise<string> {
+    switch (toolName) {
+      case "search_vault":
+        return await this.searchVault(input.query as string, (input.limit as number) || 10, input);
+      case "read_note":
+        return await this.readNote(input.path as string);
+      case "create_note":
+        return await this.createNote(input.path as string, input.content as string);
+      case "edit_note":
+        return await this.editNote(input.path as string, input.content as string | undefined, input.find as string | undefined, input.replace as string | undefined);
+      case "append_to_note":
+        return await this.appendToNote(input.path as string, input.content as string);
+      case "list_files":
+        return this.listFiles((input.folder as string) || "");
+      case "get_active_note":
+        return await this.getActiveNote();
+      case "open_note":
+        return await this.openNote(input.path as string);
+      case "list_templates":
+        return this.listTemplates();
+      case "save_template":
+        return await this.saveTemplate(input.name as string, input.content as string);
+      case "apply_template":
+        return await this.applyTemplate(
+          input.template_name as string,
+          input.output_path as string,
+          (input.variables as Record<string, string>) || {}
+        );
+      case "move_file":
+        return await this.moveFile(
+          input.source_path as string,
+          input.destination_path as string
+        );
+      case "delete_file":
+        return await this.deleteFile(input.path as string);
+      case "create_wiki_note":
+        return await this.createWikiNote(input);
+      case "update_index":
+        return await this.updateIndex();
+      case "synthesize_topic":
+        return await this.synthesizeTopic(input);
+      case "reconcile_topic":
+        return await this.reconcileTopic(input);
+      case "architect":
+        return await this.architect(input);
+      case "challenge":
+        return await this.challenge(input);
+      case "connect":
+        return await this.connect(input);
+      case "emerge":
+        return await this.emerge(input);
+      default:
+        return this.toolError(this.tt.unknownTool(toolName));
+    }
+  }
+
+  /** 도구 하나가 바꿀 수 있는 루트 경로. AI 변경 원장의 스냅샷 범위를 최소화한다. */
+  private changePathsForTool(
+    toolName: string,
+    input: Record<string, unknown>
+  ): string[] {
+    const path = (key: string): string =>
+      typeof input[key] === "string" ? (input[key] as string) : "";
+    switch (toolName) {
+      case "create_note":
+      case "edit_note":
+      case "append_to_note":
+      case "delete_file":
+        return [path("path")];
+      case "move_file":
+        return [path("source_path"), path("destination_path")];
+      case "save_template":
+        return [`${this.getTemplateFolder()}/${path("name")}.md`];
+      case "apply_template":
+        return [path("output_path")];
+      case "update_index": {
+        const wikiFolder = this.getSecondBrain?.()?.wikiFolder;
+        return wikiFolder ? [normalizePath(`${wikiFolder}/index.md`)] : [];
+      }
+      case "architect": {
+        const wikiFolder = this.getSecondBrain?.()?.wikiFolder;
+        return wikiFolder ? [normalizePath(`${wikiFolder}/Architecture.md`)] : [];
+      }
+      case "synthesize_topic": {
+        const wikiFolder = this.getSecondBrain?.()?.wikiFolder;
+        const topic = path("topic").trim();
+        if (!wikiFolder || topic === "") return [];
+        const notePath = normalizePath(`${wikiFolder}/${topic}.md`);
+        return ensureWithinFolder(notePath, normalizePath(wikiFolder)).ok ? [notePath] : [];
+      }
+      case "create_wiki_note": {
+        const wikiFolder = this.getSecondBrain?.()?.wikiFolder;
+        const title = path("title").trim();
+        if (!wikiFolder || title === "") return [];
+        const category = path("category");
+        const subfolder = (WIKI_CATEGORIES as readonly string[]).includes(category)
+          ? `/${category}`
+          : "";
+        const notePath = normalizePath(`${wikiFolder}${subfolder}/${title}.md`);
+        return ensureWithinFolder(notePath, normalizePath(wikiFolder)).ok ? [notePath] : [];
+      }
+      default:
+        return [];
     }
   }
 
@@ -945,6 +1016,7 @@ export class ToolExecutor {
       aiClient,
       settings: sb,
       wikiFolder: normalizePath(sb.wikiFolder),
+      locale: this.getLocale?.(),
       persist: async () => {},
     };
 

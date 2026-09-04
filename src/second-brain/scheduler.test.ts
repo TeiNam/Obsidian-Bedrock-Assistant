@@ -262,12 +262,13 @@ describe("SecondBrainScheduler — 단계 실패 격리 (Req 11.7, 11.6)", () =>
     // 반환값은 성공/실패 집계이며, 호출부가 이를 사용자에게 정확히 보고한다.
     const result = await scheduler.runCleanupPipeline(ctx, now);
     expect(result.ran).toBe(true);
-    // getEntries에 의존하는 두 단계(update-catalog, knowledge-gaps)가 실패하고
+    // getEntries에 의존하는 세 단계(update-catalog, knowledge-gaps, bases-dashboard)가 실패하고
     // 나머지(ensure-folders, activity-log)는 성공해야 한다.
-    expect(result.failed).toBe(2);
+    expect(result.failed).toBe(3);
     expect(result.succeeded).toBeGreaterThan(0);
     expect(result.failedSteps).toContain("update-catalog");
     expect(result.failedSteps).toContain("knowledge-gaps");
+    expect(result.failedSteps).toContain("bases-dashboard");
 
     // 실패 단계(update-catalog)가 실제로 트리거되었는지 확인.
     expect(getEntries).toHaveBeenCalled();

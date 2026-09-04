@@ -104,9 +104,20 @@ import { VIEW_I18N } from "./chat-view-i18n";
 import { noticeI18n } from "./notice-i18n";
 import { toolI18n } from "./tool-result-i18n";
 import { runReconcileDetailed, applyReconciliations } from "./second-brain/reconcile";
+import { isIndexableTextExtension } from "./file-extension-utils";
+import {
+  refreshAllSynthesisProvenance,
+  refreshSynthesisProvenanceForSource,
+} from "./second-brain/synthesis-provenance";
+import { refreshBasesDashboard } from "./second-brain/bases-dashboard";
 import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
 import { KeyedTaskQueue } from "./keyed-task-queue";
+import { AiChangeLedger } from "./ai-change-ledger";
+import {
+  AiChangeLedgerModal,
+  aiChangeLabels,
+} from "./modals/ai-change-ledger-modal";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
@@ -220,6 +231,7 @@ export default class GeminiAssistantPlugin extends Plugin {
   indexer!: VaultIndexer;
   toolExecutor!: ToolExecutor;
   mcpManager!: McpManager;
+  aiChangeLedger!: AiChangeLedger;
   // Second Brain Layer 스케줄러 (수동 명령 + onLayoutReady 자동 트리거)
   secondBrainScheduler!: SecondBrainScheduler;
   // 인덱싱 진행률 표시용 상태바 아이템
@@ -266,6 +278,13 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 저장된 Graph RAG 검색 설정을 인덱서에 반영 (탐색 깊이/청크 크기/겹침)
     this.applySearchOptions();
 
+    // AI 변경 원장은 동기화 대상 data.json과 분리해 플러그인 폴더에 보관한다.
+    this.aiChangeLedger = new AiChangeLedger(
+      this.app,
+      `${this.app.vault.configDir}/plugins/${BRANDING.pluginId}/ai-change-ledger.json`
+    );
+    await this.aiChangeLedger.load();
+
     // 도구 실행기 초기화
     // Second Brain Layer 의존성 주입 (Req 11.6, 12.3):
     //  - getSecondBrain: this.settings.secondBrain 동일 참조를 반환(복사본 아님)하여
@@ -278,6 +297,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       () => this.settings.secondBrain,
       () => this.aiClient,
       () => this.settings.language,
+      this.aiChangeLedger,
     );
 
     // Second Brain 스케줄러 초기화 (수동 명령 + onLayoutReady 자동 트리거)
@@ -390,12 +410,46 @@ export default class GeminiAssistantPlugin extends Plugin {
           const percent = Math.round((current / total) * 100);
           this.statusBarItem.setText(t.statusIndexing(percent));
         });
+        await refreshAllSynthesisProvenance(
+          this.app,
+          this.indexer,
+          this.settings.secondBrain.wikiFolder,
+          this.settings.language,
+        );
         // 완료 표시 후 3초 뒤 텍스트 제거
         this.statusBarItem.setText(t.statusIndexDone);
         setTimeout(() => {
           this.statusBarItem.setText("");
         }, 3000);
         await this.saveIndex();
+      },
+    });
+
+    const changeLabels = aiChangeLabels(this.settings.language);
+    this.addCommand({
+      id: "open-ai-change-ledger",
+      name: changeLabels.viewCommand,
+      callback: () =>
+        new AiChangeLedgerModal(
+          this.app,
+          this.settings.language,
+          this.aiChangeLedger.list()
+        ).open(),
+    });
+
+    this.addCommand({
+      id: "undo-last-ai-change",
+      name: changeLabels.undoCommand,
+      callback: async () => {
+        const labels = aiChangeLabels(this.settings.language);
+        const result = await this.aiChangeLedger.undoLast();
+        if (result.ok && result.record) {
+          new Notice(labels.undone(result.record.label));
+        } else if (result.reason === "conflict") {
+          new Notice(labels.conflict, 10000);
+        } else {
+          new Notice(labels.empty);
+        }
       },
     });
 
@@ -412,7 +466,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 여기서 걸러내지 않는다. 걸러내면 인덱싱 중 편집이 영구 유실된다.
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
+        if (file instanceof TFile && isIndexableTextExtension(file.extension)) {
           this.scheduleIndex(file);
         }
       })
@@ -422,7 +476,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // (create_note/웹클리퍼/To-Do)가 전체 재인덱싱까지 검색되지 않는다.
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
+        if (file instanceof TFile && isIndexableTextExtension(file.extension)) {
           this.scheduleIndex(file);
         }
       })
@@ -441,7 +495,8 @@ export default class GeminiAssistantPlugin extends Plugin {
         }
         this.indexer.removeFile(oldPath);
         this.forgetNoteAccess(oldPath);
-        if (file.extension === "md") this.scheduleIndex(file);
+        void this.refreshSynthesisSource(oldPath);
+        if (isIndexableTextExtension(file.extension)) this.scheduleIndex(file);
       })
     );
 
@@ -459,6 +514,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         if (file instanceof TFile) {
           this.indexer.removeFile(file.path);
           this.forgetNoteAccess(file.path);
+          void this.refreshSynthesisSource(file.path);
         }
       })
     );
@@ -522,13 +578,31 @@ export default class GeminiAssistantPlugin extends Plugin {
       void this.indexQueue
         .add(path, async () => {
           const current = this.app.vault.getAbstractFileByPath(path);
-          if (current instanceof TFile) await this.indexer.indexFile(current);
+          if (current instanceof TFile) {
+            await this.indexer.indexFile(current);
+            await this.refreshSynthesisSource(path);
+          }
         })
         .catch((error) => {
           console.error(`인덱스 갱신 실패: ${path}`, error);
         });
     }, INDEX_DEBOUNCE_MS);
     this.indexDebounceTimers.set(path, timer);
+  }
+
+  /** 한 출처의 청크 해시가 바뀌었는지 종합 노트에 반영한다. */
+  private async refreshSynthesisSource(path: string): Promise<void> {
+    try {
+      await refreshSynthesisProvenanceForSource(
+        this.app,
+        this.indexer,
+        path,
+        this.settings.secondBrain.wikiFolder,
+        this.settings.language,
+      );
+    } catch (error) {
+      console.error(`종합 노트 출처 상태 갱신 실패: ${path}`, error);
+    }
   }
 
   async onunload(): Promise<void> {
@@ -715,6 +789,16 @@ export default class GeminiAssistantPlugin extends Plugin {
       }
 
       new TriageReviewModal(this.app, this, parsed.items, async (approved) => {
+        const snapshotTaken = new Set(this.app.vault.getMarkdownFiles().map((f) => f.path));
+        const changePaths = approved.flatMap((plan) => {
+          const destination = resolveTargetPath(plan, snapshotTaken);
+          if (destination !== null) {
+            snapshotTaken.add(destination);
+            snapshotTaken.delete(plan.path);
+          }
+          return destination === null ? [plan.path] : [plan.path, destination];
+        });
+        return this.aiChangeLedger.run("inbox-triage", changePaths, async () => {
         let moved = 0;
         let tagged = 0;
         let skipped = 0;
@@ -814,6 +898,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         await this.syncIndexAfterApply(finalPaths);
 
         return { moved, tagged, skipped };
+        });
       }).open();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -902,6 +987,7 @@ export default class GeminiAssistantPlugin extends Plugin {
 
         const wikiFolder = this.settings.secondBrain.wikiFolder;
         const ledgerPath = normalizePath(`${wikiFolder}/${DECISION_LEDGER_FILE}`);
+        return this.aiChangeLedger.run("decision-review", [ledgerPath], async () => {
         const existing = this.app.vault.getAbstractFileByPath(ledgerPath);
 
         // 콜백 안에서 채워지는 값을 non-null 단정으로 꺼내면, 콜백이 불리지 않는 경우
@@ -948,6 +1034,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
 
         return { merged: approved.length, total: merged.length };
+        });
       }).open();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -977,6 +1064,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
 
     new CanonicalizeModal(this.app, this, clusters, async (approved) => {
+      return this.aiChangeLedger.run(
+        "canonicalize",
+        approved.map((cluster) => cluster.canonical.path),
+        async () => {
       let notes = 0;
       let aliases = 0;
       /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
@@ -1046,6 +1137,8 @@ export default class GeminiAssistantPlugin extends Plugin {
       await this.syncIndexAfterApply(touched, linkedDuplicates);
 
       return { notes, aliases };
+        }
+      );
     }).open();
   }
 
@@ -1081,6 +1174,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
 
     new LinkSuggestionModal(this.app, this, suggestions, async (approved) => {
+      return this.aiChangeLedger.run(
+        "link-suggestions",
+        approved.map((item) => item.sourcePath),
+        async () => {
       const grouped = groupBySource(approved);
       let links = 0;
       /** 실제로 쓰기가 일어난 노트. 안 바뀐 노트를 재인덱싱할 이유가 없다. */
@@ -1131,6 +1228,8 @@ export default class GeminiAssistantPlugin extends Plugin {
       // 모달이 열린 동안 소스가 사라졌거나 링크가 이미 붙어 있어 쓰기를 건너뛴 경우까지
       // grouped.size에 들어간다. 실제로 바뀐 노트 수를 보고한다.
       return { notes: touched.size, links };
+        }
+      );
     }).open();
   }
 
@@ -1171,6 +1270,10 @@ export default class GeminiAssistantPlugin extends Plugin {
       this,
       outcome.contradictions,
       async (approved) => {
+        return this.aiChangeLedger.run(
+          "reconcile-review",
+          approved.flatMap((item) => item.notePaths),
+          async () => {
         // 항목별로 따로 반영하면 두 항목이 같은 노트를 가리킬 때 뒤엣것이 앞엣것을
         // 덮어쓴다(둘 다 같은 Sentinel_Block 키를 쓴다). 노트 단위로 합쳐 한 번씩 쓴다.
         const summary = await applyReconciliations(
@@ -1192,6 +1295,8 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
 
         return summary;
+          }
+        );
       }
     ).open();
   }
@@ -1333,6 +1438,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalCreateWikiNote,
           submitLabel: t.submitCreate,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "title",
@@ -1374,6 +1480,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalSynthesize,
           submitLabel: t.submitSynthesize,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "topic",
@@ -1398,6 +1505,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalReconcile,
           submitLabel: t.submitReconcile,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "topic",
@@ -1425,6 +1533,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalReconcileReview,
           submitLabel: t.submitReconcile,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "topic",
@@ -1448,6 +1557,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalChallenge,
           submitLabel: t.submitChallenge,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "claim",
@@ -1472,6 +1582,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalConnect,
           submitLabel: t.submitConnect,
+          cancelLabel: t.submitCancel,
           fields: [
             { key: "topicA", label: t.fieldTopicA, type: "text", placeholder: t.fieldTopicAPlaceholder },
             { key: "topicB", label: t.fieldTopicB, type: "text", placeholder: t.fieldTopicBPlaceholder },
@@ -1494,6 +1605,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalEmerge,
           submitLabel: t.submitEmerge,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "days",
@@ -1522,6 +1634,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalArchitect,
           submitLabel: t.submitArchitect,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "path",
@@ -1573,6 +1686,32 @@ export default class GeminiAssistantPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "second-brain-bases-dashboard",
+      name: n.cmdDashboard,
+      callback: async () => {
+        const t = noticeI18n(this.settings.language);
+        if (!this.settings.secondBrain.enabled) {
+          new Notice(t.sbDisabled);
+          return;
+        }
+        try {
+          const result = await refreshBasesDashboard(
+            this.buildSecondBrainContext(),
+            Date.now(),
+          );
+          new Notice(t.dashboardUpdated(result.itemCount, result.basePath), 10000);
+          const file = this.app.vault.getAbstractFileByPath(result.basePath);
+          if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+        } catch (error) {
+          new Notice(
+            t.dashboardFailed(error instanceof Error ? error.message : String(error)),
+            10000,
+          );
+        }
+      },
+    });
+
     // 복습 큐 — 오래 열지 않았지만 연결 가치가 높은 노트를 소수만 제시한다.
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
     this.addCommand({
@@ -1583,6 +1722,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalInboxTriage,
           submitLabel: t.submitTriage,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "folder",
@@ -1605,6 +1745,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         new SecondBrainInputModal(this.app, {
           title: t.modalDecisions,
           submitLabel: t.submitExtract,
+          cancelLabel: t.submitCancel,
           fields: [
             {
               key: "topic",

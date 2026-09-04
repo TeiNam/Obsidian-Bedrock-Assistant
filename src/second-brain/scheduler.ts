@@ -28,6 +28,7 @@ import {
 } from "./wiki-structure";
 import { collectGaps, buildGapReport, writeGapReport } from "./knowledge-gaps";
 import type { Locale } from "../types";
+import { refreshBasesDashboard } from "./bases-dashboard";
 
 /**
  * Second Brain 실행 컨텍스트 (실행 래퍼에 주입).
@@ -147,7 +148,8 @@ function inferCategory(path: string, wikiFolder: string): string {
  *    (catalog Sentinel_Block만 교체 → 사용자 메모 보존)
  * 3) knowledge-gaps: 구조적 공백(깨진 링크·스텁·고아·단방향)을 계산해 리포트 갱신
  *    (LLM 호출 없음, sentinel 블록만 교체 → 사용자 메모 보존)
- * 4) activity-log: 스케줄 실행 이력을 log.md에 한 줄 append(기존 로그 불변)
+ * 4) bases-dashboard: 결정·미해결 질문·오래된 지식·복습 큐 Base 갱신
+ * 5) activity-log: 스케줄 실행 이력을 log.md에 한 줄 append(기존 로그 불변)
  */
 const CLEANUP_PIPELINE: PipelineStep[] = [
   {
@@ -163,7 +165,7 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
       const prefix = `${ctx.wikiFolder}/`;
       const catalogEntries: CatalogEntry[] = ctx.indexer
         .getEntries()
-        .filter((entry) => entry.path.startsWith(prefix))
+        .filter((entry) => entry.path.startsWith(prefix) && /\.md$/i.test(entry.path))
         .map((entry) => ({
           path: entry.path,
           title: entry.title,
@@ -192,9 +194,19 @@ const CLEANUP_PIPELINE: PipelineStep[] = [
     },
   },
   {
+    name: "bases-dashboard",
+    run: async (ctx, now) => {
+      await refreshBasesDashboard(ctx, now);
+    },
+  },
+  {
     name: "activity-log",
     run: async (ctx) => {
-      await appendActivityLog(ctx.app, ctx.wikiFolder, "스케줄 정리 실행(catalog·공백 리포트 갱신)");
+      await appendActivityLog(
+        ctx.app,
+        ctx.wikiFolder,
+        "스케줄 정리 실행(catalog·공백 리포트·Bases 대시보드 갱신)"
+      );
     },
   },
 ];

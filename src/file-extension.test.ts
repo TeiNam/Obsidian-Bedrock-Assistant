@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   ALLOWED_TEXT_EXTENSIONS,
+  INDEXABLE_TEXT_EXTENSIONS,
   isAllowedTextExtension,
+  isIndexableTextExtension,
 } from "./file-extension-utils";
 
 /**
@@ -65,5 +67,23 @@ describe("파일 확장자 필터링", () => {
     it("빈 문자열은 거부된다", () => {
       expect(isAllowedTextExtension("")).toBe(false);
     });
+  });
+
+  describe("영구 RAG 인덱싱 대상", () => {
+    it.each(["md", "txt", "csv", "json", "html", "HTML"])(
+      '"%s" 확장자를 인덱싱한다',
+      (ext) => {
+        expect(isIndexableTextExtension(ext)).toBe(true);
+      }
+    );
+
+    it.each(["yaml", "xml", "js", "png", "pdf"])(
+      '"%s" 확장자는 영구 인덱싱하지 않는다',
+      (ext) => {
+        expect(isIndexableTextExtension(ext)).toBe(false);
+      }
+    );
+
+    expect(INDEXABLE_TEXT_EXTENSIONS).toEqual(["md", "txt", "csv", "json", "html"]);
   });
 });

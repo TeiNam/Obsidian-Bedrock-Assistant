@@ -149,6 +149,7 @@ export function selectReviewQueue(
   const scored: ReviewItem[] = [];
 
   for (const entry of entries) {
+    if (!/\.md$/i.test(entry.path)) continue;
     if (isGenerated(entry.path, wikiFolder)) continue;
     const score = scoreForReview(entry, log, now, surfaced);
     if (score <= 0) continue;

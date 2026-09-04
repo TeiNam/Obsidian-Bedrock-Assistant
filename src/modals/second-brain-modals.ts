@@ -27,12 +27,14 @@ export interface SecondBrainField {
 
 /** SecondBrainInputModal 생성 옵션. */
 export interface SecondBrainModalOptions {
-  /** 모달 제목(한국어). */
+  /** 모달 제목. */
   title: string;
   /** 수집할 입력 필드 목록(순서대로 렌더). */
   fields: SecondBrainField[];
-  /** 실행 버튼 레이블(한국어). */
+  /** 실행 버튼 레이블. */
   submitLabel: string;
+  /** 취소 버튼 레이블. 하드코딩하면 en/ja 사용자에게 한국어가 보인다. */
+  cancelLabel: string;
   /**
    * 입력 수집 완료 시 호출되는 콜백. 채팅 경로와 동일한 실행 핸들러를 호출하도록
    * main.ts가 주입한다(DRY). 수집된 값은 key→문자열 맵으로 전달된다.
@@ -101,7 +103,7 @@ export class SecondBrainInputModal extends Modal {
 
     // 버튼 행
     const btnRow = contentEl.createDiv({ cls: "ba-second-brain-btn-row" });
-    const cancelBtn = btnRow.createEl("button", { text: "취소" });
+    const cancelBtn = btnRow.createEl("button", { text: this.opts.cancelLabel });
     cancelBtn.addEventListener("click", () => this.close());
 
     const submitBtn = btnRow.createEl("button", {

@@ -20,6 +20,10 @@ export interface SearchHit {
   title: string;
   /** 발췌(excerpt) */
   excerpt: string;
+  /** 적중 절 제목. 없으면 노트 단위 출처다. */
+  heading?: string | null;
+  /** 실제 적중 청크의 콘텐츠 해시. */
+  chunkHash?: string;
 }
 
 /**
@@ -37,6 +41,8 @@ export function toSearchHits(result: GraphRagResult): SearchHit[] {
     path: item.path,
     title: item.title,
     excerpt: item.matchedText || item.excerpt,
+    ...(item.heading !== undefined ? { heading: item.heading } : {}),
+    ...(item.chunkHash !== undefined ? { chunkHash: item.chunkHash } : {}),
   }));
 }
 

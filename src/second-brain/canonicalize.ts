@@ -278,7 +278,9 @@ export function findDuplicateClusters(
 ): DuplicateCluster[] {
   const minSimilarity = options.minSimilarity ?? MIN_DUPLICATE_SIMILARITY;
 
-  const usable = entries.filter((e) => !isGenerated(e.path, options.wikiFolder));
+  const usable = entries.filter(
+    (e) => /\.md$/i.test(e.path) && !isGenerated(e.path, options.wikiFolder)
+  );
   const byPath = new Map(usable.map((e) => [e.path, e]));
   const buckets = buildTitleBuckets(usable);
 

@@ -533,6 +533,7 @@ export async function applyReconciliations(
     const targets = Array.isArray(item?.notePaths) ? item.notePaths : [];
     for (const rawPath of targets) {
       const notePath = normalizePath(rawPath);
+      if (!/\.md$/i.test(notePath)) continue;
       const list = byNote.get(notePath) ?? [];
       if (suggestion !== "" && !list.includes(suggestion)) list.push(suggestion);
       byNote.set(notePath, list);

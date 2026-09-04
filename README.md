@@ -25,6 +25,11 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 - **Knowledge Gap Report** — Finds structural gaps in the vault from index data alone (0 LLM calls)
 - **Hybrid Search** — Lexical matches are fused with vector search by reciprocal rank fusion, so exact strings (error codes, function names, versions) are not lost to embedding similarity
 - **Filtered Search** — The AI can narrow vault search by folder, tags, and modification date range
+- **Frontmatter Property Search** — Filter by any frontmatter property with `=`, `!=`, `>`, `>=`, `<`, `<=`, and `~` (substring). Dot notation reaches nested keys, so `project.status = active` works. Invalid filters are reported rather than silently dropped, so a bad condition never masquerades as a whole-vault search
+- **AI Change Ledger & Safe Undo** — Every note-changing AI action is recorded with a before/after snapshot (last 20). Undo restores the snapshot **only if you have not edited the file since** — if you have, that file is skipped rather than overwritten
+- **Attachment RAG** — `.txt`, `.csv`, `.json`, and `.html` files in your vault are indexed and searchable alongside notes, not just read once and discarded
+- **Source Provenance** — Synthesis notes record a content hash per source chunk. When a source changes, the note is marked outdated, and regenerating shows a diff of what changed
+- **Bases Dashboard** — Generates a `.base` file with four views (decision ledger, open questions, outdated knowledge, review queue) from your vault data. Files you wrote yourself are never overwritten
 - **Citation Verification** — Cited note paths and `#heading` anchors are checked against the index; unresolved citations are flagged under the answer
 - **Contradiction Review** — Approve contradiction fixes note by note; only the generated region is replaced (0 LLM calls to apply)
 - **Link Suggestions** — Proposes links for orphan and stub notes from index embeddings (0 LLM calls)
