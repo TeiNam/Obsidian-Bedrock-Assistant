@@ -42,7 +42,7 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 - **웹 클리퍼** — 웹 페이지를 마크다운 노트로 가져오기, 번역, 요약
 - **MCP 서버 통합** — Model Context Protocol 서버(uvx, Docker)
 - **파일 관리** — AI를 통한 노트 생성, 편집, 이동, 삭제
-- **다국어 UI** — English, 한국어, 日本語
+- **다국어 UI** — English, 한국어, 日本語. 설정·사이드바·명령 팔레트·알림·상태바가 모두 선택한 언어를 따릅니다
 - **파일 첨부** — 드래그앤드롭, 클립보드, 파일 검색. 이미지는 네 백엔드 모두, PDF는 Bedrock·Gemini, Office 문서는 Bedrock에서 동작합니다. 지원하지 않는 조합은 조용히 버리지 않고 그 형식을 처리할 수 있는 백엔드 목록과 함께 거절합니다
 - **채팅 세션 히스토리** — 과거 대화 저장 및 복원
 - **옵시디언 스킬** — 6개 내장 지식 모듈: `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `korean-writing`, `business-english-writing`, `second-brain`
