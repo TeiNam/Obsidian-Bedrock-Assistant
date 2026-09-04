@@ -6,12 +6,18 @@
 
 import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
+import { TFile } from "obsidian";
 import { buildSynthesisPrompt, runSynthesize } from "./synthesize";
 import type { SearchHit } from "./search-adapter";
 import type { SecondBrainContext } from "./scheduler";
 import type { GraphRagResult, GraphRagSearchItem, VaultIndexer } from "../vault-indexer";
 import type { IAiClient } from "../types";
 import { TOOL_I18N } from "../tool-result-i18n";
+import { getGeneratedBlock } from "./sentinel-blocks";
+import {
+  parseSynthesisProvenance,
+  SYNTHESIS_PROVENANCE_BLOCK_KEY,
+} from "./synthesis-provenance";
 
 // 임의의 SearchHit 제너레이터 — path/title/excerpt를 자유 문자열로 채워
 // 다양한 입력(빈 문자열, 유니코드, 특수문자 등)에서 제목 포함 보장을 자극한다.
@@ -65,6 +71,7 @@ function makeItem(path: string, title: string, excerpt: string): GraphRagSearchI
     hop: 0,
     isSeed: true,
     seedPath: null,
+    chunkHash: "0123456789abcdef",
   };
 }
 
@@ -150,6 +157,14 @@ describe("runSynthesize — 실행 단위 테스트 (Req 7.2, 7.4, 7.6)", () => 
     expect(createdContent).toContain("<!-- @generated:synthesis -->");
     expect(createdContent).toContain("<!-- @end:synthesis -->");
     expect(createdContent).toContain(llmText);
+    const provenance = parseSynthesisProvenance(
+      getGeneratedBlock(createdContent, SYNTHESIS_PROVENANCE_BLOCK_KEY),
+    );
+    expect(provenance?.topic).toBe("주제");
+    expect(provenance?.sources.map((source) => source.path)).toEqual([
+      "Second Brain/concepts/Alpha.md",
+      "Second Brain/concepts/Beta.md",
+    ]);
 
     // 종합 본문은 시작/종료 마커 사이에 위치한다(감싸기 검증).
     const startIdx = createdContent.indexOf("<!-- @generated:synthesis -->");
@@ -180,5 +195,28 @@ describe("runSynthesize — 실행 단위 테스트 (Req 7.2, 7.4, 7.6)", () => 
 
     // 관련 노트가 없어 종합 노트를 만들지 않았음을 안내한다.
     expect(message).toContain(TOOL_I18N.en.synthesizeNoHits("없는 주제", ""));
+  });
+
+  it("재생성 시 자기 노트는 출처에서 제외하고 변경 diff를 반환한다", async () => {
+    const self = makeItem(`${WIKI}/주제.md`, "주제", "이전 종합");
+    const source = makeItem("Notes/source.md", "Source", "근거");
+    const searchResult: GraphRagResult = { items: [self, source] };
+    const { ctx, vault, converseLight } = makeContext(searchResult, "새 종합");
+    const existing = new TFile();
+    existing.path = `${WIKI}/주제.md`;
+    existing.basename = "주제";
+    (existing as TFile & { content: string }).content =
+      "<!-- @generated:synthesis -->\n이전 종합\n<!-- @end:synthesis -->";
+    vault.getAbstractFileByPath.mockReturnValue(existing);
+    vault.read.mockImplementation(async (file: TFile & { content?: string }) => file.content ?? "");
+
+    const message = await runSynthesize(ctx, "주제");
+
+    const prompt = converseLight.mock.calls[0][0];
+    expect(prompt).toContain("Notes/source.md");
+    expect(prompt).not.toContain(`${WIKI}/주제.md`);
+    expect(message).toContain("Regeneration diff");
+    expect(message).toContain("- 이전 종합");
+    expect(message).toContain("+ 새 종합");
   });
 });

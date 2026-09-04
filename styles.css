@@ -1075,18 +1075,6 @@ body.theme-light .ba-message-content pre {
   gap: 6px;
 }
 
-/* ============================================
-   설정 탭 플러그인 설명 + 후원 배너
-   ============================================ */
-.ba-about-box {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 18px 2em;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 12px;
-}
-
 .ba-about-desc {
   font-size: 13px;
   color: var(--text-muted);
@@ -1095,31 +1083,7 @@ body.theme-light .ba-message-content pre {
   padding: 0;
 }
 
-.ba-features-label {
-  font-size: 13px;
-  font-weight: var(--font-semibold);
-  color: var(--text-normal);
-  margin: 0;
-  padding: 0;
-}
-
-.ba-features {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin: 0;
-  padding-left: 1.2em;
-}
-
-.ba-features strong {
-  color: var(--text-normal);
-  font-weight: var(--font-semibold);
-}
-
-/* 후원 배너 — 설정 맨 아래에 단독으로 놓이므로 위쪽 구분선과 여백을 직접 갖는다. */
+/* 설정 하단 후원 배너 */
 .ba-about-sponsor {
   display: flex;
   flex-direction: column;

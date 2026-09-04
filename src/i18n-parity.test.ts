@@ -3,6 +3,10 @@ import { I18N } from "./settings-tab";
 import { VIEW_I18N } from "./chat-view-i18n";
 import { NOTICE_I18N } from "./notice-i18n";
 import { TOOL_I18N } from "./tool-result-i18n";
+import { CLIPPER_I18N } from "./web-clipper";
+import { AI_CHANGE_I18N } from "./modals/ai-change-ledger-modal";
+import { PROVENANCE_I18N } from "./second-brain/synthesis-provenance";
+import { DASHBOARD_I18N } from "./second-brain/bases-dashboard";
 import { SKILLS } from "./skills";
 import type { Locale } from "./types";
 
@@ -19,7 +23,24 @@ const DICTS = {
   VIEW_I18N: VIEW_I18N as Record<Locale, Record<string, unknown>>,
   NOTICE_I18N: NOTICE_I18N as Record<Locale, Record<string, unknown>>,
   TOOL_I18N: TOOL_I18N as Record<Locale, Record<string, unknown>>,
+  CLIPPER_I18N: CLIPPER_I18N as unknown as Record<Locale, Record<string, unknown>>,
+  AI_CHANGE_I18N: AI_CHANGE_I18N as unknown as Record<Locale, Record<string, unknown>>,
+  PROVENANCE_I18N: PROVENANCE_I18N as unknown as Record<Locale, Record<string, unknown>>,
+  DASHBOARD_I18N: DASHBOARD_I18N as unknown as Record<Locale, Record<string, unknown>>,
 };
+
+/**
+ * 값까지 내려가며 키 경로를 모은다(`a.b.c` 형태).
+ *
+ * 최상위 키만 비교하면 중첩 객체가 통째로 "object"로 보여 안쪽 누락을 놓친다. 새 기능이
+ * 중첩 사전을 들고 오면서 실제로 그 구멍이 생겼다.
+ */
+function keyPaths(value: unknown, prefix = ""): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [prefix];
+  return Object.keys(value as Record<string, unknown>).flatMap((key) =>
+    keyPaths((value as Record<string, unknown>)[key], prefix ? `${prefix}.${key}` : key)
+  );
+}
 
 describe("i18n 딕셔너리 정합성", () => {
   for (const [dictName, dict] of Object.entries(DICTS)) {
@@ -31,9 +52,13 @@ describe("i18n 딕셔너리 정합성", () => {
       });
 
       for (const locale of LOCALES.filter((l) => l !== "en")) {
-        it(`${locale}가 en과 같은 키 집합을 갖는다`, () => {
-          const localeKeys = Object.keys(dict[locale]);
-          expect([...localeKeys].sort()).toEqual([...enKeys].sort());
+        it(`${locale}가 en과 같은 키 집합을 갖는다 (중첩 포함)`, () => {
+          const enPaths = keyPaths(dict.en).sort();
+          const localePaths = keyPaths(dict[locale]).sort();
+          expect({
+            missing: enPaths.filter((k) => !localePaths.includes(k)),
+            extra: localePaths.filter((k) => !enPaths.includes(k)),
+          }).toEqual({ missing: [], extra: [] });
         });
 
         it(`${locale}의 모든 값이 en과 같은 종류(문자열 또는 함수)다`, () => {

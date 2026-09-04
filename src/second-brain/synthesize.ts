@@ -23,12 +23,17 @@ import {
   type SearchHit,
 } from "./search-adapter";
 import { buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
-import { upsertGeneratedBlock } from "./sentinel-blocks";
+import { getGeneratedBlock, upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { ensureWikiFolders } from "./wiki-structure";
 // 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
 import { ensureWithinFolder } from "./vault-path-guard";
 import { toolI18n } from "../tool-result-i18n";
+import {
+  buildSynthesisDiff,
+  buildSynthesisProvenance,
+  upsertSynthesisProvenance,
+} from "./synthesis-provenance";
 
 /** 종합 본문을 감싸는 Sentinel_Block 키 (Req 7.4). */
 const SYNTHESIS_BLOCK_KEY = "synthesis";
@@ -102,6 +107,16 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
     return toolI18n(ctx.locale).topicRequired;
   }
 
+  const wikiFolder = normalizePath(ctx.wikiFolder);
+  const fileName = `${trimmedTopic}.md`;
+  const notePath = normalizePath(`${wikiFolder}/${fileName}`);
+
+  // 경로 검증을 LLM 호출보다 먼저 끝낸다.
+  const guard = ensureWithinFolder(notePath, wikiFolder);
+  if (!guard.ok) {
+    return guard.reason;
+  }
+
   // 1) 기존 Graph RAG 검색 재사용 (Req 7.2)
   const result = await ctx.indexer.search(trimmedTopic);
 
@@ -109,12 +124,18 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   const staleNote = staleIndexWarning(result);
 
   // 2) 검색 결과 없음 → 노트 생성 없이 안내 (Req 7.6)
-  if (hasNoHits(result)) {
+  // 기존 종합 노트 자체를 출처로 다시 먹이지 않는다. 그러면 매 실행마다 자기 출력이
+  // provenance에 들어가고, 쓰는 즉시 자기 해시가 바뀌어 항상 오래됨 상태가 된다.
+  const sourceResult = {
+    ...result,
+    items: (result.items ?? []).filter((item) => item.path !== notePath),
+  };
+  if (hasNoHits(sourceResult)) {
     return toolI18n(ctx.locale).synthesizeNoHits(trimmedTopic, staleNote);
   }
 
   // 3) 검색 히트 → 종합 프롬프트 (Req 7.3)
-  const hits = toSearchHits(result);
+  const hits = toSearchHits(sourceResult);
   const prompt = buildSynthesisPrompt(trimmedTopic, hits);
 
   // 4) 단발 LLM 호출 (백엔드 무관, Req 7.5)
@@ -126,24 +147,26 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   const synthesisBody = response.text;
 
   // 5) 종합 노트 작성 — synthesis Sentinel_Block으로 감싸 사용자 주석 보존 (Req 7.4)
-  const wikiFolder = normalizePath(ctx.wikiFolder);
-  const fileName = `${trimmedTopic}.md`;
-  const notePath = normalizePath(`${wikiFolder}/${fileName}`);
-
-  // Wiki_Folder 범위 검증 — 주제에 "../" 등 경로 탈출이 포함되면 거부한다.
-  // normalizePath는 ".." 를 해석하지 않으므로 세그먼트 단위 검사가 필요하다.
-  const guard = ensureWithinFolder(notePath, wikiFolder);
-  if (!guard.ok) {
-    return guard.reason;
-  }
+  const provenance = buildSynthesisProvenance(trimmedTopic, hits);
 
   const existing = ctx.app.vault.getAbstractFileByPath(notePath);
   if (existing instanceof TFile) {
+    const before = await ctx.app.vault.read(existing);
+    const previousBody = getGeneratedBlock(before, SYNTHESIS_BLOCK_KEY) ?? "";
     // 기존 종합 노트: synthesis 블록만 교체하여 프론트매터·프리앰블·User_Region을 보존한다.
     await processIfChanged(ctx.app, existing, (content) =>
-      upsertGeneratedBlock(content, SYNTHESIS_BLOCK_KEY, synthesisBody)
+      upsertSynthesisProvenance(
+        upsertGeneratedBlock(content, SYNTHESIS_BLOCK_KEY, synthesisBody),
+        provenance,
+        ctx.locale,
+      )
     );
-    return toolI18n(ctx.locale).synthesizeUpdated(notePath, staleNote);
+    const diff = buildSynthesisDiff(previousBody, synthesisBody);
+    const diffLabel =
+      ctx.locale === "ko" ? "재생성 diff" : ctx.locale === "ja" ? "再生成 diff" : "Regeneration diff";
+    return `${toolI18n(ctx.locale).synthesizeUpdated(notePath, staleNote)}${
+      diff ? `\n\n${diffLabel}:\n\`\`\`diff\n${diff}\n\`\`\`` : ""
+    }`;
   }
 
   // 신규 종합 노트: AI_First_Note 본문에 synthesis 블록을 담아 생성한다.
@@ -153,7 +176,11 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
     confidence: "medium",
     source: "synthesize",
   };
-  const body = upsertGeneratedBlock("", SYNTHESIS_BLOCK_KEY, synthesisBody);
+  const body = upsertSynthesisProvenance(
+    upsertGeneratedBlock("", SYNTHESIS_BLOCK_KEY, synthesisBody),
+    provenance,
+    ctx.locale,
+  );
   const noteContent = buildAiFirstNote({ meta, body });
   // Wiki_Folder가 없으면 create가 실패한다(LLM 호출 비용만 소진). 다른 쓰기 경로와
   // 동일하게 부모 폴더를 먼저 보장한다.

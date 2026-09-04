@@ -71,6 +71,7 @@ export function findOrphanNotes(
 ): GapCandidate[] {
   const gaps: GapCandidate[] = [];
   for (const entry of entries) {
+    if (!/\.md$/i.test(entry.path)) continue;
     if (isGenerated(entry.path, wikiFolder)) continue;
     const out = entry.outlinks?.length ?? 0;
     const back = entry.backlinks?.length ?? 0;
@@ -98,6 +99,7 @@ export function findStubNotes(
 ): GapCandidate[] {
   const gaps: GapCandidate[] = [];
   for (const entry of entries) {
+    if (!/\.md$/i.test(entry.path)) continue;
     if (isGenerated(entry.path, wikiFolder)) continue;
     const back = entry.backlinks?.length ?? 0;
     if (back === 0) continue;
@@ -129,10 +131,11 @@ export function findOneWayLinks(
   entries: VaultIndexEntry[],
   wikiFolder?: string,
 ): GapCandidate[] {
-  const byPath = new Map(entries.map((e) => [e.path, e]));
+  const notes = entries.filter((entry) => /\.md$/i.test(entry.path));
+  const byPath = new Map(notes.map((e) => [e.path, e]));
   const gaps: GapCandidate[] = [];
 
-  for (const entry of entries) {
+  for (const entry of notes) {
     if (isGenerated(entry.path, wikiFolder)) continue;
     for (const target of entry.outlinks ?? []) {
       const targetEntry = byPath.get(target);

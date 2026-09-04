@@ -99,7 +99,7 @@ Block keys currently in use: `synthesis` (synthesize), `overview` / `modules` / 
 
 #### Scheduler
 
-The cleanup pipeline runs four non-destructive steps in order: ensure the wiki folders exist → refresh the `index.md` catalog → write the knowledge gap report → append to the activity log.
+The cleanup pipeline runs five non-destructive steps in order: ensure the wiki folders exist → refresh the `index.md` catalog → write the knowledge gap report → refresh the Bases dashboard → append to the activity log.
 
 Step failures are isolated, so the remaining steps still run. If every step fails, the last-run timestamp is not updated and the pipeline retries on the next trigger.
 
@@ -147,6 +147,69 @@ Every generated link is written by one shared formatter, so the same rules hold 
 - Links point at the **path** with the extension removed, and the note's title becomes the alias: `[[path/to/note|Title]]`. Titles are not link targets — a note's title comes from its first `# H1`, which frequently differs from its filename.
 - `#` and `|` cannot be escaped inside a wikilink; `#` starts an anchor and the first `|` starts the alias. When a path or alias contains one, the link falls back to a percent-encoded markdown link, which Obsidian resolves the same way.
 - Anchor links are only written when the heading is safe to use as one; otherwise the citation falls back to the note as a whole.
+
+### Frontmatter Property Search
+
+Beyond folder, tags, and date range, vault search can filter on any frontmatter property.
+
+| Operator | Meaning |
+|----------|---------|
+| `=` / `!=` | Equal / not equal |
+| `>` `>=` `<` `<=` | Numeric and date comparison |
+| `~` | Substring contains |
+
+Dot notation reaches nested keys, so `project.status = active` matches a nested `project: { status: active }`.
+
+Invalid filters are **reported, not dropped.** A model that passes `modifiedAfter: "last month"` would otherwise receive whole-vault results and never learn the condition was ignored — and neither would you.
+
+Dates are parsed in **local time.** `new Date("2026-09-01")` is UTC midnight, which in KST is 09:00 on September 1st, so a note written that morning would fall outside "after September 1st". The index stores local file times, so the filter matches.
+
+**Cost:** no additional LLM or embedding calls — the filter runs on index data.
+
+### AI Change Ledger and Safe Undo
+
+Every note-changing AI action is recorded with a before/after snapshot. The last 20 are kept.
+
+- **Undo restores the snapshot only if you have not edited the file since.** If you have, that file is skipped rather than overwritten — your edit is never the thing that gets lost.
+- Snapshots cover created, modified, and deleted paths, including folders.
+- Paths are validated before restore: absolute paths, `..` traversal, and empty segments are rejected.
+- The ledger lives in the plugin folder, not your vault.
+
+Open it with **Open AI change ledger**; undo the most recent action with **Undo last AI change**.
+
+**Cost:** 0 LLM calls, 0 embedding calls.
+
+### Attachment RAG
+
+`.txt`, `.csv`, `.json`, and `.html` files in your vault are indexed as chunks and searched alongside notes, rather than read once into a single conversation and discarded.
+
+They participate in the same pipeline as notes: chunk embeddings, keyword fusion, and graph traversal where links exist. Re-indexing follows the same file events.
+
+### Source Provenance, Outdated Marks, and Regeneration Diff
+
+A synthesis note records **a content hash per source chunk**, not just the source paths.
+
+- When a source's content changes, its hash no longer matches and the note is marked outdated. A path that still exists is not enough to call a synthesis current.
+- Regenerating shows a **diff** (capped at 40 lines) of what changed, so you can see whether the update was substantive before accepting it.
+- Provenance lives in its own `synthesis-provenance` sentinel block, so it is replaced on regeneration while your own text survives.
+
+### Bases Dashboard
+
+Generates a `.base` file with four views built from vault data:
+
+| View | Content |
+|------|---------|
+| Decision ledger | Decisions with status, owner, and due date |
+| Open questions | Questions recorded but not yet answered |
+| Outdated knowledge | Notes whose sources changed after synthesis |
+| Review queue | Well-linked notes you have not opened in a while |
+
+Run **Refresh and open Agent LLMs dashboard**, or let the scheduler pipeline refresh it.
+
+- Generated files carry a marker. **A file without that marker is never overwritten** — if a path collides with something you wrote, the run fails loudly instead of destroying it.
+- Projections that disappear are **deactivated, not deleted** (`dashboard_active: false`), so notes you added to a generated file survive.
+
+**Cost:** 0 LLM calls, 0 embedding calls.
 
 ### Knowledge Gap Report
 

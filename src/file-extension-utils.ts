@@ -6,11 +6,21 @@ export const ALLOWED_TEXT_EXTENSIONS: string[] = [
   'md', 'txt', 'json', 'yaml', 'yml', 'csv', 'xml', 'html', 'css', 'js', 'ts',
 ];
 
+/** 볼트에 영구 저장해 RAG 검색 대상으로 삼는 텍스트 확장자 */
+export const INDEXABLE_TEXT_EXTENSIONS: string[] = [
+  'md', 'txt', 'csv', 'json', 'html',
+];
+
 /**
  * 파일 확장자가 텍스트 기반인지 판단하는 헬퍼 함수
  * @param extension - 파일 확장자 (점 없이, 예: "md", "json")
  * @returns 허용된 텍스트 확장자이면 true, 아니면 false
  */
 export function isAllowedTextExtension(extension: string): boolean {
-  return ALLOWED_TEXT_EXTENSIONS.includes(extension);
+  return ALLOWED_TEXT_EXTENSIONS.includes(extension.toLowerCase());
+}
+
+/** 파일 확장자가 영구 RAG 인덱싱 대상인지 판단한다. */
+export function isIndexableTextExtension(extension: string): boolean {
+  return INDEXABLE_TEXT_EXTENSIONS.includes(extension.toLowerCase());
 }

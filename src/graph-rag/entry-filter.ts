@@ -18,10 +18,24 @@ export interface SearchFilter {
   modifiedAfter?: string;
   /** 이 날짜 23:59:59.999(로컬)까지 수정된 노트만. "YYYY-MM-DD". */
   modifiedBefore?: string;
+  /** 프론트매터 속성 조건. 모든 조건은 AND로 결합된다. */
+  properties?: PropertyFilter[];
+}
+
+export type PropertyOperator = "=" | "!=" | ">" | ">=" | "<" | "<=" | "~";
+
+export interface PropertyFilter {
+  /** 프론트매터 키. 점 표기법으로 중첩 키를 찾을 수 있다. */
+  key: string;
+  /** =, !=, 숫자 비교, 부분 포함(~). */
+  operator: PropertyOperator;
+  /** 비교할 스칼라 값. */
+  value: string | number | boolean | null;
 }
 
 /** "YYYY-MM-DD" 형식 검사. 월/일 범위까지 본다. */
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const PROPERTY_PATTERN = /^(.+?)\s*(>=|<=|!=|=|>|<|~)\s*(.+)$/;
 
 /**
  * "YYYY-MM-DD"를 **로컬 시간** 기준 하루의 시작(00:00:00.000) 밀리초로 바꾼다.
@@ -66,6 +80,38 @@ function normalizeTag(tag: string): string {
 /** 폴더 비교용 정규화 — 앞뒤 슬래시와 공백 제거. */
 function normalizeFolder(folder: string): string {
   return folder.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+/** 속성 조건 문자열의 값을 가능한 경우 JSON 스칼라로 바꾼다. */
+function parsePropertyValue(raw: string): string | number | boolean | null {
+  const value = raw.trim();
+  if (/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) {
+    return Number(value);
+  }
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "null") return null;
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+/** `status=active`, `confidence>=0.8` 형식의 속성 조건을 파싱한다. */
+export function parsePropertyFilter(raw: string): PropertyFilter | null {
+  const match = PROPERTY_PATTERN.exec(raw.trim());
+  if (!match) return null;
+  const key = match[1].trim();
+  if (key === "") return null;
+  return {
+    key,
+    operator: match[2] as PropertyOperator,
+    value: parsePropertyValue(match[3]),
+  };
 }
 
 /**
@@ -120,6 +166,38 @@ export function normalizeSearchFilter(raw: Record<string, unknown>): {
     }
   }
 
+  if (raw.properties !== undefined) {
+    const values =
+      typeof raw.properties === "string"
+        ? [raw.properties]
+        : Array.isArray(raw.properties)
+          ? raw.properties
+          : null;
+    if (values === null) {
+      problems.push(
+        `properties는 조건 문자열 또는 문자열 배열이어야 합니다: ${JSON.stringify(raw.properties)}`
+      );
+    } else {
+      const parsed: PropertyFilter[] = [];
+      for (const value of values) {
+        if (typeof value !== "string") {
+          problems.push(`properties의 원소는 문자열이어야 합니다: ${JSON.stringify(value)}`);
+          continue;
+        }
+        if (value.trim() === "") continue;
+        const condition = parsePropertyFilter(value);
+        if (!condition) {
+          problems.push(
+            `속성 조건은 "키=값" 형식이어야 합니다: ${value} (지원: =, !=, >, >=, <, <=, ~)`
+          );
+          continue;
+        }
+        parsed.push(condition);
+      }
+      if (parsed.length > 0) filter.properties = parsed;
+    }
+  }
+
   for (const key of ["modifiedAfter", "modifiedBefore"] as const) {
     const value = raw[key];
     if (value === undefined || value === null || value === "") continue;
@@ -163,6 +241,13 @@ export function describeFilter(filter: SearchFilter): string {
   } else if (filter.modifiedBefore !== undefined) {
     parts.push(`수정일 ${filter.modifiedBefore} 까지`);
   }
+  if (filter.properties !== undefined && filter.properties.length > 0) {
+    parts.push(
+      `속성 ${filter.properties
+        .map((p) => `${p.key}${p.operator}${String(p.value)}`)
+        .join(" 그리고 ")}`
+    );
+  }
   return parts.join(", ");
 }
 
@@ -172,7 +257,8 @@ export function isFilterEmpty(filter: SearchFilter): boolean {
     filter.folder === undefined &&
     (filter.tags === undefined || filter.tags.length === 0) &&
     filter.modifiedAfter === undefined &&
-    filter.modifiedBefore === undefined
+    filter.modifiedBefore === undefined &&
+    (filter.properties === undefined || filter.properties.length === 0)
   );
 }
 
@@ -181,6 +267,71 @@ function matchesFolder(path: string, folder: string): boolean {
   // 빈 폴더는 볼트 루트를 뜻하므로 전체 통과.
   if (folder === "") return true;
   return path === folder || path.startsWith(`${folder}/`);
+}
+
+const MISSING = Symbol("missing-frontmatter-property");
+
+/** 대소문자를 무시해 프론트매터 키를 찾고, 점 표기법으로 중첩 객체를 순회한다. */
+function getPropertyValue(
+  frontmatter: Record<string, unknown> | undefined,
+  path: string
+): unknown | typeof MISSING {
+  let current: unknown = frontmatter;
+  for (const segment of path.split(".").map((part) => part.trim())) {
+    if (!current || typeof current !== "object" || Array.isArray(current) || segment === "") {
+      return MISSING;
+    }
+    const object = current as Record<string, unknown>;
+    const key = Object.keys(object).find(
+      (candidate) => candidate.toLowerCase() === segment.toLowerCase()
+    );
+    if (key === undefined) return MISSING;
+    current = object[key];
+  }
+  return current;
+}
+
+function equalsPropertyValue(actual: unknown, expected: PropertyFilter["value"]): boolean {
+  if (typeof actual === "string" && typeof expected === "string") {
+    return actual.trim().toLowerCase() === expected.trim().toLowerCase();
+  }
+  return actual === expected;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (
+    typeof value === "string" &&
+    /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())
+  ) {
+    return Number(value);
+  }
+  return null;
+}
+
+function matchesPropertyValue(actual: unknown, filter: PropertyFilter): boolean {
+  const values = Array.isArray(actual) ? actual : [actual];
+  if (filter.operator === "=") {
+    return values.some((value) => equalsPropertyValue(value, filter.value));
+  }
+  if (filter.operator === "!=") {
+    return values.every((value) => !equalsPropertyValue(value, filter.value));
+  }
+  if (filter.operator === "~") {
+    const expected = String(filter.value).toLowerCase();
+    return values.some((value) => String(value).toLowerCase().includes(expected));
+  }
+
+  const expected = numericValue(filter.value);
+  if (expected === null) return false;
+  return values.some((value) => {
+    const actualNumber = numericValue(value);
+    if (actualNumber === null) return false;
+    if (filter.operator === ">") return actualNumber > expected;
+    if (filter.operator === ">=") return actualNumber >= expected;
+    if (filter.operator === "<") return actualNumber < expected;
+    return actualNumber <= expected;
+  });
 }
 
 /** 엔트리가 필터를 통과하는지 판정한다. 모든 조건은 AND, tags 내부만 OR이다. */
@@ -202,6 +353,11 @@ export function matchesFilter(entry: VaultIndexEntry, filter: SearchFilter): boo
   if (filter.modifiedBefore !== undefined) {
     const before = parseLocalDayEnd(filter.modifiedBefore);
     if (before !== null && entry.lastModified > before) return false;
+  }
+
+  for (const property of filter.properties ?? []) {
+    const actual = getPropertyValue(entry.frontmatter, property.key);
+    if (actual === MISSING || !matchesPropertyValue(actual, property)) return false;
   }
 
   return true;

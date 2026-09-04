@@ -23,6 +23,9 @@ import { traverseGraph, MAX_GRAPH_CANDIDATES, normalizeTraversalDepth } from "./
 import { combineAndRank } from "./graph-rag/score-combiner";
 import { filterIndex, isFilterEmpty, type SearchFilter } from "./graph-rag/entry-filter";
 import { fuseRanks, reserveSlots } from "./graph-rag/rank-fusion";
+import { isIndexableTextExtension } from "./file-extension-utils";
+import { contentHash } from "./content-hash";
+import { isDashboardItemPath } from "./dashboard-artifacts";
 
 // === Graph_RAG_Search 결과 타입 (task 8.4) ===
 // 기존 search()의 반환 타입 Array<{path,title,excerpt,score}>을 대체하는 신규 API 시그니처.
@@ -48,11 +51,15 @@ const MATCHED_TEXT_MAX_CHARS = 2000;
  * 있는 상태는 "맞은 내용이 없다"와 구분되지 않아 읽는 쪽을 헷갈리게 한다.
  */
 function matchedFields(
-  match: { heading: string | null; text: string } | null
-): { heading: string | null; matchedText?: string } {
+  match: { heading: string | null; text: string; chunkHash?: string } | null
+): { heading: string | null; matchedText?: string; chunkHash?: string } {
   if (match === null) return { heading: null };
   const text = match.text.trim().slice(0, MATCHED_TEXT_MAX_CHARS);
-  return text === "" ? { heading: match.heading } : { heading: match.heading, matchedText: text };
+  return {
+    heading: match.heading,
+    ...(text === "" ? {} : { matchedText: text }),
+    ...(match.chunkHash ? { chunkHash: match.chunkHash } : {}),
+  };
 }
 
 /**
@@ -63,10 +70,10 @@ function matchedFields(
  * 확인할 수 있는 쪽이 낫다. 어휘 청크가 없으면(순수 의미 질의) 임베딩 청크를 쓴다.
  */
 function pickMatchedChunk(
-  dense: { heading: string | null; text: string } | null,
-  lexical: { heading: string | null; text: string } | null,
+  dense: { heading: string | null; text: string; chunkHash?: string } | null,
+  lexical: { heading: string | null; text: string; chunkHash?: string } | null,
   terms: readonly string[]
-): { heading: string | null; text: string } | null {
+): { heading: string | null; text: string; chunkHash?: string } | null {
   if (dense === null) return lexical;
   if (lexical === null) return dense;
 
@@ -161,7 +168,7 @@ function bestLexicalChunk(
   entry: VaultIndexEntry | undefined,
   terms: readonly string[],
   weights: ReadonlyMap<string, number> = new Map()
-): { heading: string | null; text: string } | null {
+): { heading: string | null; text: string; chunkHash: string } | null {
   let best: { heading: string | null; text: string; hits: number; at: number } | null = null;
 
   for (const chunk of entry?.chunks ?? []) {
@@ -195,7 +202,11 @@ function bestLexicalChunk(
   if (best === null) return null;
   // 적중어 **주변**을 자른다. 청크 전체를 돌려주면 소비자가 앞부분만 잘라 쓸 때
   // (obsidian-tools는 500자) 정작 맞은 문자열이 사라진다.
-  return { heading: best.heading, text: windowAround(best.text, best.at) };
+  return {
+    heading: best.heading,
+    text: windowAround(best.text, best.at),
+    chunkHash: contentHash(best.text),
+  };
 }
 
 /**
@@ -244,6 +255,8 @@ export interface GraphRagSearchItem {
    * 답하게 된다. 맞은 청크를 함께 실어 소비자가 그것을 우선 쓰게 한다.
    */
   matchedText?: string;
+  /** 종합 노트의 출처 변경 감지에 쓰는 실제 적중 청크 해시. */
+  chunkHash?: string;
   /** 시드로부터의 그래프 거리(hop). 0이면 시드 (Req 7.4) */
   hop: number;
   /** 시드 여부 (hop 0) (Req 7.3) */
@@ -318,6 +331,36 @@ const LEXICAL_FUSION_WEIGHT = 0.5;
 
 /** 발췌(excerpt) 최대 길이. 검색 결과 미리보기와 LLM 컨텍스트에 사용된다. */
 const EXCERPT_MAX_CHARS = 500;
+
+/** TFile 테스트 더블처럼 extension이 비어 있어도 경로에서 확장자를 복원한다. */
+function fileExtension(file: TFile): string {
+  const explicit = typeof file.extension === "string" ? file.extension : "";
+  if (explicit !== "") return explicit.toLowerCase();
+  const dot = file.path.lastIndexOf(".");
+  return dot < 0 ? "" : file.path.slice(dot + 1).toLowerCase();
+}
+
+/** HTML 첨부파일에서 검색에 필요 없는 태그·스크립트를 제거한다. */
+function htmlToText(content: string): string {
+  if (typeof DOMParser !== "undefined") {
+    const document = new DOMParser().parseFromString(content, "text/html");
+    document.querySelectorAll("script, style, noscript").forEach((node) => node.remove());
+    return document.body.textContent ?? "";
+  }
+
+  // 테스트·비브라우저 환경 폴백. 실제 Obsidian 런타임은 DOMParser 경로를 사용한다.
+  return content
+    .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
  * 벡터 검색 시 확보할 최소 시드 수.
@@ -421,7 +464,16 @@ export class VaultIndexer {
     private async runIndexVault(
       onProgress?: (current: number, total: number) => void
     ): Promise<IndexResult> {
-      const files = this.app.vault.getMarkdownFiles();
+      const vault = this.app.vault as typeof this.app.vault & {
+        getFiles?: () => TFile[];
+      };
+      // 구형 테스트 더블은 getFiles가 없으므로 기존 getMarkdownFiles로 폴백한다.
+      const files = (vault.getFiles?.() ?? vault.getMarkdownFiles())
+        .filter(
+          (file) =>
+            isIndexableTextExtension(fileExtension(file)) &&
+            !isDashboardItemPath(file.path)
+        );
 
       // 삭제된 파일 인덱스에서 제거
       const currentPaths = new Set(files.map((f) => f.path));
@@ -478,7 +530,7 @@ export class VaultIndexer {
 
       for (const file of filesToIndex) {
         try {
-          const content = await this.app.vault.cachedRead(file);
+          const content = await this.readIndexContent(file);
           if (!content.trim()) {
             // 비워진 노트의 기존 엔트리를 제거한다(이전 본문이 계속 검색되는 것을 방지).
             this.index.delete(file.path);
@@ -543,12 +595,19 @@ export class VaultIndexer {
 
     // lastModified 체크 없이 강제 인덱싱
     private async forceIndexFile(file: TFile): Promise<void> {
+      if (
+        !isIndexableTextExtension(fileExtension(file)) ||
+        isDashboardItemPath(file.path)
+      ) {
+        this.index.delete(file.path);
+        return;
+      }
       // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다(indexFile과 같은 이유 — 세대를
       // 첫 await 뒤에 잡으면 cachedRead 도중 삭제된 노트를 되살린다).
       const path = file.path;
       const readMtime = file.stat.mtime;
       const generation = this.currentGeneration(path);
-      const content = await this.app.vault.cachedRead(file);
+      const content = await this.readIndexContent(file);
       // 내용이 비워진 노트는 인덱스에서 제거한다. 그냥 반환하면 이전 본문과 임베딩이
       // 계속 검색되어, 사용자가 지운 내용이 LLM에 노출된다.
       if (!content.trim()) {
@@ -585,17 +644,18 @@ export class VaultIndexer {
       content: string,
       readMtime?: number
     ): Promise<VaultIndexEntry> {
+      const isMarkdown = fileExtension(file) === "md";
       // 1) 제목: 본문 첫 H1 헤딩, 없으면 파일명
-      const titleMatch = content.match(/^#\s+(.+)$/m);
+      const titleMatch = isMarkdown ? content.match(/^#\s+(.+)$/m) : null;
       const title = titleMatch ? titleMatch[1] : file.basename;
 
       // 2) 메타데이터 추출 (어댑터 미주입 시 빈 값으로 저하)
-      const metadata: ExtractedMetadata = this.metadataSource
+      const metadata: ExtractedMetadata = isMarkdown && this.metadataSource
         ? extractMetadata(file.path, this.metadataSource)
         : { outlinks: [], backlinks: [], tags: [], frontmatter: {} };
 
       // 3) 프론트매터 제외 본문 추출 (어댑터 없으면 원문 전체를 본문으로 간주)
-      const body = this.metadataSource
+      const body = isMarkdown && this.metadataSource
         ? stripFrontmatter(content, this.metadataSource, file.path)
         : content;
 
@@ -627,7 +687,7 @@ export class VaultIndexer {
         }
         const chunk: IndexChunk = { index: i, text, embedding, charStart };
         // 헤딩이 없는 청크(문서 도입부)는 필드를 생략해 직렬화 크기를 늘리지 않는다.
-        if (heading !== null) chunk.heading = heading;
+        if (isMarkdown && heading !== null) chunk.heading = heading;
         if (embedFailed) chunk.embedFailed = true;
         chunks.push(chunk);
       }
@@ -670,6 +730,12 @@ export class VaultIndexer {
         frontmatter: metadata.frontmatter,
       };
     }
+
+  /** 파일 형식별로 영구 인덱스에 넣을 텍스트를 읽고 정규화한다. */
+  private async readIndexContent(file: TFile): Promise<string> {
+    const content = await this.app.vault.cachedRead(file);
+    return fileExtension(file) === "html" ? htmlToText(content) : content;
+  }
 
   // 인덱싱 중 큐잉된 대기 파일들을 순차 처리
   private async processPendingFiles(): Promise<void> {
@@ -734,6 +800,13 @@ export class VaultIndexer {
   // 단일 파일 인덱싱
   // 전체 인덱싱 중이면 대기열에 추가 후 즉시 리턴
   async indexFile(file: TFile): Promise<void> {
+    if (
+      !isIndexableTextExtension(fileExtension(file)) ||
+      isDashboardItemPath(file.path)
+    ) {
+      this.index.delete(file.path);
+      return;
+    }
     if (this.indexing) {
       this.pendingFiles.add(file.path);
       return;
@@ -752,7 +825,7 @@ export class VaultIndexer {
     //   잡게 되고, commitEntry가 정상 작업으로 판단해 삭제된 노트를 되살린다.
     const readMtime = file.stat.mtime;
     const generation = this.currentGeneration(path);
-    const content = await this.app.vault.cachedRead(file);
+    const content = await this.readIndexContent(file);
     // 내용이 비워진 노트는 인덱스에서 제거한다(이전 본문이 계속 검색되는 것을 방지).
     if (!content.trim()) {
       this.index.delete(path);
@@ -1034,16 +1107,26 @@ export class VaultIndexer {
   private bestChunkMatch(
     queryEmbedding: number[],
     path: string
-  ): { score: number; heading: string | null; text: string } | null {
+  ): { score: number; heading: string | null; text: string; chunkHash?: string } | null {
     const entry = this.index.get(path);
     if (!entry) return null;
 
-    let best: { score: number; heading: string | null; text: string } | null = null;
+    let best: {
+      score: number;
+      heading: string | null;
+      text: string;
+      chunkHash?: string;
+    } | null = null;
     for (const chunk of entry.chunks ?? []) {
       const sim = compareVectors(queryEmbedding, chunk.embedding);
       if (sim === null) continue;
       if (best === null || sim > best.score) {
-        best = { score: sim, heading: chunk.heading ?? null, text: chunk.text };
+        best = {
+          score: sim,
+          heading: chunk.heading ?? null,
+          text: chunk.text,
+          chunkHash: contentHash(chunk.text),
+        };
       }
     }
     // 청크 임베딩이 없으면 레거시 노트 단위 임베딩으로 폴백한다(헤딩·본문 정보는 없다).

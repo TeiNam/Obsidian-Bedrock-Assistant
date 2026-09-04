@@ -24,6 +24,7 @@ export const NOTICE_I18N = {
     cmdEmerge: "Find recent patterns (emerge)",
     cmdArchitect: "Codebase architect (architect)",
     cmdKnowledgeGaps: "Refresh knowledge gap report",
+    cmdDashboard: "Refresh and open Agent LLMs dashboard",
     cmdInboxTriage: "Inbox triage (title, move, tag suggestions)",
     cmdDecisions: "Extract decisions → ledger (decisions)",
     cmdCanonicalize: "Review duplicate candidates (canonical note and aliases)",
@@ -52,6 +53,7 @@ export const NOTICE_I18N = {
     submitArchitect: "Analyze",
     submitTriage: "Review",
     submitExtract: "Extract",
+    submitCancel: "Cancel",
 
     fieldTitle: "Title",
     fieldTitlePlaceholder: "Note title",
@@ -88,9 +90,12 @@ export const NOTICE_I18N = {
     gapsNone: "No structural gaps found.",
     gapsWritten: (count: number, path: string) => `Recorded ${count} knowledge gap(s) in the report: ${path}`,
     gapsFailed: (reason: string) => `Knowledge gap report failed: ${reason}`,
+    dashboardUpdated: (count: number, path: string) =>
+      `Bases dashboard updated (${count} item(s)): ${path}`,
+    dashboardFailed: (reason: string) => `Bases dashboard failed: ${reason}`,
     reviewQueueEmpty: "Nothing to revisit right now.",
     schedulerBusy: "Second Brain cleanup is already running.",
-    schedulerDone: "Second Brain cleanup ran (catalog and gap report refreshed).",
+    schedulerDone: "Second Brain cleanup ran (catalog, gap report, and Bases dashboard refreshed).",
     schedulerAllFailed: (steps: string) =>
       `Second Brain cleanup failed: every step failed (${steps}). Check the console log.`,
     schedulerPartial: (succeeded: number, failed: number, steps: string) =>
@@ -185,6 +190,7 @@ export const NOTICE_I18N = {
     cmdEmerge: "최근 패턴 발견 (emerge)",
     cmdArchitect: "코드베이스 아키텍트 (architect)",
     cmdKnowledgeGaps: "지식 공백 리포트 갱신",
+    cmdDashboard: "Agent LLMs 대시보드 갱신 및 열기",
     cmdInboxTriage: "Inbox 검토 (제목·이동·태그 제안)",
     cmdDecisions: "결정 추출 → 원장 (decisions)",
     cmdCanonicalize: "중복 후보 검토 (정본·별칭 정리)",
@@ -213,6 +219,7 @@ export const NOTICE_I18N = {
     submitArchitect: "분석",
     submitTriage: "검토",
     submitExtract: "추출",
+    submitCancel: "취소",
 
     fieldTitle: "제목",
     fieldTitlePlaceholder: "노트 제목",
@@ -249,9 +256,12 @@ export const NOTICE_I18N = {
     gapsNone: "구조적 공백이 발견되지 않았습니다.",
     gapsWritten: (count: number, path: string) => `지식 공백 ${count}건을 리포트에 기록했습니다: ${path}`,
     gapsFailed: (reason: string) => `지식 공백 리포트 실패: ${reason}`,
+    dashboardUpdated: (count: number, path: string) =>
+      `Bases 대시보드를 갱신했습니다 (${count}건): ${path}`,
+    dashboardFailed: (reason: string) => `Bases 대시보드 갱신 실패: ${reason}`,
     reviewQueueEmpty: "지금 다시 볼 노트가 없습니다.",
     schedulerBusy: "Second Brain 정리가 이미 진행 중입니다.",
-    schedulerDone: "Second Brain 정리(catalog·공백 리포트 갱신)를 실행했습니다.",
+    schedulerDone: "Second Brain 정리(catalog·공백 리포트·Bases 대시보드 갱신)를 실행했습니다.",
     schedulerAllFailed: (steps: string) =>
       `Second Brain 정리 실패: 모든 단계가 실패했습니다 (${steps}). 콘솔 로그를 확인해 주세요.`,
     schedulerPartial: (succeeded: number, failed: number, steps: string) =>
@@ -343,6 +353,7 @@ export const NOTICE_I18N = {
     cmdEmerge: "最近のパターンを発見 (emerge)",
     cmdArchitect: "コードベースアーキテクト (architect)",
     cmdKnowledgeGaps: "知識ギャップレポートを更新",
+    cmdDashboard: "Agent LLMsダッシュボードを更新して開く",
     cmdInboxTriage: "Inbox整理 (タイトル・移動・タグの提案)",
     cmdDecisions: "決定を抽出 → 台帳 (decisions)",
     cmdCanonicalize: "重複候補をレビュー (正本・エイリアス整理)",
@@ -371,6 +382,7 @@ export const NOTICE_I18N = {
     submitArchitect: "分析",
     submitTriage: "整理",
     submitExtract: "抽出",
+    submitCancel: "キャンセル",
 
     fieldTitle: "タイトル",
     fieldTitlePlaceholder: "ノートのタイトル",
@@ -407,9 +419,12 @@ export const NOTICE_I18N = {
     gapsNone: "構造的なギャップは見つかりませんでした。",
     gapsWritten: (count: number, path: string) => `知識ギャップ${count}件をレポートに記録しました: ${path}`,
     gapsFailed: (reason: string) => `知識ギャップレポートに失敗しました: ${reason}`,
+    dashboardUpdated: (count: number, path: string) =>
+      `Basesダッシュボードを更新しました (${count}件): ${path}`,
+    dashboardFailed: (reason: string) => `Basesダッシュボードの更新に失敗しました: ${reason}`,
     reviewQueueEmpty: "今見直すノートはありません。",
     schedulerBusy: "Second Brain整理はすでに実行中です。",
-    schedulerDone: "Second Brain整理(カタログ・ギャップレポートの更新)を実行しました。",
+    schedulerDone: "Second Brain整理(カタログ・ギャップレポート・Basesダッシュボードの更新)を実行しました。",
     schedulerAllFailed: (steps: string) =>
       `Second Brain整理に失敗しました: すべてのステップが失敗しました (${steps})。コンソールログを確認してください。`,
     schedulerPartial: (succeeded: number, failed: number, steps: string) =>

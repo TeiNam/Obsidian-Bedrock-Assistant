@@ -2,7 +2,7 @@ import { Modal, App, Notice, setIcon, requestUrl, normalizePath } from "obsidian
 import type GeminiAssistantPlugin from "./main";
 
 // 웹 클리퍼 다국어 레이블
-const CLIPPER_I18N = {
+export const CLIPPER_I18N = {
   en: {
     title: "Web Page Summary",
     urlPlaceholder: "Enter URL (https://...)",

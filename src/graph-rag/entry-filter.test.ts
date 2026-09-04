@@ -6,6 +6,7 @@ import {
   isFilterEmpty,
   matchesFilter,
   filterIndex,
+  parsePropertyFilter,
   type SearchFilter,
 } from "./entry-filter";
 import type { VaultIndexEntry } from "../types";
@@ -115,6 +116,36 @@ describe("normalizeSearchFilter", () => {
 
     expect(isFilterEmpty(filter)).toBe(true);
   });
+
+  it("프론트매터 속성 조건과 값 타입을 파싱한다", () => {
+    const { filter, problems } = normalizeSearchFilter({
+      properties: ["status=active", "confidence>=0.8", "published=true"],
+    });
+
+    expect(problems).toEqual([]);
+    expect(filter.properties).toEqual([
+      { key: "status", operator: "=", value: "active" },
+      { key: "confidence", operator: ">=", value: 0.8 },
+      { key: "published", operator: "=", value: true },
+    ]);
+  });
+
+  it("잘못된 속성 조건을 조용히 버리지 않는다", () => {
+    const out = normalizeSearchFilter({ properties: ["status active"] });
+
+    expect(out.filter.properties).toBeUndefined();
+    expect(out.problems[0]).toContain("키=값");
+  });
+});
+
+describe("parsePropertyFilter", () => {
+  it("점 표기 키·부분 포함 연산자를 보존한다", () => {
+    expect(parsePropertyFilter("project.status ~ 진행")).toEqual({
+      key: "project.status",
+      operator: "~",
+      value: "진행",
+    });
+  });
 });
 
 describe("matchesFilter", () => {
@@ -173,6 +204,38 @@ describe("matchesFilter", () => {
     expect(matchesFilter(entry({ path: "Work/a.md", tags: ["urgent"] }), f)).toBe(true);
     expect(matchesFilter(entry({ path: "Work/a.md", tags: ["later"] }), f)).toBe(false);
     expect(matchesFilter(entry({ path: "Home/a.md", tags: ["urgent"] }), f)).toBe(false);
+  });
+
+  it("프론트매터 문자열·숫자·배열·중첩 속성을 필터링한다", () => {
+    const target = entry({
+      frontmatter: {
+        status: "Active",
+        confidence: "0.85",
+        aliases: ["Alpha", "Beta"],
+        project: { owner: "TeiNam" },
+      },
+    });
+
+    expect(
+      matchesFilter(target, {
+        properties: [
+          { key: "STATUS", operator: "=", value: "active" },
+          { key: "confidence", operator: ">=", value: 0.8 },
+          { key: "aliases", operator: "~", value: "bet" },
+          { key: "project.owner", operator: "=", value: "teinam" },
+        ],
+      })
+    ).toBe(true);
+    expect(
+      matchesFilter(target, {
+        properties: [{ key: "confidence", operator: ">", value: 0.9 }],
+      })
+    ).toBe(false);
+    expect(
+      matchesFilter(target, {
+        properties: [{ key: "missing", operator: "!=", value: "x" }],
+      })
+    ).toBe(false);
   });
 });
 
@@ -248,10 +311,15 @@ describe("normalizeSearchFilter — 타입 위반", () => {
   });
 
   it("정상 입력에는 문제가 없다", () => {
-    const out = normalizeSearchFilter({ folder: "Projects", tags: ["#Work", "idea"] });
+    const out = normalizeSearchFilter({
+      folder: "Projects",
+      tags: ["#Work", "idea"],
+      properties: "status=active",
+    });
 
     expect(out.problems).toEqual([]);
     expect(out.filter.folder).toBe("Projects");
     expect(out.filter.tags).toEqual(["work", "idea"]);
+    expect(out.filter.properties).toHaveLength(1);
   });
 });
