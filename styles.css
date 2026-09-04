@@ -1075,12 +1075,15 @@ body.theme-light .ba-message-content pre {
   gap: 6px;
 }
 
+/* 설정 최상단 설명 문단. 감싸는 박스 없이 단독으로 놓이므로 여백을 직접 갖는다. */
 .ba-about-desc {
   font-size: 13px;
   color: var(--text-muted);
   line-height: 1.5;
-  margin: 0;
+  margin: 0 0 12px;
   padding: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 12px;
 }
 
 /* 설정 하단 후원 배너 */
