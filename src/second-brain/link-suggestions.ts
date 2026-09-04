@@ -48,16 +48,7 @@ function normalize(cosine: number): number {
   return (cosine + 1) / 2;
 }
 
-/**
- * 노트를 대표하는 임베딩 하나를 고른다.
- *
- * 청크 전부를 서로 비교하면 (고아 수 × 전체 노트 수 × 청크² ) 번의 벡터 연산이 되어
- * 대형 볼트에서 명령이 몇 분씩 걸린다. 첫 청크는 노트의 도입부라 주제를 가장 잘
- * 대표하므로 이것으로 근사한다.
- *
- * ponytail: 노트당 대표 벡터 1개로 근사. 정밀도가 문제가 되면 청크 단위 최대 유사도로
- * 올리되, 그때는 후보 풀을 먼저 좁히는 단계가 함께 필요하다.
- */
+/** 노트를 대표하는 첫 유효 임베딩. 레거시 호환과 화면 보조에 사용한다. */
 export function representativeEmbedding(entry: VaultIndexEntry): number[] | null {
   for (const chunk of entry.chunks ?? []) {
     if (chunk.embedding && chunk.embedding.length > 0) return chunk.embedding;
@@ -65,6 +56,31 @@ export function representativeEmbedding(entry: VaultIndexEntry): number[] | null
   // 청크가 없는 레거시 엔트리는 노트 단위 임베딩으로 폴백한다.
   if (entry.embedding && entry.embedding.length > 0) return entry.embedding;
   return null;
+}
+
+/** 청크 임베딩 목록. 청크가 없을 때만 레거시 노트 벡터를 쓴다. */
+function embeddings(entry: VaultIndexEntry): number[][] {
+  const chunks = (entry.chunks ?? [])
+    .map((chunk) => chunk.embedding)
+    .filter((embedding) => embedding.length > 0);
+  if (chunks.length > 0) return chunks;
+  return entry.embedding.length > 0 ? [entry.embedding] : [];
+}
+
+/** 두 노트의 모든 청크 쌍 중 최대 코사인 유사도. 비교 불가면 null. */
+export function maxEmbeddingSimilarity(
+  left: VaultIndexEntry,
+  right: VaultIndexEntry
+): number | null {
+  let best: number | null = null;
+  for (const a of embeddings(left)) {
+    for (const b of embeddings(right)) {
+      const similarity = compareVectors(a, b);
+      if (similarity !== null && (best === null || similarity > best)) best = similarity;
+      if (best !== null && best >= 1) return best;
+    }
+  }
+  return best;
 }
 
 /** 이미 연결된 경로 집합(아웃링크 ∪ 백링크). 다시 제안하지 않기 위함이다. */
@@ -103,8 +119,7 @@ export function suggestLinksForNote(
   const minSimilarity = options.minSimilarity ?? MIN_LINK_SIMILARITY;
   const maxPerNote = options.maxPerNote ?? MAX_SUGGESTIONS_PER_NOTE;
 
-  const sourceVec = representativeEmbedding(source);
-  if (sourceVec === null) return [];
+  if (embeddings(source).length === 0) return [];
 
   const alreadyLinked = linkedPaths(source);
   const scored: LinkSuggestion[] = [];
@@ -114,10 +129,7 @@ export function suggestLinksForNote(
     if (alreadyLinked.has(candidate.path)) continue;
     if (isGenerated(candidate.path, options.wikiFolder)) continue;
 
-    const vec = representativeEmbedding(candidate);
-    if (vec === null) continue;
-
-    const cosine = compareVectors(sourceVec, vec);
+    const cosine = maxEmbeddingSimilarity(source, candidate);
     // null은 "비교 불가"(차원 불일치)다. 0으로 취급하면 재인덱싱 중인 노트가
     // 조용히 후보 목록에 섞인다.
     if (cosine === null) continue;

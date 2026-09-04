@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ToolExecutor } from "./obsidian-tools";
 import { TFile } from "obsidian";
+import { isToolError } from "./tool-failure-tracker";
 
 /**
  * editNote() replaceAll 동작 테스트
@@ -94,6 +95,7 @@ describe("editNote() replaceAll 동작", () => {
       });
 
       expect(result).toContain("교체 대상 텍스트를 찾을 수 없습니다");
+      expect(isToolError(result)).toBe(true);
       expect(app.vault.modify).not.toHaveBeenCalled();
     });
   });
@@ -117,6 +119,22 @@ describe("editNote() replaceAll 동작", () => {
       const modifiedContent = app.vault.modify.mock.calls[0][1] as string;
       expect(modifiedContent).toBe("가격: $5.00 할인: $5.00");
     });
+  });
+});
+
+describe("도구 실패 계약", () => {
+  it("존재하지 않는 노트 읽기는 실패 접두사를 반환한다", async () => {
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn(() => null),
+      },
+    };
+    const executor = new ToolExecutor(app as any, makeIndexer(), () => "templates");
+
+    const result = await executor.execute("read_note", { path: "missing.md" });
+
+    expect(isToolError(result)).toBe(true);
+    expect(result).toContain("파일을 찾을 수 없습니다");
   });
 });
 

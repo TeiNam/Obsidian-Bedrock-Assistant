@@ -20,6 +20,7 @@ import {
   filterStaleCredentials,
   type GeminiAssistantSettings,
 } from "./types";
+import { NOTICE_I18N } from "./notice-i18n";
 
 function makeSettings(overrides: Partial<GeminiAssistantSettings> = {}): GeminiAssistantSettings {
   return { ...DEFAULT_SETTINGS, aiBackend: "bedrock", awsRegion: "us-east-1", ...overrides };
@@ -49,7 +50,7 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
     );
     // 기본 자격증명 체인으로 새면 사용자가 선택하지 않은 계정으로 과금될 수 있다
     expect(typeof config.credentials).toBe("function");
-    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(/API 키/);
+    await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(NOTICE_I18N.en.errNoApiKey("Bedrock"));
     expect(config.token).toBeUndefined();
   });
 
@@ -78,7 +79,7 @@ describe("buildBedrockClientConfig: 인증 방식별 설정", () => {
       );
       expect(config.token).toBeUndefined();
       expect(typeof config.credentials).toBe("function");
-      await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(/API 키/);
+      await expect((config.credentials as () => Promise<unknown>)()).rejects.toThrow(NOTICE_I18N.en.errNoApiKey("Bedrock"));
       expect(config.authSchemePreference).toEqual(["aws.auth#sigv4"]);
     }
   });

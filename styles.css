@@ -1095,12 +1095,39 @@ body.theme-light .ba-message-content pre {
   padding: 0;
 }
 
+.ba-features-label {
+  font-size: 13px;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  margin: 0;
+  padding: 0;
+}
+
+.ba-features {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.ba-features strong {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+/* 후원 배너 — 설정 맨 아래에 단독으로 놓이므로 위쪽 구분선과 여백을 직접 갖는다. */
 .ba-about-sponsor {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  padding: 0;
+  padding: 18px 0 6px;
+  margin-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
 }
 
 .ba-about-sponsor span {

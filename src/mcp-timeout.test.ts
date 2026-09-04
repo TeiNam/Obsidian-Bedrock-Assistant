@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { encodeMcpStdioMessage, McpManager } from "./mcp-client";
+import {
+  encodeMcpStdioMessage,
+  formatMcpToolResult,
+  joinSearchPath,
+  McpManager,
+  parseMcpConfig,
+} from "./mcp-client";
 import { DEFAULT_SETTINGS } from "./types";
 
 describe("MCP 타임아웃 설정", () => {
@@ -46,5 +52,34 @@ describe("MCP 타임아웃 설정", () => {
     // 연결된 서버가 없어도 안전하게 동작해야 함
     expect(() => manager.setTimeout(90)).not.toThrow();
     expect(manager.getStatus()).toEqual([]);
+  });
+
+  it("MCP 설정 구조와 필드 타입을 검증한다", () => {
+    expect(parseMcpConfig('{"mcpServers":{"local":{"command":"npx","args":["-y"]}}}'))
+      .toEqual({ mcpServers: { local: { command: "npx", args: ["-y"] } } });
+    expect(() => parseMcpConfig("{}")).toThrow("mcpServers");
+    expect(() => parseMcpConfig('{"mcpServers":{"bad":{"command":1}}}')).toThrow("command");
+    expect(() => parseMcpConfig('{"mcpServers":{"bad":{"command":"x","args":[1]}}}')).toThrow("args");
+  });
+
+  it("텍스트 외 MCP 콘텐츠도 버리지 않는다", () => {
+    const formatted = formatMcpToolResult({
+      content: [
+        { type: "text", text: "설명" },
+        { type: "image", mimeType: "image/png", data: "AAAA" },
+        { type: "resource", resource: { uri: "file:///a.txt", text: "자료" } },
+      ],
+      structuredContent: { count: 2 },
+    });
+
+    expect(formatted).toContain("설명");
+    expect(formatted).toContain('"type":"image"');
+    expect(formatted).toContain('"type":"resource"');
+    expect(formatted).toContain('"count":2');
+  });
+
+  it("Windows PATH는 세미콜론과 드라이브 문자를 보존한다", () => {
+    expect(joinSearchPath(["C:\\Windows", "C:\\Program Files\\nodejs"], ";"))
+      .toBe("C:\\Windows;C:\\Program Files\\nodejs");
   });
 });

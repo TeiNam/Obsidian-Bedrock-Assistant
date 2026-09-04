@@ -15,6 +15,7 @@ const CLIPPER_I18N = {
     fetchError: (e: string) => `Failed to fetch page: ${e}`,
     aiError: (e: string) => `AI summary failed: ${e}`,
     invalidUrl: "Please enter a valid URL starting with http:// or https://",
+    summaryFallback: "AI summary failed — saving the original text instead.",
     saveFolder: "WebClips",
   },
   ko: {
@@ -29,6 +30,7 @@ const CLIPPER_I18N = {
     fetchError: (e: string) => `페이지 가져오기 실패: ${e}`,
     aiError: (e: string) => `AI 요약 실패: ${e}`,
     invalidUrl: "http:// 또는 https://로 시작하는 올바른 URL을 입력하세요",
+    summaryFallback: "AI 요약에 실패하여 원본 텍스트로 저장합니다.",
     saveFolder: "WebClips",
   },
   ja: {
@@ -43,6 +45,7 @@ const CLIPPER_I18N = {
     fetchError: (e: string) => `ページ取得失敗: ${e}`,
     aiError: (e: string) => `AI要約失敗: ${e}`,
     invalidUrl: "http:// または https:// で始まる正しいURLを入力してください",
+    summaryFallback: "AI要約に失敗したため元のテキストで保存します。",
     saveFolder: "WebClips",
   },
 } as const;
@@ -182,7 +185,7 @@ export class WebClipperModal extends Modal {
         summary = await this.summarizeWithAI(url, title, trimmedBody);
       } catch (e) {
         // AI 요약 실패 시 원본 텍스트 앞부분으로 폴백
-        new Notice("AI 요약에 실패하여 원본 텍스트로 저장합니다.");
+        new Notice(this.t.summaryFallback);
         summary = body.slice(0, 2000) + (body.length > 2000 ? "\n\n..." : "");
       }
 

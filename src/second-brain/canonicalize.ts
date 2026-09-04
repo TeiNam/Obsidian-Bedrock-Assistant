@@ -8,8 +8,7 @@
 // 적용 단계는 정본 노트에 별칭과 후보 목록을 기록하는 것까지다.
 
 import type { VaultIndexEntry } from "../types";
-import { compareVectors } from "../graph-rag/vector-search";
-import { representativeEmbedding } from "./link-suggestions";
+import { maxEmbeddingSimilarity } from "./link-suggestions";
 import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
 
 /** 군집 구성원 1건. */
@@ -72,6 +71,24 @@ export function titleTokens(title: string): string[] {
     .filter((t) => t.length >= MIN_TOKEN_LENGTH);
 }
 
+/** Kubernetes↔K8s, Machine Learning↔ML 같은 보수적 약어 키. */
+function abbreviationKeys(title: string): string[] {
+  const tokens = titleTokens(title);
+  const keys = new Set<string>();
+  if (tokens.length >= 2) {
+    const initials = tokens.map((token) => token[0]).join("");
+    if (/^[a-z0-9]{2,10}$/.test(initials)) keys.add(initials);
+  }
+  if (tokens.length === 1) {
+    const token = tokens[0];
+    if (/^[a-z]\d+[a-z]$/.test(token) || /^[a-z]{2,6}$/.test(token)) keys.add(token);
+    if (/^[a-z]{4,}$/.test(token)) {
+      keys.add(`${token[0]}${token.length - 2}${token[token.length - 1]}`);
+    }
+  }
+  return [...keys];
+}
+
 /** 엔트리의 링크 수(아웃 + 백). */
 function linkCount(entry: VaultIndexEntry): number {
   return (entry.outlinks?.length ?? 0) + (entry.backlinks?.length ?? 0);
@@ -104,33 +121,37 @@ export interface CanonicalizeOptions {
  * 명령이 수십 초~수 분 걸린다. 같은 개념의 중복 노트는 제목이 겹치는 경우가 압도적으로
  * 많으므로, 제목으로 후보를 좁히고 임베딩으로 확증하는 쪽이 실용적이다.
  *
- * ponytail: 제목이 전혀 다른 중복(예: "Kubernetes" vs "K8s")은 잡지 못한다. 잡으려면
- * 전체 임베딩 군집화가 필요하고, 그때는 차원 축소나 근사 최근접(ANN) 색인이 선행돼야 한다.
- *
  * @returns 버킷 키 → 경로 목록 (2개 이상인 버킷만)
  */
 export function buildTitleBuckets(entries: readonly VaultIndexEntry[]): Map<string, string[]> {
-  const exact = new Map<string, string[]>();
-  const byToken = new Map<string, string[]>();
+  const buckets = new Map<string, Set<string>>();
+  const add = (key: string, path: string): void => {
+    const paths = buckets.get(key) ?? new Set<string>();
+    paths.add(path);
+    buckets.set(key, paths);
+  };
 
   for (const entry of entries) {
     const title = entry.title || basename(entry.path);
-    const normalized = normalizeTitle(title);
-    if (normalized === "") continue;
+    const names = [title, ...normalizeAliases(entry.frontmatter?.aliases)];
+    for (const name of names) {
+      const normalized = normalizeTitle(name);
+      if (normalized === "") continue;
 
-    // 1) 정규화 제목이 완전히 같은 노트들 — 가장 강한 신호다.
-    const sameKey = `title:${normalized}`;
-    (exact.get(sameKey) ?? exact.set(sameKey, []).get(sameKey)!).push(entry.path);
-
-    // 2) 토큰을 공유하는 노트들.
-    for (const token of new Set(titleTokens(title))) {
-      const key = `token:${token}`;
-      (byToken.get(key) ?? byToken.set(key, []).get(key)!).push(entry.path);
+      // 1) 제목·기존 별칭이 완전히 같은 노트들 — 가장 강한 신호다.
+      add(`title:${normalized}`, entry.path);
+      // 2) 토큰을 공유하는 노트들.
+      for (const token of new Set(titleTokens(name))) add(`token:${token}`, entry.path);
+      // 3) 안전하게 계산 가능한 약어·numeronym.
+      for (const abbreviation of abbreviationKeys(name)) {
+        add(`abbr:${abbreviation}`, entry.path);
+      }
     }
   }
 
   const out = new Map<string, string[]>();
-  for (const [key, paths] of [...exact, ...byToken]) {
+  for (const [key, pathSet] of buckets) {
+    const paths = [...pathSet];
     // 1개짜리 버킷은 비교할 상대가 없다. 과대 버킷("정리", "노트" 같은 흔한 토큰)은
     // 사실상 전체 스캔이 되므로 버린다.
     if (paths.length < 2 || paths.length > MAX_CLUSTER_SIZE) continue;
@@ -159,17 +180,11 @@ function connectedGroups(
     .map((path) => byPath.get(path))
     .filter((entry): entry is VaultIndexEntry => entry !== undefined);
 
-  const vectors = entries.map((entry) => representativeEmbedding(entry));
-
   // 인접 목록. i < j만 채우고 양방향으로 쓴다.
   const neighbors = entries.map(() => new Set<number>());
   for (let i = 0; i < entries.length; i++) {
-    const a = vectors[i];
-    if (a === null) continue;
     for (let j = i + 1; j < entries.length; j++) {
-      const b = vectors[j];
-      if (b === null) continue;
-      const cosine = compareVectors(a, b);
+      const cosine = maxEmbeddingSimilarity(entries[i], entries[j]);
       if (cosine === null) continue;
       if ((cosine + 1) / 2 < minSimilarity) continue;
       neighbors[i].add(j);
@@ -217,9 +232,7 @@ function rescoreAgainstCanonical(
   minSimilarity: number
 ): DuplicateMember[] {
   const canonicalEntry = byPath.get(canonicalPath);
-  const canonicalVec = canonicalEntry ? representativeEmbedding(canonicalEntry) : null;
-  // 정본 벡터를 못 구하면 다시 잴 근거가 없다. 시드 기준 값을 그대로 둔다.
-  if (canonicalVec === null) return [...members];
+  if (!canonicalEntry) return [...members];
 
   const out: DuplicateMember[] = [];
   for (const member of members) {
@@ -229,10 +242,8 @@ function rescoreAgainstCanonical(
     }
 
     const entry = byPath.get(member.path);
-    const vec = entry ? representativeEmbedding(entry) : null;
-    if (vec === null) continue;
-
-    const cosine = compareVectors(canonicalVec, vec);
+    if (!entry) continue;
+    const cosine = maxEmbeddingSimilarity(canonicalEntry, entry);
     if (cosine === null) continue;
 
     const similarity = (cosine + 1) / 2;
@@ -274,8 +285,13 @@ export function findDuplicateClusters(
   const claimed = new Set<string>();
   const clusters: DuplicateCluster[] = [];
 
-  // 버킷 키를 정렬해 순회 순서를 고정한다 — 같은 인덱스에 항상 같은 군집이 나와야 한다.
-  for (const key of [...buckets.keys()].sort()) {
+  // 완전 동일 제목을 토큰·약어보다 먼저 처리한다. 같은 인덱스에는 항상 같은 순서다.
+  const bucketRank = (key: string): number =>
+    key.startsWith("title:") ? 0 : key.startsWith("token:") ? 1 : 2;
+  const bucketKeys = [...buckets.keys()].sort(
+    (a, b) => bucketRank(a) - bucketRank(b) || a.localeCompare(b)
+  );
+  for (const key of bucketKeys) {
     const paths = buckets.get(key)!;
     const fresh = [...paths.filter((p) => !claimed.has(p))].sort();
     if (fresh.length < 2) continue;

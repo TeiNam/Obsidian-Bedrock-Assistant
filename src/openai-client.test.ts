@@ -11,6 +11,12 @@ vi.mock("obsidian", () => ({ requestUrl: requestUrlMock }));
 
 // 모킹 후 클라이언트 import
 import { OpenAIClient } from "./openai-client";
+import { NOTICE_I18N } from "./notice-i18n";
+
+/** 정규식 메타문자를 이스케이프한다. i18n 문구를 부분 일치로 검증하기 위해 쓴다. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // ============================================
 // 테스트 헬퍼
@@ -396,7 +402,7 @@ describe("OpenAIClient.listModels", () => {
 
     const p = client.listModels("chat");
     // 거부를 사전에 핸들링하여 unhandled rejection을 방지한다.
-    const assertion = expect(p).rejects.toThrow(/시간 초과/);
+    const assertion = expect(p).rejects.toThrow(new RegExp(escapeRegExp(NOTICE_I18N.en.errTimeout("OpenAI", 0).replace(" after 0s.", ""))));
     await vi.advanceTimersByTimeAsync(10000);
     await assertion;
   });
@@ -516,7 +522,7 @@ describe("OpenAIClient 오류 분기", () => {
     vi.useFakeTimers();
     requestUrlMock.mockReturnValue(new Promise(() => {}));
     const p = client.getEmbedding("hi");
-    const assertion = expect(p).rejects.toThrow(/시간 초과/);
+    const assertion = expect(p).rejects.toThrow(new RegExp(escapeRegExp(NOTICE_I18N.en.errTimeout("OpenAI", 0).replace(" after 0s.", ""))));
     await vi.advanceTimersByTimeAsync(60000);
     await assertion;
   });

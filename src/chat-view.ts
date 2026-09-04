@@ -922,11 +922,11 @@ export class ChatView extends ItemView {
               );
             }
 
-            // 성공 UI
+            const failed = isToolError(result);
             statusEl.removeClass("status-running");
-            statusEl.addClass("status-completed");
+            statusEl.addClass(failed ? "status-error" : "status-completed");
             statusEl.empty();
-            setIcon(statusEl, "check");
+            setIcon(statusEl, failed ? "x" : "check");
             runningLabel.remove();
 
             const resultEl = toolEl.createDiv({ cls: "ba-tool-content" });
@@ -1805,12 +1805,12 @@ export class ChatView extends ItemView {
     }
   }
 
-  private clearChat(): void {
+  private async clearChat(): Promise<void> {
           this.messages = [];
           this.messagesEl.empty();
           this.renderWelcome();
           // 저장된 히스토리도 삭제
-          this.plugin.saveChatHistory([]);
+          await this.plugin.saveChatHistory([]);
           // 모든 첨부 파일 상태 초기화
           this.attachedFiles.clear();
           this.manuallyAttachedPaths.clear();
@@ -1824,7 +1824,7 @@ export class ChatView extends ItemView {
     if (this.messages.length > 0) {
       await this.plugin.saveCurrentAsSession(this.messages);
     }
-    this.clearChat();
+    await this.clearChat();
   }
 
   // 지난 대화 목록 표시
@@ -1850,7 +1850,7 @@ export class ChatView extends ItemView {
       if (msg.role === "user") this.renderUserMessage(msg);
       else await this.renderStoredAssistantMessage(msg.content, i === lastAssistant);
     }
-    this.plugin.saveChatHistory(this.messages);
+    await this.plugin.saveChatHistory(this.messages);
     this.scrollToBottom();
     this.updateContextRing();
   }
@@ -1950,27 +1950,20 @@ export class ChatView extends ItemView {
     }
 
     // 대화 히스토리 저장 (queueMicrotask 디바운싱으로 같은 틱 내 중복 호출 방지)
-    private persistHistory(forceFlush = false): void {
-          if (!forceFlush && this.persistPending) return;
-          if (forceFlush) {
-            // 뷰 닫힐 때 등 즉시 저장이 필요한 경우 가드 무시
-            this.persistPending = false;
-            this.plugin.saveChatHistory(this.messages);
-            this.updateContextRing();
-            return;
-          }
+    private persistHistory(): void {
+          if (this.persistPending) return;
           this.persistPending = true;
           queueMicrotask(() => {
             this.persistPending = false;
-            this.plugin.saveChatHistory(this.messages);
+            void this.plugin.saveChatHistory(this.messages);
             this.updateContextRing();
           });
         }
 
     async onClose(): Promise<void> {
       this.handleStop();
-      // 뷰 닫힐 때 가드 무시하고 즉시 저장 (race condition 방지)
-      this.persistHistory(true);
+      // 앞선 저장까지 포함해 최신 상태가 디스크에 반영될 때까지 기다린다.
+      await this.plugin.saveChatHistory(this.messages);
       // 드롭다운 이벤트 리스너 정리 (document 레벨 리스너 누수 방지)
       this.closeModelDropdown();
     }

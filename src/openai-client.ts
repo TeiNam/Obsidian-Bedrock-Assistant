@@ -22,6 +22,7 @@ import {
 } from "./provider-utils";
 import { isAbortError } from "./abort-utils";
 import { buildSystemPrompt } from "./system-prompt";
+import { noticeI18n } from "./notice-i18n";
 
 // OpenAI 공식 기본 엔드포인트. base URL은 버전 경로(/v1)를 포함한다(Req 2.8.1).
 const OPENAI_DEFAULT_BASE = "https://api.openai.com/v1";
@@ -75,7 +76,7 @@ export class OpenAIClient implements IAiClient {
   private requireKey(): string {
     const key = this.settings.openaiApiKey ?? "";
     if (key.trim() === "") {
-      throw new Error("OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요.");
+      throw new Error(noticeI18n(this.settings.language).errNoApiKey("OpenAI"));
     }
     return key;
   }
@@ -112,26 +113,27 @@ export class OpenAIClient implements IAiClient {
   // HTTP 상태 코드를 식별 가능한 오류 메시지로 변환한다(Req 10.3, 10.3.1).
   // 응답 본문 일부를 덧붙이되 API 키 원문은 메시지에 포함하지 않는다(Req 10.4).
   private httpError(status: number, bodyText: string): Error {
+    const t = noticeI18n(this.settings.language);
     let kind: string;
     switch (status) {
       case 401:
-        kind = "인증 실패(401): API 키를 확인하세요";
+        kind = t.errKindUnauthorized;
         break;
       case 403:
-        kind = "권한 없음(403)";
+        kind = t.errKindForbidden;
         break;
       case 404:
-        kind = "모델 또는 엔드포인트를 찾을 수 없습니다(404)";
+        kind = t.errKindNotFound;
         break;
       case 400:
-        kind = "잘못된 요청(400)";
+        kind = t.errKindBadRequest;
         break;
       case 429:
         // 재시도/백오프 없이 즉시 식별 가능한 오류를 반환한다(Req 10.3.1).
-        kind = "요청 한도 초과(429)";
+        kind = t.errKindRateLimit;
         break;
       default:
-        kind = `공급자 오류(${status})`;
+        kind = t.errKindOther(status);
     }
     const detail = bodyText ? `: ${bodyText.slice(0, 500)}` : "";
     return new Error(`OpenAI API ${kind}${detail}`);
@@ -147,7 +149,7 @@ export class OpenAIClient implements IAiClient {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         reject(
-          new Error(`OpenAI 요청이 시간 초과되었습니다(${timeoutMs / 1000}초).`)
+          new Error(noticeI18n(this.settings.language).errTimeout("OpenAI", timeoutMs / 1000))
         );
       }, timeoutMs);
     });
@@ -295,7 +297,7 @@ export class OpenAIClient implements IAiClient {
   ): Promise<ConverseResult> {
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error("OpenAI 응답 본문(스트림)을 읽을 수 없습니다.");
+      throw new Error(noticeI18n(this.settings.language).errNoResponseBody("OpenAI"));
     }
 
     const decoder = new TextDecoder();
@@ -435,11 +437,11 @@ export class OpenAIClient implements IAiClient {
     const key = this.requireKey();
 
     if (!text || text.trim() === "") {
-      throw new Error("임베딩 입력 텍스트가 비어 있습니다.");
+      throw new Error(noticeI18n(this.settings.language).errEmptyEmbeddingInput);
     }
     const model = this.settings.openaiEmbeddingModel;
     if (!model || model.trim() === "") {
-      throw new Error("OpenAI 임베딩 모델 ID가 설정되지 않았습니다.");
+      throw new Error(noticeI18n(this.settings.language).errNoEmbeddingModel("OpenAI"));
     }
 
     const input = truncateForEmbedding(text, EMBEDDING_MAX_CHARS);
@@ -465,7 +467,7 @@ export class OpenAIClient implements IAiClient {
       embedding.length < 1 ||
       !embedding.every((n: unknown) => typeof n === "number" && Number.isFinite(n))
     ) {
-      throw new Error("OpenAI 임베딩 응답이 유효한 벡터를 포함하지 않습니다.");
+      throw new Error(noticeI18n(this.settings.language).errNoEmbeddingVector("OpenAI"));
     }
     return embedding as number[];
   }
@@ -511,7 +513,7 @@ export class OpenAIClient implements IAiClient {
     const data = resp.json;
     const textValue = data?.choices?.[0]?.message?.content;
     if (typeof textValue !== "string" || textValue.trim() === "") {
-      throw new Error("OpenAI converseLight 응답에 텍스트가 없습니다.");
+      throw new Error(noticeI18n(this.settings.language).errNoResponseText("OpenAI"));
     }
     return { text: textValue };
   }

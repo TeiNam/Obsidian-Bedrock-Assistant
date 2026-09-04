@@ -697,6 +697,42 @@ describe("applyReconciliations — 프론트매터 보존", () => {
     expect(written).toContain("직접 쓴 본문.");
     expect(written).toContain("정정안 본문");
   });
+
+  it("CRLF 프론트매터를 중복 생성하지 않고 줄바꿈과 메타데이터를 보존한다", async () => {
+    const original = [
+      "---",
+      "aliases: [k8s]",
+      "learned_at: 2020-01-01",
+      "---",
+      "# 내 노트",
+    ].join("\r\n");
+    const file = new TFile();
+    file.path = "Notes/CRLF.md";
+    let written = "";
+    const ctx = {
+      app: {
+        vault: {
+          read: async () => original,
+          process: async (_f: TFile, fn: (c: string) => string) => {
+            written = fn(original);
+            return written;
+          },
+          getAbstractFileByPath: () => file,
+        },
+      },
+    } as unknown as Parameters<typeof applyReconciliations>[0];
+
+    await applyReconciliations(
+      ctx,
+      [{ notePaths: [file.path], statements: [], suggestion: "정정안" }],
+      "2026-09-03"
+    );
+
+    expect(written.match(/^---\r?$/gm)).toHaveLength(2);
+    expect(written).toContain("aliases: [k8s]\r\n");
+    expect(written).toContain("learned_at: 2026-09-03\r\n");
+    expect(written).not.toContain("learned_at: 2020-01-01");
+  });
 });
 
 // ============================================

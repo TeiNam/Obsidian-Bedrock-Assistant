@@ -1,7 +1,8 @@
 import { App, TFile, TFolder, MarkdownView, Notice, normalizePath } from "obsidian";
 import type { VaultIndexer, GraphRagResult, GraphRagSearchItem } from "./vault-indexer";
 import { normalizeSearchFilter, describeFilter } from "./graph-rag/entry-filter";
-import type { ToolDefinition, SecondBrainSettings, IAiClient } from "./types";
+import type { ToolDefinition, SecondBrainSettings, IAiClient, Locale } from "./types";
+import { noticeI18n, type NoticeLabels } from "./notice-i18n";
 // Second Brain Layer — 위키 노트 생성/카탈로그 갱신에 사용하는 순수 함수 + I/O 래퍼
 import { buildAiFirstNote, type AiFirstMeta, type Recency, type Confidence } from "./second-brain/ai-first-format";
 import { formatAnchorLink, pathWithoutExtension } from "./second-brain/wiki-link";
@@ -23,6 +24,7 @@ import { runChallenge, runConnect, runEmerge } from "./second-brain/thinking-too
 // 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
 import { ensureWithinFolder, escapesVault } from "./second-brain/vault-path-guard";
 import type { SecondBrainContext } from "./second-brain/scheduler";
+import { formatToolError } from "./tool-failure-tracker";
 
 // Obsidian 제어 도구 목록
 export const TOOLS: ToolDefinition[] = [
@@ -312,6 +314,7 @@ export class ToolExecutor {
   // Second Brain Layer 의존성 (옵트인). 기존 호출자 하위호환을 위해 선택적으로 주입한다.
   private getSecondBrain?: () => SecondBrainSettings;
   private getAiClient?: () => IAiClient;
+  private getLocale?: () => Locale;
 
   constructor(
     app: App,
@@ -320,12 +323,24 @@ export class ToolExecutor {
     // 신규 인자는 기존 인자 뒤에 선택적으로 추가하여 하위호환을 보장한다.
     getSecondBrain?: () => SecondBrainSettings,
     getAiClient?: () => IAiClient,
+    getLocale?: () => Locale,
   ) {
     this.app = app;
     this.indexer = indexer;
     this.getTemplateFolder = getTemplateFolder;
     this.getSecondBrain = getSecondBrain;
     this.getAiClient = getAiClient;
+    this.getLocale = getLocale;
+  }
+
+  /**
+   * 사용자에게 보이는 Notice 문구.
+   *
+   * 도구의 **반환 문자열은 번역하지 않는다** — LLM이 읽는 값이고, 언어에 따라 달라지면
+   * 프롬프트 캐시 접두사와 모델 동작이 함께 흔들린다. 화면에 뜨는 Notice만 번역한다.
+   */
+  private get n(): NoticeLabels {
+    return noticeI18n(this.getLocale?.());
   }
 
   async execute(toolName: string, input: Record<string, unknown>): Promise<string> {
@@ -345,7 +360,7 @@ export class ToolExecutor {
         const value = input[key];
         if (typeof value !== "string") continue;
         if (escapesVault(value)) {
-          return `도구 실행 오류: ${toolName}: 볼트를 벗어나는 경로는 허용되지 않습니다: ${value}`;
+          return formatToolError(`${toolName}: 볼트를 벗어나는 경로는 허용되지 않습니다: ${value}`);
         }
         input[key] = normalizePath(value);
       }
@@ -400,10 +415,10 @@ export class ToolExecutor {
         case "emerge":
           return await this.emerge(input);
         default:
-          return `알 수 없는 도구: ${toolName}`;
+          return formatToolError(`알 수 없는 도구: ${toolName}`);
       }
     } catch (error) {
-      return `도구 실행 오류: ${toolName}: ${(error as Error).message}`;
+      return formatToolError(`${toolName}: ${(error as Error).message}`);
     }
   }
 
@@ -416,7 +431,7 @@ export class ToolExecutor {
     // 믿은 채 전체 검색 결과를 근거로 답한다.
     const { filter, problems } = normalizeSearchFilter(rawInput);
     if (problems.length > 0) {
-      return `검색 필터가 올바르지 않습니다:\n- ${problems.join("\n- ")}`;
+      return formatToolError(`검색 필터가 올바르지 않습니다:\n- ${problems.join("\n- ")}`);
     }
     const filterDesc = describeFilter(filter);
 
@@ -427,12 +442,12 @@ export class ToolExecutor {
     try {
       result = await this.indexer.search(query, limit, filter);
     } catch (error) {
-      return `검색 실패: ${(error as Error).message}`;
+      return formatToolError(`검색 실패: ${(error as Error).message}`);
     }
 
     // 빈/공백 쿼리로 검색을 수행하지 않은 경우 (Req 4.7)
     if (result.invalidQuery) {
-      return "검색 쿼리가 비어 있습니다. 검색어를 입력해 주세요.";
+      return formatToolError("검색 쿼리가 비어 있습니다. 검색어를 입력해 주세요.");
     }
 
     // 임베딩 모델 변경으로 기존 벡터를 신뢰할 수 없는 상태를 명시한다. 이 안내가 없으면
@@ -515,7 +530,7 @@ export class ToolExecutor {
   private async readNote(path: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) {
-      return `파일을 찾을 수 없습니다: ${path}`;
+      return formatToolError(`파일을 찾을 수 없습니다: ${path}`);
     }
     const content = await this.app.vault.cachedRead(file);
     return `# ${file.basename}\n\n${content}`;
@@ -524,7 +539,7 @@ export class ToolExecutor {
   private async createNote(path: string, content: string): Promise<string> {
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing) {
-      return `파일이 이미 존재합니다: ${path}`;
+      return formatToolError(`파일이 이미 존재합니다: ${path}`);
     }
 
     // 부모 폴더가 없으면 자동 생성 (applyTemplate, moveFile과 동일 패턴)
@@ -537,14 +552,14 @@ export class ToolExecutor {
     }
 
     await this.app.vault.create(path, content);
-    new Notice(`노트 생성됨: ${path}`);
+    new Notice(this.n.toolNoteCreated(path));
     return `노트가 생성되었습니다: ${path}`;
   }
 
   private async editNote(path: string, content?: string, find?: string, replace?: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) {
-      return `파일을 찾을 수 없습니다: ${path}`;
+      return formatToolError(`파일을 찾을 수 없습니다: ${path}`);
     }
 
     // 부분 수정 모드 (find/replace)
@@ -552,36 +567,36 @@ export class ToolExecutor {
       // 빈 find는 거부한다. `"abc".includes("")`가 항상 true라 아래 가드를 통과하고,
       // `split("").join(replace)`가 모든 문자 사이에 replace를 삽입해 노트를 파괴한다.
       if (find === "") {
-        return "교체할 텍스트(find)가 비어 있습니다. 찾을 문자열을 지정해 주세요.";
+        return formatToolError("교체할 텍스트(find)가 비어 있습니다. 찾을 문자열을 지정해 주세요.");
       }
       const current = await this.app.vault.read(file);
       if (!current.includes(find)) {
-        return `교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`;
+        return formatToolError(`교체 대상 텍스트를 찾을 수 없습니다: "${find.substring(0, 50)}..."`);
       }
       // find에 해당하는 모든 텍스트를 교체 (사용자가 명시적으로 요청한 편집이므로 vault.modify 사용)
       const updated = current.split(find).join(replace);
       await this.app.vault.modify(file, updated);
-      new Notice(`노트 부분 수정됨: ${path}`);
+      new Notice(this.n.toolNotePatched(path));
       return `노트가 부분 수정되었습니다: ${path}`;
     }
 
     // 전체 교체 모드
     if (content !== undefined) {
       await this.app.vault.modify(file, content);
-      new Notice(`노트 수정됨: ${path}`);
+      new Notice(this.n.toolNoteEdited(path));
       return `노트가 수정되었습니다: ${path}`;
     }
 
-    return `content 또는 find/replace 파라미터가 필요합니다.`;
+    return formatToolError("content 또는 find/replace 파라미터가 필요합니다.");
   }
 
   private async appendToNote(path: string, content: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) {
-      return `파일을 찾을 수 없습니다: ${path}`;
+      return formatToolError(`파일을 찾을 수 없습니다: ${path}`);
     }
     await this.app.vault.append(file, "\n" + content);
-    new Notice(`내용 추가됨: ${path}`);
+    new Notice(this.n.toolNoteAppended(path));
     return `내용이 추가되었습니다: ${path}`;
   }
 
@@ -591,7 +606,7 @@ export class ToolExecutor {
       : this.app.vault.getRoot();
 
     if (!root || !(root instanceof TFolder)) {
-      return `폴더를 찾을 수 없습니다: ${folder}`;
+      return formatToolError(`폴더를 찾을 수 없습니다: ${folder}`);
     }
 
     const items: string[] = [];
@@ -612,7 +627,7 @@ export class ToolExecutor {
     }
     const file = this.app.workspace.getActiveFile();
     if (!file) {
-      return "현재 열려있는 노트가 없습니다.";
+      return formatToolError("현재 열려있는 노트가 없습니다.");
     }
     const content = await this.app.vault.cachedRead(file);
     return `경로: ${file.path}\n\n${content}`;
@@ -621,7 +636,7 @@ export class ToolExecutor {
   private async openNote(path: string): Promise<string> {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file || !(file instanceof TFile)) {
-      return `파일을 찾을 수 없습니다: ${path}`;
+      return formatToolError(`파일을 찾을 수 없습니다: ${path}`);
     }
     await this.app.workspace.getLeaf(false).openFile(file);
     return `노트를 열었습니다: ${path}`;
@@ -665,12 +680,12 @@ export class ToolExecutor {
     if (existing && existing instanceof TFile) {
       // 기존 템플릿 덮어쓰기
       await this.app.vault.modify(existing, content);
-      new Notice(`템플릿 수정됨: ${name}`);
+      new Notice(this.n.toolTemplateUpdated(name));
       return `템플릿이 수정되었습니다: ${path}`;
     }
 
     await this.app.vault.create(path, content);
-    new Notice(`템플릿 생성됨: ${name}`);
+    new Notice(this.n.toolTemplateCreated(name));
     return `템플릿이 저장되었습니다: ${path}`;
   }
 
@@ -684,7 +699,9 @@ export class ToolExecutor {
 
     const templateFile = this.app.vault.getAbstractFileByPath(templatePath);
     if (!templateFile || !(templateFile instanceof TFile)) {
-      return `템플릿을 찾을 수 없습니다: ${templateName}\n사용 가능한 템플릿을 확인하려면 list_templates를 사용하세요.`;
+      return formatToolError(
+        `템플릿을 찾을 수 없습니다: ${templateName}\n사용 가능한 템플릿을 확인하려면 list_templates를 사용하세요.`
+      );
     }
 
     let content = await this.app.vault.cachedRead(templateFile);
@@ -697,7 +714,7 @@ export class ToolExecutor {
     // 출력 파일 생성
     const existing = this.app.vault.getAbstractFileByPath(outputPath);
     if (existing) {
-      return `파일이 이미 존재합니다: ${outputPath}`;
+      return formatToolError(`파일이 이미 존재합니다: ${outputPath}`);
     }
 
     // 출력 경로의 상위 폴더 확인/생성
@@ -717,7 +734,7 @@ export class ToolExecutor {
       await this.app.workspace.getLeaf(false).openFile(newFile);
     }
 
-    new Notice(`템플릿 적용됨: ${outputPath}`);
+    new Notice(this.n.toolTemplateApplied(outputPath));
 
     // 남은 미치환 변수 확인
     const remaining = content.match(/\{\{[^}]+\}\}/g);
@@ -730,13 +747,13 @@ export class ToolExecutor {
   private async moveFile(sourcePath: string, destPath: string): Promise<string> {
     const source = this.app.vault.getAbstractFileByPath(sourcePath);
     if (!source) {
-      return `파일/폴더를 찾을 수 없습니다: ${sourcePath}`;
+      return formatToolError(`파일/폴더를 찾을 수 없습니다: ${sourcePath}`);
     }
 
     // 대상 경로에 이미 파일이 존재하는지 확인
     const existing = this.app.vault.getAbstractFileByPath(destPath);
     if (existing) {
-      return `대상 경로에 이미 파일이 존재합니다: ${destPath}`;
+      return formatToolError(`대상 경로에 이미 파일이 존재합니다: ${destPath}`);
     }
 
     // 대상 폴더가 없으면 자동 생성
@@ -749,20 +766,24 @@ export class ToolExecutor {
     }
 
     await this.app.fileManager.renameFile(source, destPath);
-    const type = source instanceof TFolder ? "폴더" : "파일";
-    new Notice(`${type} 이동됨: ${destPath}`);
+    const isFolder = source instanceof TFolder;
+    const type = isFolder ? "폴더" : "파일";
+    const n = this.n;
+    new Notice(n.toolMoved(isFolder ? n.kindFolder : n.kindFile, destPath));
     return `${type}을(를) 이동했습니다: ${sourcePath} → ${destPath}`;
   }
 
   private async deleteFile(path: string): Promise<string> {
     const target = this.app.vault.getAbstractFileByPath(path);
     if (!target) {
-      return `파일/폴더를 찾을 수 없습니다: ${path}`;
+      return formatToolError(`파일/폴더를 찾을 수 없습니다: ${path}`);
     }
-    const type = target instanceof TFolder ? "폴더" : "파일";
+    const isFolder = target instanceof TFolder;
+    const type = isFolder ? "폴더" : "파일";
     // 옵시디언 휴지통(.trash)으로 이동
     await this.app.vault.trash(target, false);
-    new Notice(`${type} 삭제됨: ${path}`);
+    const n = this.n;
+    new Notice(n.toolDeleted(isFolder ? n.kindFolder : n.kindFile, path));
     return `${type}을(를) 삭제했습니다: ${path}`;
   }
 
@@ -795,12 +816,12 @@ export class ToolExecutor {
   private async createWikiNote(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
 
     const title = typeof input.title === "string" ? input.title.trim() : "";
     if (title === "") {
-      return "노트 제목(title)이 필요합니다.";
+      return formatToolError("노트 제목(title)이 필요합니다.");
     }
     const body = typeof input.body === "string" ? input.body : "";
     const category = typeof input.category === "string" ? input.category : "";
@@ -824,13 +845,13 @@ export class ToolExecutor {
     // 없다. ensureWithinFolder가 세그먼트 단위로 ".."·절대경로를 먼저 거부한다.
     const guard = ensureWithinFolder(notePath, wikiFolder);
     if (!guard.ok) {
-      return guard.reason;
+      return formatToolError(guard.reason);
     }
 
     // 경로 충돌 확인 — 기존 노트를 덮어쓰지 않는다 (Req 6.6)
     const existing = this.app.vault.getAbstractFileByPath(notePath);
     if (existing) {
-      return `노트가 이미 존재하여 덮어쓰지 않았습니다: ${notePath}`;
+      return formatToolError(`노트가 이미 존재하여 덮어쓰지 않았습니다: ${notePath}`);
     }
 
     // AI_First_Note 문자열 생성 (Req 6.2). 누락 메타는 안전한 기본값으로 보정한다.
@@ -853,7 +874,7 @@ export class ToolExecutor {
     // 위키 폴더 구조를 보장한 뒤 노트를 생성한다 (Req 4.1 폴더 보장 재사용).
     await ensureWikiFolders(this.app, sb.wikiFolder);
     await this.app.vault.create(notePath, noteContent);
-    new Notice(`위키 노트 생성됨: ${notePath}`);
+    new Notice(this.n.toolWikiNoteCreated(notePath));
     return `위키 노트가 생성되었습니다: ${notePath}`;
   }
 
@@ -865,7 +886,7 @@ export class ToolExecutor {
   private async updateIndex(): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
 
     const wikiFolder = normalizePath(sb.wikiFolder);
@@ -874,7 +895,7 @@ export class ToolExecutor {
     // 폴더가 없을 수도 있으므로 보장 후 카탈로그를 기록한다(User_Region 보존).
     await ensureWikiFolders(this.app, sb.wikiFolder);
     await writeIndexCatalog(this.app, sb.wikiFolder, catalog);
-    new Notice(`인덱스 카탈로그 갱신됨 (${entries.length}개 노트)`);
+    new Notice(this.n.toolIndexUpdated(entries.length));
     return `인덱스 카탈로그를 갱신했습니다: ${entries.length}개 노트`;
   }
 
@@ -888,17 +909,17 @@ export class ToolExecutor {
   private async synthesizeTopic(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
 
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 종합을 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 종합을 수행할 수 없습니다.");
     }
 
     const topic = typeof input.topic === "string" ? input.topic.trim() : "";
     if (topic === "") {
-      return "종합할 주제(topic)가 필요합니다.";
+      return formatToolError("종합할 주제(topic)가 필요합니다.");
     }
 
     // 실행 컨텍스트 구성 — 기존 접근자(getSecondBrain/getAiClient)와 동일 의존성을 재사용한다.
@@ -925,17 +946,17 @@ export class ToolExecutor {
   private async reconcileTopic(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
 
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 모순 점검을 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 모순 점검을 수행할 수 없습니다.");
     }
 
     const topic = typeof input.topic === "string" ? input.topic.trim() : "";
     if (topic === "") {
-      return "모순을 점검할 주제(topic)가 필요합니다.";
+      return formatToolError("모순을 점검할 주제(topic)가 필요합니다.");
     }
 
     // 실행 컨텍스트 구성 — synthesize와 동일 의존성을 재사용한다.
@@ -964,12 +985,12 @@ export class ToolExecutor {
   private async architect(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
 
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 아키텍처 분석을 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 아키텍처 분석을 수행할 수 없습니다.");
     }
 
     // 스캔 경로는 선택 입력(미입력 시 볼트 전체). 경로 검증은 runArchitect 내부에서 수행한다.
@@ -1014,15 +1035,15 @@ export class ToolExecutor {
   private async challenge(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 비판적 검토를 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 비판적 검토를 수행할 수 없습니다.");
     }
     const claim = typeof input.claim === "string" ? input.claim.trim() : "";
     if (claim === "") {
-      return "검토할 주장(claim)이 필요합니다.";
+      return formatToolError("검토할 주장(claim)이 필요합니다.");
     }
     const ctx = this.buildThinkingContext(sb, aiClient);
     return await runChallenge(ctx, claim);
@@ -1037,16 +1058,16 @@ export class ToolExecutor {
   private async connect(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 주제 연결을 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 주제 연결을 수행할 수 없습니다.");
     }
     const topicA = typeof input.topicA === "string" ? input.topicA.trim() : "";
     const topicB = typeof input.topicB === "string" ? input.topicB.trim() : "";
     if (topicA === "" || topicB === "") {
-      return "연결할 두 주제(topicA, topicB)가 모두 필요합니다.";
+      return formatToolError("연결할 두 주제(topicA, topicB)가 모두 필요합니다.");
     }
     const ctx = this.buildThinkingContext(sb, aiClient);
     return await runConnect(ctx, topicA, topicB);
@@ -1061,11 +1082,11 @@ export class ToolExecutor {
   private async emerge(input: Record<string, unknown>): Promise<string> {
     const sb = this.getEnabledSecondBrain();
     if (!sb) {
-      return "Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.";
+      return formatToolError("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
     }
     const aiClient = this.getAiClient?.();
     if (!aiClient) {
-      return "AI 클라이언트를 사용할 수 없어 패턴 발견을 수행할 수 없습니다.";
+      return formatToolError("AI 클라이언트를 사용할 수 없어 패턴 발견을 수행할 수 없습니다.");
     }
     // days는 숫자 입력. 비숫자는 기본값 7로 두고, 0 이하/비정수 보정은 selectRecentNotes가 수행한다(Req 9.5).
     const days = typeof input.days === "number" ? input.days : 7;

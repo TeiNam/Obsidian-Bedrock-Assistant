@@ -484,6 +484,20 @@ describe("VaultIndexer 어휘 점수 — 단어 경계", () => {
     const result = await indexer.search("c++");
     expect(result.items.map((i) => i.path)).toEqual(["code.md"]);
   });
+
+  it("흔한 단어 반복보다 드문 질의어가 함께 있는 노트를 우선한다", async () => {
+    const indexer = new VaultIndexer(makeApp(makeTFile("note.md")), makeClient());
+    indexer.deserialize(
+      makePayload([
+        { path: "common.md", body: "common ".repeat(30) },
+        { path: "rare.md", body: "common rare" },
+      ])
+    );
+
+    const result = await indexer.search("common rare");
+
+    expect(result.items[0].path).toBe("rare.md");
+  });
 });
 
 // ============================================

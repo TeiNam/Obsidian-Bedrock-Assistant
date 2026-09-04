@@ -1,18 +1,26 @@
 import { ChildProcess, spawn } from "child_process";
 import { existsSync } from "fs";
-import { join } from "path";
+import { delimiter, isAbsolute, join } from "path";
 import type { ToolDefinition } from "./types";
 import { BRANDING } from "./branding";
+import { formatToolError } from "./tool-failure-tracker";
+import { noticeI18n } from "./notice-i18n";
+import type { Locale } from "./types";
 
 // PATH에서 실행 파일의 절대 경로를 찾는 유틸리티 (GUI 앱에서 which 대체)
 function resolveCommand(command: string, pathEnv: string): string {
-  if (command.startsWith("/")) return command;
-  for (const dir of pathEnv.split(":")) {
+  if (isAbsolute(command)) return command;
+  for (const dir of pathEnv.split(delimiter)) {
     if (!dir) continue;
     const full = join(dir, command);
     if (existsSync(full)) return full;
   }
   return command;
+}
+
+/** 운영체제 PATH 구분자로 빈 항목 없이 결합한다. */
+export function joinSearchPath(paths: readonly string[], separator = delimiter): string {
+  return paths.filter(Boolean).join(separator);
 }
 
 // MCP 서버 설정 타입
@@ -25,6 +33,45 @@ export interface McpServerConfig {
 
 export interface McpConfig {
   mcpServers: Record<string, McpServerConfig>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * MCP 설정 JSON을 실제 사용 가능한 구조인지 검증한다.
+ *
+ * 여기서 던지는 메시지는 MCP 설정 모달에 그대로 표시되므로 사용자 언어를 따른다.
+ * (도구 실행 경로의 오류 문구는 LLM이 읽는 값이라 번역하지 않는다 — formatToolError 참조.)
+ */
+export function parseMcpConfig(configJson: string, locale?: Locale): McpConfig {
+  const t = noticeI18n(locale);
+  const parsed: unknown = JSON.parse(configJson);
+  if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) {
+    throw new Error(t.mcpConfigNeedsServers);
+  }
+
+  for (const [name, raw] of Object.entries(parsed.mcpServers)) {
+    if (name.trim() === "") throw new Error(t.mcpConfigEmptyName);
+    if (!isRecord(raw)) throw new Error(t.mcpConfigNotObject(name));
+    if (typeof raw.command !== "string" || raw.command.trim() === "") {
+      throw new Error(t.mcpConfigBadCommand(name));
+    }
+    if (raw.args !== undefined && (!Array.isArray(raw.args) || !raw.args.every((v) => typeof v === "string"))) {
+      throw new Error(t.mcpConfigBadArgs(name));
+    }
+    if (raw.env !== undefined) {
+      if (!isRecord(raw.env) || !Object.values(raw.env).every((v) => typeof v === "string")) {
+        throw new Error(t.mcpConfigBadEnv(name));
+      }
+    }
+    if (raw.disabled !== undefined && typeof raw.disabled !== "boolean") {
+      throw new Error(t.mcpConfigBadDisabled(name));
+    }
+  }
+
+  return parsed as unknown as McpConfig;
 }
 
 // MCP JSON-RPC 메시지 타입
@@ -49,9 +96,39 @@ interface McpToolDef {
   inputSchema?: Record<string, unknown>;
 }
 
+/** 텍스트 외 이미지·리소스 블록도 버리지 않고 JSON으로 보존한다. */
+export function formatMcpToolResult(result: unknown): string {
+  if (!isRecord(result)) return JSON.stringify(result) ?? String(result ?? "");
+
+  const parts: string[] = [];
+  if (Array.isArray(result.content)) {
+    for (const block of result.content) {
+      if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+        parts.push(block.text);
+      } else {
+        const serialized = JSON.stringify(block);
+        if (serialized !== undefined) parts.push(serialized);
+      }
+    }
+  }
+  if (result.structuredContent !== undefined) {
+    const serialized = JSON.stringify(result.structuredContent);
+    if (serialized !== undefined) parts.push(serialized);
+  }
+  return parts.filter((part): part is string => typeof part === "string" && part !== "").join("\n")
+    || JSON.stringify(result)
+    || "";
+}
+
 /** MCP stdio 전송 규격: JSON-RPC 메시지 하나를 한 줄로 보낸다. */
 export function encodeMcpStdioMessage(message: unknown): string {
   return `${JSON.stringify(message)}\n`;
+}
+
+interface PendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 // 단일 MCP 서버 연결
@@ -60,7 +137,7 @@ class McpServerConnection {
   private config: McpServerConfig;
   private process: ChildProcess | null = null;
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, PendingRequest>();
   private buffer = "";
   private _tools: ToolDefinition[] = [];
   private _connected = false;
@@ -72,6 +149,7 @@ class McpServerConnection {
   private static MAX_RECONNECT = 3;
   private static RECONNECT_DELAY = 5000; // 5초
   private intentionalDisconnect = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // 재연결 성공 시 호출되는 콜백 (McpManager에서 도구 목록 갱신용)
   onReconnect: (() => void) | null = null;
@@ -99,14 +177,13 @@ class McpServerConnection {
     if (this.config.disabled) return;
 
     // GUI 앱(옵시디언)은 쉘의 PATH를 상속받지 못하므로 일반적인 경로를 보강
+    const home = process.env.HOME || process.env.USERPROFILE;
     const extraPaths = [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      `${process.env.HOME}/.local/bin`,
-      `${process.env.HOME}/.cargo/bin`,
-    ].join(":");
-    const currentPath = process.env.PATH || "/usr/bin:/bin";
-    const augmentedPath = `${extraPaths}:${currentPath}`;
+      ...(process.platform === "win32" ? [] : ["/usr/local/bin", "/opt/homebrew/bin"]),
+      ...(home ? [join(home, ".local", "bin"), join(home, ".cargo", "bin")] : []),
+    ];
+    const currentPath = process.env.PATH || (process.platform === "win32" ? "" : "/usr/bin:/bin");
+    const augmentedPath = joinSearchPath([...extraPaths, currentPath]);
     const env = {
       ...process.env,
       PATH: augmentedPath,
@@ -140,6 +217,7 @@ class McpServerConnection {
     this.process.on("exit", (code) => {
       this._connected = false;
       for (const [, p] of this.pending) {
+        clearTimeout(p.timer);
         p.reject(new Error(`MCP 서버 종료 (code: ${code})`));
       }
       this.pending.clear();
@@ -147,7 +225,9 @@ class McpServerConnection {
       // 비정상 종료 시 자동 재연결 시도
       if (!this.intentionalDisconnect && code !== 0 && this.reconnectAttempts < McpServerConnection.MAX_RECONNECT) {
         this.reconnectAttempts++;
-        setTimeout(() => {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          if (this.intentionalDisconnect) return;
           this.connect().then(() => {
             this.reconnectAttempts = 0; // 재연결 성공 시 리셋
             if (this.onReconnect) this.onReconnect();
@@ -210,15 +290,10 @@ class McpServerConnection {
     const result = (await this.sendRequest("tools/call", {
       name: originalName,
       arguments: args,
-    })) as { content: Array<{ type: string; text?: string }> };
+    })) as { content?: unknown[]; structuredContent?: unknown; isError?: boolean };
 
-    if (result.content && Array.isArray(result.content)) {
-      return result.content
-        .filter((c) => c.type === "text" && c.text)
-        .map((c) => c.text)
-        .join("\n");
-    }
-    return JSON.stringify(result);
+    const text = formatMcpToolResult(result);
+    return result.isError ? formatToolError(`MCP ${originalName}: ${text || "실행 실패"}`) : text;
   }
 
   // JSON-RPC 요청 전송
@@ -231,17 +306,21 @@ class McpServerConnection {
 
       const id = this.nextId++;
       const request: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
-      this.pending.set(id, { resolve, reject });
-
-      this.process.stdin.write(encodeMcpStdioMessage(request));
-
-      // 설정된 타임아웃 적용
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(`MCP 요청 타임아웃: ${method}`));
         }
       }, this._timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+
+      try {
+        this.process.stdin.write(encodeMcpStdioMessage(request));
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -300,6 +379,7 @@ class McpServerConnection {
         if (msg.id !== undefined && this.pending.has(msg.id)) {
           const p = this.pending.get(msg.id)!;
           this.pending.delete(msg.id);
+          clearTimeout(p.timer);
           if (msg.error) {
             p.reject(new Error(`MCP 오류: ${msg.error.message}`));
           } else {
@@ -314,29 +394,33 @@ class McpServerConnection {
     }
 
   // 서버 연결 종료
-  // 서버 연결 종료
-    disconnect(): void {
-      this.intentionalDisconnect = true; // 의도적 종료 표시
-      this._connected = false;
-      this._tools = [];
-      if (this.process) {
-        try {
-          // stdin을 먼저 닫아서 도커 컨테이너(-i 모드)도 정상 종료되도록 함
-          this.process.stdin?.end();
-          this.process.kill();
-        } catch { /* 이미 종료된 경우 */ }
-        // SIGTERM으로 안 죽으면 강제 종료
-        const proc = this.process;
-        setTimeout(() => {
-          try { if (!proc.killed) proc.kill("SIGKILL"); } catch { /* 무시 */ }
-        }, 3000);
-        this.process = null;
-      }
-      for (const [, p] of this.pending) {
-        p.reject(new Error("MCP 서버 연결 종료"));
-      }
-      this.pending.clear();
+  disconnect(): void {
+    this.intentionalDisconnect = true; // 의도적 종료 표시
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
+    this._connected = false;
+    this._tools = [];
+    if (this.process) {
+      try {
+        // stdin을 먼저 닫아서 도커 컨테이너(-i 모드)도 정상 종료되도록 함
+        this.process.stdin?.end();
+        this.process.kill();
+      } catch { /* 이미 종료된 경우 */ }
+      // SIGTERM으로 안 죽으면 강제 종료
+      const proc = this.process;
+      setTimeout(() => {
+        try { if (!proc.killed) proc.kill("SIGKILL"); } catch { /* 무시 */ }
+      }, 3000);
+      this.process = null;
+    }
+    for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error("MCP 서버 연결 종료"));
+    }
+    this.pending.clear();
+  }
 }
 
 // MCP 서버 매니저 — 여러 서버를 관리
@@ -367,15 +451,10 @@ export class McpManager {
   }
 
   // 설정 로드 및 서버 연결
-  async loadConfig(configJson: string): Promise<{ connected: string[]; failed: string[] }> {
+  async loadConfig(configJson: string, locale?: Locale): Promise<{ connected: string[]; failed: string[] }> {
+    const nextConfig = parseMcpConfig(configJson, locale);
     this.disconnectAll();
-
-    try {
-      this.config = JSON.parse(configJson) as McpConfig;
-    } catch {
-      this.config = { mcpServers: {} };
-      return { connected: [], failed: [] };
-    }
+    this.config = nextConfig;
 
     const connected: string[] = [];
     const failed: string[] = [];
@@ -383,12 +462,11 @@ export class McpManager {
     for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
       if (serverConfig.disabled) continue;
       const conn = new McpServerConnection(name, serverConfig);
+      // initialize/tools/list도 사용자 설정 타임아웃을 사용해야 한다.
+      conn.setTimeoutSeconds(this._timeoutSeconds);
+      conn.onReconnect = () => this.updateToolServerMap();
       try {
         await conn.connect();
-        // 현재 설정된 타임아웃 적용
-        conn.setTimeoutSeconds(this._timeoutSeconds);
-        // 재연결 성공 시 도구 목록 갱신 콜백 등록
-        conn.onReconnect = () => this.updateToolServerMap();
         this.servers.set(name, conn);
         connected.push(name);
       } catch (error) {
@@ -426,12 +504,12 @@ export class McpManager {
   async executeTool(prefixedName: string, input: Record<string, unknown>): Promise<string> {
     const serverName = this.toolServerMap.get(prefixedName);
     if (!serverName) {
-      return `잘못된 MCP 도구 이름: ${prefixedName}`;
+      return formatToolError(`잘못된 MCP 도구 이름: ${prefixedName}`);
     }
 
     const server = this.servers.get(serverName);
     if (!server || !server.connected) {
-      return `MCP 서버에 연결되지 않음: ${serverName}`;
+      return formatToolError(`MCP 서버에 연결되지 않음: ${serverName}`);
     }
 
     // prefixedName에서 원래 도구 이름 추출: "mcp_{serverName}_{toolName}" 형식
@@ -441,7 +519,7 @@ export class McpManager {
     try {
       return await server.callTool(toolName, input);
     } catch (error) {
-      return `도구 실행 오류: MCP ${toolName}: ${(error as Error).message}`;
+      return formatToolError(`MCP ${toolName}: ${(error as Error).message}`);
     }
   }
 

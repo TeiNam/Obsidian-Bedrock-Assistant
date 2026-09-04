@@ -10,6 +10,7 @@ import type {
 import { isAbortError } from "./abort-utils";
 import { buildEffortParams, attachmentMimeType, bytesToBase64 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
+import { noticeI18n } from "./notice-i18n";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -453,7 +454,7 @@ export class GeminiClient {
 
     const data = resp.json;
     if (!data.embedding?.values) {
-      throw new Error("임베딩 응답에 values가 없습니다");
+      throw new Error(noticeI18n(this.settings.language).errNoEmbeddingVector("Gemini"));
     }
     return data.embedding.values;
   }
@@ -499,6 +500,6 @@ export class GeminiClient {
         }
       }
     }
-    throw new Error("converseLight 응답에 텍스트가 없습니다");
+    throw new Error(noticeI18n(this.settings.language).errNoResponseText("Gemini"));
   }
 }

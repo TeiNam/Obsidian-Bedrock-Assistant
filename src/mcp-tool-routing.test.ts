@@ -141,6 +141,18 @@ describe("B3: MCP 도구 이름 라우팅 (toolServerMap 기반)", () => {
     expect(toolServerMap.size).toBe(0);
   });
 
+  it("잘못된 새 설정은 기존 연결을 끊기 전에 거부한다", async () => {
+    const manager = setupManager([
+      { name: "my_server", toolNames: ["get_data"] },
+    ]);
+    const server = (manager as any).servers.get("my_server");
+
+    await expect(manager.loadConfig("{}")).rejects.toThrow("mcpServers");
+
+    expect(server.disconnect).not.toHaveBeenCalled();
+    expect(manager.getStatus()).toHaveLength(1);
+  });
+
   it("getAllTools()가 모든 서버의 도구를 반환한다", () => {
     const manager = setupManager([
       { name: "github", toolNames: ["search_code"] },

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   representativeEmbedding,
+  maxEmbeddingSimilarity,
   suggestLinksForNote,
   suggestLinks,
   groupBySource,
@@ -61,6 +62,23 @@ describe("representativeEmbedding", () => {
   it("아무 임베딩도 없으면 null이다", () => {
     const e = entry("a.md", [], { chunks: [], embedding: [] });
     expect(representativeEmbedding(e)).toBeNull();
+  });
+});
+
+describe("maxEmbeddingSimilarity", () => {
+  it("첫 청크가 달라도 뒤쪽 청크가 같으면 최대 유사도를 사용한다", () => {
+    const source = entry("source.md", ORTHOGONAL, {
+      chunks: [
+        { index: 0, text: "도입", embedding: ORTHOGONAL },
+        { index: 1, text: "핵심", embedding: SAME },
+      ],
+    });
+    const candidate = entry("candidate.md", SAME);
+
+    expect(maxEmbeddingSimilarity(source, candidate)).toBeCloseTo(1);
+    expect(suggestLinksForNote(source, [source, candidate]).map((s) => s.targetPath)).toEqual([
+      "candidate.md",
+    ]);
   });
 });
 

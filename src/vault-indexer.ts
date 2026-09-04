@@ -1,6 +1,7 @@
 import { App, TFile, Notice } from "obsidian";
-import type { IAiClient, VaultIndexEntry, IndexResult, IndexFailure, IndexChunk, SerializedIndex } from "./types";
+import type { IAiClient, Locale, VaultIndexEntry, IndexResult, IndexFailure, IndexChunk, SerializedIndex } from "./types";
 import { CURRENT_INDEX_SCHEMA_VERSION } from "./types";
+import { noticeI18n } from "./notice-i18n";
 import {
   splitIntoChunkSlices,
   normalizeChunkConfig,
@@ -83,8 +84,6 @@ function pickMatchedChunk(
  * CJK는 경계 규칙을 그대로 쓸 수 없다(띄어쓰기 없이 붙는다). 그쪽은 부분문자열로 센다 —
  * 한글 2자 토큰은 그 자체로 의미 단위인 경우가 많다.
  *
- * ponytail: 흔한 단어가 단독으로 여러 번 나오는 노트는 여전히 점수가 오른다. 그것까지
- * 걸러내려면 볼트 전체 문서빈도(IDF)가 필요하고, 그건 인덱스 스키마를 늘리는 일이다.
  */
 function countTerm(text: string, term: string): number {
   if (term === "") return 0;
@@ -126,7 +125,26 @@ function boundaryPattern(term: string): RegExp | null {
 
 /** 질의를 어휘 검색용 토큰으로 쪼갠다. */
 function splitQueryTerms(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).filter(Boolean);
+  return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
+}
+
+/** 현재 후보 집합에서 BM25 문서빈도 가중치(IDF)를 계산한다. */
+function inverseDocumentFrequency(
+  terms: readonly string[],
+  candidates: ReadonlyMap<string, VaultIndexEntry>
+): Map<string, number> {
+  const total = candidates.size;
+  const out = new Map<string, number>();
+  for (const term of terms) {
+    let documents = 0;
+    for (const entry of candidates.values()) {
+      const text = entry.searchText || `${entry.title}\n${entry.excerpt}`.toLowerCase();
+      if (countTerm(text, term) > 0) documents++;
+    }
+    // 표준 BM25 IDF. 모든 문서에 있는 단어는 낮고, 드문 단어는 높다.
+    out.set(term, Math.log(1 + (total - documents + 0.5) / (documents + 0.5)));
+  }
+  return out;
 }
 
 /**
@@ -140,7 +158,8 @@ function splitQueryTerms(query: string): string[] {
  */
 function bestLexicalChunk(
   entry: VaultIndexEntry | undefined,
-  terms: readonly string[]
+  terms: readonly string[],
+  weights: ReadonlyMap<string, number> = new Map()
 ): { heading: string | null; text: string } | null {
   let best: { heading: string | null; text: string; hits: number; at: number } | null = null;
 
@@ -154,7 +173,7 @@ function bestLexicalChunk(
       const count = countTerm(lower, term);
       if (count === 0) continue;
       const at = firstTermIndex(lower, term);
-      hits += count;
+      hits += count * (weights.get(term) ?? 1);
       if (at >= 0 && (first < 0 || at < first)) first = at;
     }
     if (hits === 0) continue;
@@ -336,10 +355,22 @@ export class VaultIndexer {
    * 사라졌다. 작업 시작 시점의 세대를 기억해 **그 이후 삭제가 있었을 때만** 폐기한다.
    */
   private removalGeneration: Map<string, number> = new Map();
+  /**
+   * Notice 문구에 쓸 표시 언어. main.ts가 `setLocale`로 주입한다.
+   *
+   * 인덱서는 설정 객체를 받지 않으므로(app + client만) 언어를 직접 알 수 없다. 미주입 시
+   * `noticeI18n`이 en으로 폴백한다.
+   */
+  private locale: Locale | undefined;
 
   constructor(app: App, client: IAiClient) {
     this.app = app;
     this.client = client;
+  }
+
+  /** Notice 문구의 표시 언어를 지정한다. 설정에서 언어를 바꿀 때마다 다시 호출된다. */
+  setLocale(locale: Locale): void {
+    this.locale = locale;
   }
 
   // metadataCache 어댑터 주입 (task 11.1에서 main.ts가 호출)
@@ -370,7 +401,7 @@ export class VaultIndexer {
   // 인크리멘털 볼트 인덱싱 (변경/신규 파일만 처리, 삭제된 파일 정리)
     async indexVault(onProgress?: (current: number, total: number) => void): Promise<IndexResult> {
       if (this.indexing) {
-        new Notice("인덱싱이 이미 진행 중입니다.");
+        new Notice(noticeI18n(this.locale).indexBusy);
         return { processed: 0, skipped: 0, errors: [] };
       }
 
@@ -423,15 +454,14 @@ export class VaultIndexer {
       // 진행률 단조 증가 보장을 위한 최대 보고값 추적
       let maxReportedProgress = 0;
 
+      const t = noticeI18n(this.locale);
+
       if (totalFiles === 0) {
-        const msg = removedPaths.length > 0
-          ? `인덱스 정리 완료: ${removedPaths.length}개 삭제됨, 변경 파일 없음`
-          : "모든 파일이 최신 상태입니다.";
-        new Notice(msg);
+        new Notice(removedPaths.length > 0 ? t.indexCleaned(removedPaths.length) : t.indexUpToDate);
         return { processed: 0, skipped: skippedUpToDate.length, errors: [] };
       }
 
-      new Notice(`인크리멘털 인덱싱: ${totalFiles}개 파일 (${skippedUpToDate.length}개 스킵)`);
+      new Notice(t.indexIncremental(totalFiles, skippedUpToDate.length));
 
       // 첫 파일로 임베딩 가능 여부 테스트 (인덱스가 비어있을 때만)
       if (!this.hasEmbeddings() || this.index.size === 0) {
@@ -441,7 +471,7 @@ export class VaultIndexer {
         } catch (error) {
           console.error("임베딩 모델 사용 불가, 키워드 검색으로 전환:", error);
           this.useEmbeddings = false;
-          new Notice("⚠️ 임베딩 모델 접근 불가 → 키워드 검색 모드로 인덱싱");
+          new Notice(t.indexEmbeddingUnavailable);
         }
       }
 
@@ -514,19 +544,21 @@ export class VaultIndexer {
     private async forceIndexFile(file: TFile): Promise<void> {
       // 본문을 읽기 전에 mtime과 삭제 세대를 캡처한다(indexFile과 같은 이유 — 세대를
       // 첫 await 뒤에 잡으면 cachedRead 도중 삭제된 노트를 되살린다).
+      const path = file.path;
       const readMtime = file.stat.mtime;
-      const generation = this.currentGeneration(file.path);
+      const generation = this.currentGeneration(path);
       const content = await this.app.vault.cachedRead(file);
       // 내용이 비워진 노트는 인덱스에서 제거한다. 그냥 반환하면 이전 본문과 임베딩이
       // 계속 검색되어, 사용자가 지운 내용이 LLM에 노출된다.
       if (!content.trim()) {
-        this.index.delete(file.path);
+        this.index.delete(path);
         return;
       }
       // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
       const entry = await this.buildEntry(file, content, readMtime);
       // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-      this.commitEntry(file.path, entry, generation);
+      if (file.path !== path) return;
+      this.commitEntry(path, entry, generation);
     }
 
     /**
@@ -706,7 +738,8 @@ export class VaultIndexer {
       return;
     }
 
-    const existing = this.index.get(file.path);
+    const path = file.path;
+    const existing = this.index.get(path);
     // needsReindex 엔트리는 mtime과 무관하게 항상 갱신 대상이다(임베딩 미완료/무효).
     if (existing && !existing.needsReindex && existing.lastModified >= file.stat.mtime) {
       return;
@@ -717,18 +750,19 @@ export class VaultIndexer {
     // - 세대: **첫 await 전에** 잡아야 한다. cachedRead 도중 삭제되면 이미 증가한 값을
     //   잡게 되고, commitEntry가 정상 작업으로 판단해 삭제된 노트를 되살린다.
     const readMtime = file.stat.mtime;
-    const generation = this.currentGeneration(file.path);
+    const generation = this.currentGeneration(path);
     const content = await this.app.vault.cachedRead(file);
     // 내용이 비워진 노트는 인덱스에서 제거한다(이전 본문이 계속 검색되는 것을 방지).
     if (!content.trim()) {
-      this.index.delete(file.path);
+      this.index.delete(path);
       return;
     }
 
     // 청크 + 메타데이터를 포함한 Index_Entry를 생성하여 교체(재인덱싱 시 전체 교체, Req 1.4)
     const entry = await this.buildEntry(file, content, readMtime);
     // 임베딩 도중 삭제·이동됐으면 기록하지 않는다(삭제 노트 부활 방지).
-    this.commitEntry(file.path, entry, generation);
+    if (file.path !== path) return;
+    this.commitEntry(path, entry, generation);
   }
 
   /**
@@ -907,6 +941,7 @@ export class VaultIndexer {
     );
     // 어휘로만 잡힌 결과의 적중 청크를 찾을 때 쓴다. keywordSearch와 같은 분리 규칙이다.
     const lexicalTerms = splitQueryTerms(query);
+    const lexicalWeights = inverseDocumentFrequency(lexicalTerms, candidates);
     const fused = fuseRanks([
       { name: "dense", paths: combined.map((r) => r.path) },
       { name: "lexical", paths: lexical.map((r) => r.path), weight: LEXICAL_FUSION_WEIGHT },
@@ -966,7 +1001,7 @@ export class VaultIndexer {
         ...matchedFields(
           pickMatchedChunk(
             d ? this.bestChunkMatch(queryEmbedding, path) : null,
-            bestLexicalChunk(candidates.get(path), lexicalTerms),
+            bestLexicalChunk(candidates.get(path), lexicalTerms, lexicalWeights),
             lexicalTerms
           )
         ),
@@ -1027,17 +1062,33 @@ export class VaultIndexer {
     candidates: Map<string, VaultIndexEntry> = this.index
   ): GraphRagSearchItem[] {
     const terms = splitQueryTerms(query);
+    const weights = inverseDocumentFrequency(terms, candidates);
+    const texts = new Map<string, string>();
+    let totalLength = 0;
+    for (const entry of candidates.values()) {
+      const text = entry.searchText || `${entry.title}\n${entry.excerpt}`.toLowerCase();
+      texts.set(entry.path, text);
+      totalLength += Math.max(1, text.length);
+    }
+    const averageLength = totalLength / Math.max(1, candidates.size);
+    const k1 = 1.2;
+    const b = 0.75;
     const scored: Array<{ entry: VaultIndexEntry; score: number }> = [];
 
     for (const entry of candidates.values()) {
-      const text = entry.searchText || `${entry.title}\n${entry.excerpt}`.toLowerCase();
+      const text = texts.get(entry.path) ?? "";
+      const lengthNorm = 1 - b + b * (Math.max(1, text.length) / averageLength);
       let score = 0;
 
       for (const term of terms) {
-        // 제목 매치는 가중치 3배
-        if (countTerm(entry.title.toLowerCase(), term) > 0) score += 3;
-        // 본문 매치 횟수 (최대 10점)
-        score += Math.min(countTerm(text, term), 10);
+        const weight = weights.get(term) ?? 0;
+        // 제목 매치는 BM25 본문 점수와 별도로 강하게 보상한다.
+        if (countTerm(entry.title.toLowerCase(), term) > 0) score += 3 * weight;
+        const frequency = countTerm(text, term);
+        if (frequency > 0) {
+          // BM25 포화식: 같은 흔한 단어를 반복해도 점수가 선형으로 커지지 않는다.
+          score += weight * (frequency * (k1 + 1)) / (frequency + k1 * lengthNorm);
+        }
       }
 
       if (score > 0) {
@@ -1057,7 +1108,7 @@ export class VaultIndexer {
     return scored.slice(0, limit).map(({ entry, score }) => {
       // 어휘가 맞힌 청크를 찾아 적중 본문·헤딩으로 싣는다. excerpt(앞 500자)만 주면
       // Second Brain 경로들이 정확 문자열을 못 보고 도입부로 답한다.
-      const hit = bestLexicalChunk(entry, terms);
+      const hit = bestLexicalChunk(entry, terms, weights);
       return {
         path: entry.path,
         title: entry.title,

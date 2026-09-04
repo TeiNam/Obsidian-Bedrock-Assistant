@@ -5,6 +5,8 @@ import type { CustomSkill } from "./types";
 export interface Skill {
   id: string;
   name: string;
+  /** 영어 표시 이름. 이름 자체가 언어 중립이면(예: "Obsidian Markdown") 생략한다. */
+  nameEn?: string;
   description: string;
   descriptionEn: string;
   content: string;
@@ -401,6 +403,7 @@ export const SKILLS: Skill[] = [  {
   {
     id: "korean-writing",
     name: "사람처럼 글쓰기 (한국어)",
+    nameEn: "Human-like writing (Korean)",
     description: "한국어 문서 작성·교정·번역 시 자연스럽고 사람처럼 쓰도록 항상 적용되는 규칙",
     descriptionEn: "Always-on rules for writing natural, human-like Korean (writing, proofreading, translation)",
     content: KOREAN_WRITING_SKILL,
@@ -409,6 +412,7 @@ export const SKILLS: Skill[] = [  {
   {
     id: "business-english-writing",
     name: "비지니스 이메일/메신저 글쓰기 (영어)",
+    nameEn: "Business email & messaging (English)",
     description: "영어 비즈니스 이메일·메신저(Slack/Teams)를 명확하고 프로페셔널하게 작성",
     descriptionEn: "Write clear, professional English business email and messaging (Slack/Teams)",
     content: BUSINESS_ENGLISH_WRITING_SKILL,
