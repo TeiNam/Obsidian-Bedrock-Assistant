@@ -11,6 +11,8 @@
 
 import { parseJsonArray, toStringArray, toTrimmedString } from "./llm-json";
 import { formatNoteLink, parseNoteLinks, pathWithoutExtension } from "./wiki-link";
+import { toolI18n } from "../tool-result-i18n";
+import type { Locale } from "../types";
 
 /** 결정의 현재 상태. */
 export type DecisionStatus = "open" | "done" | "superseded";
@@ -238,9 +240,10 @@ const STATUS_LABEL: Record<DecisionStatus, string> = {
  */
 export function formatLedger(
   entries: readonly DecisionEntry[],
-  unparsed: readonly string[] = []
+  unparsed: readonly string[] = [],
+  locale?: Locale
 ): string {
-  if (entries.length === 0 && unparsed.length === 0) return "기록된 결정이 없습니다.";
+  if (entries.length === 0 && unparsed.length === 0) return toolI18n(locale).ledgerEmpty;
 
   const order: DecisionStatus[] = ["open", "done", "superseded"];
   const lines: string[] = [];

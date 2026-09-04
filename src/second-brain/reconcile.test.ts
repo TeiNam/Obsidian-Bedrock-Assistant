@@ -30,6 +30,7 @@ import type {
   VaultIndexer,
 } from "../vault-indexer";
 import type { IAiClient } from "../types";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 // --- 테스트 더블 구성 헬퍼 ----------------------------------------------------
 
@@ -465,7 +466,7 @@ describe("applyReconciliations — 승인 후 반영 (Req 8.4)", () => {
 
     expect(vault.process).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
-    expect(summary).toContain("대상 노트가 없습니다");
+    expect(summary).toBe(TOOL_I18N.en.reconcileNoTargets);
   });
 
   it("자동(스케줄러) 경로는 applyReconciliations을 호출하지 않는다", () => {
@@ -853,7 +854,7 @@ describe("applyReconciliations — 노트 단위 병합", () => {
     const { ctx } = makeAccumulatingCtx("# 노트\n");
 
     const summary = await applyReconciliations(ctx, [], "2026-09-03");
-    expect(summary).toContain("반영할 대상 노트가 없습니다");
+    expect(summary).toBe(TOOL_I18N.en.reconcileNoTargets);
   });
 });
 

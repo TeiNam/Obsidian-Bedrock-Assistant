@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { I18N } from "./settings-tab";
 import { VIEW_I18N } from "./chat-view-i18n";
 import { NOTICE_I18N } from "./notice-i18n";
+import { TOOL_I18N } from "./tool-result-i18n";
 import { SKILLS } from "./skills";
 import type { Locale } from "./types";
 
@@ -17,6 +18,7 @@ const DICTS = {
   I18N: I18N as Record<Locale, Record<string, unknown>>,
   VIEW_I18N: VIEW_I18N as Record<Locale, Record<string, unknown>>,
   NOTICE_I18N: NOTICE_I18N as Record<Locale, Record<string, unknown>>,
+  TOOL_I18N: TOOL_I18N as Record<Locale, Record<string, unknown>>,
 };
 
 describe("i18n 딕셔너리 정합성", () => {

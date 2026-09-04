@@ -13,6 +13,7 @@ import {
   type GapCandidate,
 } from "./knowledge-gaps";
 import type { VaultIndexEntry } from "../types";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 // ============================================
 // 지식 공백 리포트 (Knowledge Gaps) 테스트
@@ -212,7 +213,7 @@ describe("buildGapReport: 마크다운 렌더", () => {
 
   it("후보가 없으면 그렇다고 표시한다", () => {
     // 빈 블록을 쓰면 사용자가 "실행이 실패했나" 의심한다.
-    expect(buildGapReport([])).toContain("발견된 구조적 공백이 없습니다");
+    expect(buildGapReport([])).toBe(TOOL_I18N.en.gapsNone);
   });
 
   it("같은 입력은 같은 출력을 만든다(결정론)", () => {

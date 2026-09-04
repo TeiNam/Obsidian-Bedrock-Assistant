@@ -102,6 +102,7 @@ import {
 import { upsertGeneratedBlock, getGeneratedBlock } from "./second-brain/sentinel-blocks";
 import { VIEW_I18N } from "./chat-view-i18n";
 import { noticeI18n } from "./notice-i18n";
+import { toolI18n } from "./tool-result-i18n";
 import { runReconcileDetailed, applyReconciliations } from "./second-brain/reconcile";
 import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
@@ -285,6 +286,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     // MCP 매니저 초기화 및 타임아웃 설정 적용
     this.mcpManager = new McpManager();
     this.mcpManager.setTimeout(this.settings.mcpTimeout);
+    this.mcpManager.setLocale(this.settings.language);
 
     // 사이드바 뷰 등록 (MCP 로드보다 먼저 등록해야 레이아웃 복원 시 뷰가 준비됨)
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -590,6 +592,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       aiClient: this.aiClient,
       settings: this.settings.secondBrain,
       wikiFolder: this.settings.secondBrain.wikiFolder,
+      locale: this.settings.language,
       persist: () => this.saveSettings(),
     };
   }
@@ -922,7 +925,7 @@ export default class GeminiAssistantPlugin extends Plugin {
             return upsertGeneratedBlock(
               content,
               DECISION_BLOCK_KEY,
-              formatLedger(merged, parsed.unparsed)
+              formatLedger(merged, parsed.unparsed, this.settings.language)
             );
           });
         } else {
@@ -930,7 +933,11 @@ export default class GeminiAssistantPlugin extends Plugin {
           await ensureWikiFolders(this.app, wikiFolder);
           await this.app.vault.create(
             ledgerPath,
-            upsertGeneratedBlock("# 결정 원장\n", DECISION_BLOCK_KEY, formatLedger(merged))
+            upsertGeneratedBlock(
+              toolI18n(this.settings.language).ledgerHeading,
+              DECISION_BLOCK_KEY,
+              formatLedger(merged, [], this.settings.language)
+            )
           );
         }
 
@@ -1554,7 +1561,7 @@ export default class GeminiAssistantPlugin extends Plugin {
               | undefined)?.unresolvedLinks ?? {};
           const gaps = collectGaps(this.indexer.getEntries(), unresolved, wikiFolder);
           await ensureWikiFolders(this.app, wikiFolder);
-          await writeGapReport(this.app, wikiFolder, buildGapReport(gaps));
+          await writeGapReport(this.app, wikiFolder, buildGapReport(gaps, this.settings.language));
           new Notice(
             gaps.length === 0
               ? t.gapsNone

@@ -5,15 +5,30 @@
  * 임계값 초과 시 루프 중단 여부를 판단합니다.
  */
 
-// 도구 실행 에러로 판별하는 접두사 목록
+import { TOOL_I18N, toolI18n } from "./tool-result-i18n";
+import type { Locale } from "./types";
+
+/**
+ * 도구 실행 에러로 판별하는 접두사 목록.
+ *
+ * **세 언어를 모두 담아야 한다.** 접두어는 화면에도 보이므로 사용자 언어를 따르는데,
+ * 판별이 한 언어만 알면 언어를 바꾼 순간 실패가 성공으로 집계되고, 이전 언어로 저장된
+ * 대화 히스토리를 복원할 때 실패 표시가 사라진다. 지난 버전의 접두어도 남겨둔다.
+ */
 const ERROR_PREFIXES = [
-  "Tool execution error:",
-  "도구 실행 오류:",
+  TOOL_I18N.en.toolErrorPrefix,
+  TOOL_I18N.ko.toolErrorPrefix,
+  TOOL_I18N.ja.toolErrorPrefix,
 ];
 
-/** 도구 실패 문자열을 한 가지 계약으로 만든다. */
-export function formatToolError(message: string): string {
-  return `도구 실행 오류: ${message}`;
+/**
+ * 도구 실패 문자열을 한 가지 계약으로 만든다.
+ *
+ * 접두어는 `isToolError`가 되읽는 표식이면서 동시에 사용자가 읽는 텍스트다
+ * (chat-view가 도구 결과 문자열을 그대로 표시한다). 언어를 넘기지 않으면 en을 쓴다.
+ */
+export function formatToolError(message: string, locale?: Locale): string {
+  return `${toolI18n(locale).toolErrorPrefix} ${message}`;
 }
 
 /**

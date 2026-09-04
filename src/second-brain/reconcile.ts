@@ -25,6 +25,8 @@ import {
 import { upsertGeneratedBlock, getGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { parseJsonArray, toStringArray } from "./llm-json";
+import { toolI18n } from "../tool-result-i18n";
+import type { Locale } from "../types";
 
 /**
  * 모순 항목 — 상충하는 노트 집합, 상충 진술, 제안 정정안을 담는다 (Req 8.3).
@@ -134,9 +136,9 @@ function normalizeContradiction(
  *
  * @param items 파싱된 모순 항목 목록
  */
-export function formatReconcileReport(items: Contradiction[]): string {
+export function formatReconcileReport(items: Contradiction[], locale?: Locale): string {
   if (items.length === 0) {
-    return "발견된 모순이 없습니다. 어떤 노트도 변경하지 않았습니다.";
+    return toolI18n(locale).reconcileNone;
   }
 
   const lines: string[] = [];
@@ -335,7 +337,7 @@ export async function runReconcileDetailed(
 
   // 7) 모순 리포트 반환 — 어떤 노트도 수정하지 않는다 (Req 8.2)
   return {
-    report: `${formatReconcileReport(contradictions)}${staleNote}`,
+    report: `${formatReconcileReport(contradictions, ctx.locale)}${staleNote}`,
     contradictions,
     staleWarning: staleNote.trim(),
   };
@@ -538,7 +540,7 @@ export async function applyReconciliations(
   }
 
   if (byNote.size === 0) {
-    return "반영할 대상 노트가 없습니다(승인된 모순 항목에 노트 경로가 없습니다).";
+    return toolI18n(ctx.locale).reconcileNoTargets;
   }
 
   const updated: string[] = [];

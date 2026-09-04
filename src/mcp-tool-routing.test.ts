@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { McpManager } from "./mcp-client";
+import { TOOL_I18N } from "./tool-result-i18n";
 
 /**
  * B3: MCP 도구 이름 파싱 — toolServerMap 기반 라우팅 테스트
@@ -117,7 +118,7 @@ describe("B3: MCP 도구 이름 라우팅 (toolServerMap 기반)", () => {
     ]);
 
     const result = await manager.executeTool("mcp_unknown_server_tool", {});
-    expect(result).toContain("잘못된 MCP 도구 이름");
+    expect(result).toContain(TOOL_I18N.en.mcpBadToolName(""));
   });
 
   it("연결 해제된 서버의 도구는 toolServerMap에 포함되지 않는다", async () => {
@@ -126,7 +127,7 @@ describe("B3: MCP 도구 이름 라우팅 (toolServerMap 기반)", () => {
     ]);
 
     const result = await manager.executeTool("mcp_my_server_get_data", {});
-    expect(result).toContain("잘못된 MCP 도구 이름");
+    expect(result).toContain(TOOL_I18N.en.mcpBadToolName(""));
   });
 
   it("disconnectAll() 호출 시 toolServerMap이 초기화된다", () => {

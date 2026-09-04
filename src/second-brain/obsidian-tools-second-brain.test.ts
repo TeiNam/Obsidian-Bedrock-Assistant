@@ -44,6 +44,7 @@ import { TFile } from "obsidian";
 import { ToolExecutor } from "../obsidian-tools";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import type { SecondBrainSettings } from "../types";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 const WIKI = "Second Brain";
 
@@ -184,7 +185,7 @@ describe("create_wiki_note — 경로 충돌 시 덮어쓰지 않음 (Req 6.6)",
       category: "concepts",
     });
 
-    expect(result).toContain("이미 존재");
+    expect(result).toContain(TOOL_I18N.en.wikiNoteExists(""));
     expect(vault.create).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
   });
@@ -216,7 +217,7 @@ describe("create_wiki_note / update_index — 옵트인 격리 (Req 6.4)", () =>
       category: "concepts",
     });
 
-    expect(result).toContain("비활성");
+    expect(result).toContain(TOOL_I18N.en.sbDisabled);
     expect(vault.create).not.toHaveBeenCalled();
     expect(vault.createFolder).not.toHaveBeenCalled();
   });
@@ -227,7 +228,7 @@ describe("create_wiki_note / update_index — 옵트인 격리 (Req 6.4)", () =>
 
     const result = await executor.execute("update_index", {});
 
-    expect(result).toContain("비활성");
+    expect(result).toContain(TOOL_I18N.en.sbDisabled);
     expect(vault.create).not.toHaveBeenCalled();
     expect(vault.modify).not.toHaveBeenCalled();
   });
@@ -249,7 +250,7 @@ describe("update_index — 카탈로그 갱신 + 사용자 메모 보존 (Req 6.
 
     const result = await executor.execute("update_index", {});
 
-    expect(result).toContain("갱신");
+    expect(result).toContain(TOOL_I18N.en.catalogUpdated(1));
     // index.md는 새로 만들지 않고 기존 파일을 원자적으로 수정한다.
     expect(vault.process).toHaveBeenCalled();
     const processCall = vault.process.mock.calls.find(

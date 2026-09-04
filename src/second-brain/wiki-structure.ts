@@ -22,6 +22,8 @@ import { App, TFile, normalizePath } from "obsidian";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { formatNoteLink, pathWithoutExtension } from "./wiki-link";
+import { toolI18n } from "../tool-result-i18n";
+import type { Locale } from "../types";
 
 /** Wiki_Folder 하위에 두는 기본 카테고리 폴더 목록. 이 목록에 없는 카테고리는 "기타"로 분류된다. */
 export const WIKI_CATEGORIES = ["entities", "concepts", "projects"] as const;
@@ -69,12 +71,12 @@ function resolveCategory(category: string): string {
  * - 입력 순서가 달라도 동일 원소면 동일 출력을 보장한다(안정성, Property 10).
  * - 항목이 없으면 빈 카탈로그 안내 문구를 가진 유효한 마크다운을 반환한다 (Req 4.7).
  */
-export function buildIndexCatalog(entries: CatalogEntry[]): string {
+export function buildIndexCatalog(entries: CatalogEntry[], locale?: Locale): string {
   const heading = "# 📚 Index";
 
   // 빈 목록 → 안내 문구 (Req 4.7)
   if (!entries || entries.length === 0) {
-    return `${heading}\n\n_아직 위키 노트가 없습니다._\n`;
+    return toolI18n(locale).wikiEmpty(heading);
   }
 
   // 카테고리별 그룹핑 (미상 카테고리는 "기타"로 분류, Req 4.6)

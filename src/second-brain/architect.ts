@@ -278,6 +278,7 @@ import { buildAiFirstNote, type AiFirstMeta } from "./ai-first-format";
 import { upsertGeneratedBlock } from "./sentinel-blocks";
 import { processIfChanged } from "./vault-write";
 import { ensureWikiFolders } from "./wiki-structure";
+import { toolI18n } from "../tool-result-i18n";
 
 /** 아키텍처 노트 파일명(Wiki_Folder 루트에 작성). */
 const ARCHITECTURE_NOTE_NAME = "Architecture.md";
@@ -389,7 +390,7 @@ export async function runArchitect(ctx: SecondBrainContext, scanPath?: string): 
     .filter((p) => scanRoot === "" || p === scanRoot || p.startsWith(`${scanRoot}/`));
 
   if (paths.length === 0) {
-    return `스캔 대상 경로(${scanLabel})에서 분석할 파일을 찾지 못했습니다.`;
+    return toolI18n(ctx.locale).architectNoFiles(scanLabel);
   }
 
   // 3) 모듈 트리 → 섹션 골격(순수, Req 10.2)
@@ -420,7 +421,7 @@ export async function runArchitect(ctx: SecondBrainContext, scanPath?: string): 
       }
       return updated;
     });
-    return `아키텍처 노트를 갱신했습니다: ${notePath}`;
+    return toolI18n(ctx.locale).architectUpdated(notePath);
   }
 
   // 신규 노트: AI_First_Note 본문에 섹션 블록을 담아 생성한다.
@@ -439,5 +440,5 @@ export async function runArchitect(ctx: SecondBrainContext, scanPath?: string): 
   // Wiki_Folder 구조를 보장한 뒤 노트를 생성한다(부모 폴더 보장).
   await ensureWikiFolders(ctx.app, ctx.wikiFolder);
   await ctx.app.vault.create(notePath, noteContent);
-  return `아키텍처 노트를 생성했습니다: ${notePath}`;
+  return toolI18n(ctx.locale).architectCreated(notePath);
 }

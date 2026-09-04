@@ -24,6 +24,7 @@ import {
 import type { VaultIndexEntry } from "../types";
 // 실행 컨텍스트(app/indexer/aiClient/settings/wikiFolder/persist)는 scheduler.ts가 단일 출처다.
 import type { SecondBrainContext } from "./scheduler";
+import { toolI18n } from "../tool-result-i18n";
 
 // ============================================
 // 내부 헬퍼
@@ -39,6 +40,8 @@ const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
  */
 function renderHits(hits: SearchHit[]): string {
   if (hits.length === 0) {
+    // 번역하지 않는다 — 이 문자열은 프롬프트에만 들어가고 화면에 뜨지 않는다.
+    // 사용자에게 보이는 "근거 없음" 안내는 challengeNoHits / connectNoHits가 담당한다.
     return "_관련 노트를 찾지 못했습니다._";
   }
   return hits
@@ -204,7 +207,7 @@ function buildEmergeContext(days: number, recent: VaultIndexEntry[]): string {
 export async function runChallenge(ctx: SecondBrainContext, claim: string): Promise<string> {
   const trimmedClaim = claim.trim();
   if (trimmedClaim === "") {
-    return "검토할 주장(claim)이 필요합니다.";
+    return toolI18n(ctx.locale).claimRequired;
   }
 
   // 기존 Graph RAG 검색 재사용 (Req 9.2)
@@ -212,7 +215,7 @@ export async function runChallenge(ctx: SecondBrainContext, claim: string): Prom
 
   // 근거가 될 관련 노트가 없으면 반박 근거가 없으므로 안내만 반환한다(읽기 전용).
   if (hasNoHits(result)) {
-    return `"${trimmedClaim}"을(를) 반박할 근거가 될 관련 노트를 찾지 못했습니다.`;
+    return toolI18n(ctx.locale).challengeNoHits(trimmedClaim);
   }
 
   const hits = toSearchHits(result);
@@ -245,7 +248,7 @@ export async function runConnect(
   const trimmedA = topicA.trim();
   const trimmedB = topicB.trim();
   if (trimmedA === "" || trimmedB === "") {
-    return "연결할 두 주제(topicA, topicB)가 모두 필요합니다.";
+    return toolI18n(ctx.locale).topicsRequired;
   }
 
   // 두 주제를 각각 검색한다(Req 9.3).
@@ -254,7 +257,7 @@ export async function runConnect(
 
   // 양쪽 모두 관련 노트가 없으면 교차할 근거가 없으므로 안내만 반환한다(읽기 전용).
   if (hasNoHits(resultA) && hasNoHits(resultB)) {
-    return `"${trimmedA}"와(과) "${trimmedB}" 모두에서 관련 노트를 찾지 못해 연결할 근거가 없습니다.`;
+    return toolI18n(ctx.locale).connectNoHits(trimmedA, trimmedB);
   }
 
   const hitsA = toSearchHits(resultA);
@@ -293,7 +296,7 @@ export async function runEmerge(
   const recent = selectRecentNotes(entries, normalizedDays, now);
 
   if (recent.length === 0) {
-    return `최근 ${normalizedDays}일 이내에 수정된 노트가 없습니다.`;
+    return toolI18n(ctx.locale).emergeNoRecent(normalizedDays);
   }
 
   // 프롬프트에 넣는 노트 수를 제한한다. 상한이 없으면 최근 노트가 수천 건일 때
@@ -310,7 +313,7 @@ export async function runEmerge(
   );
   // 잘라낸 노트가 있으면 사용자에게 알린다(조용한 누락 방지).
   if (omitted > 0) {
-    return `${response.text}\n\n---\n(최근 노트 ${recent.length}건 중 최신 ${capped.length}건만 분석했습니다. 기간을 좁히면 더 정확한 결과를 얻을 수 있습니다.)`;
+    return toolI18n(ctx.locale).emergeCapped(response.text, recent.length, capped.length);
   }
   return response.text;
 }

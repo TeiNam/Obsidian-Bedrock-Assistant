@@ -12,6 +12,7 @@ import {
   parseLedgerDetailed,
   type DecisionEntry,
 } from "./decisions";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 function decision(overrides: Partial<DecisionEntry> = {}): DecisionEntry {
   return {
@@ -246,7 +247,7 @@ describe("formatLedger", () => {
   });
 
   it("빈 원장은 안내 문구다", () => {
-    expect(formatLedger([])).toBe("기록된 결정이 없습니다.");
+    expect(formatLedger([])).toBe(TOOL_I18N.en.ledgerEmpty);
   });
 });
 

@@ -28,6 +28,7 @@ import { processIfChanged } from "./vault-write";
 import { ensureWikiFolders } from "./wiki-structure";
 // 볼트 경로 탈출 방지 가드 (normalizePath는 ".." 를 해석하지 않는다)
 import { ensureWithinFolder } from "./vault-path-guard";
+import { toolI18n } from "../tool-result-i18n";
 
 /** 종합 본문을 감싸는 Sentinel_Block 키 (Req 7.4). */
 const SYNTHESIS_BLOCK_KEY = "synthesis";
@@ -98,7 +99,7 @@ export function buildSynthesisPrompt(topic: string, hits: SearchHit[]): string {
 export async function runSynthesize(ctx: SecondBrainContext, topic: string): Promise<string> {
   const trimmedTopic = topic.trim();
   if (trimmedTopic === "") {
-    return "종합할 주제(topic)가 필요합니다.";
+    return toolI18n(ctx.locale).topicRequired;
   }
 
   // 1) 기존 Graph RAG 검색 재사용 (Req 7.2)
@@ -109,7 +110,7 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
 
   // 2) 검색 결과 없음 → 노트 생성 없이 안내 (Req 7.6)
   if (hasNoHits(result)) {
-    return `"${trimmedTopic}"와(과) 관련된 노트를 찾지 못해 종합 노트를 생성하지 않았습니다.${staleNote}`;
+    return toolI18n(ctx.locale).synthesizeNoHits(trimmedTopic, staleNote);
   }
 
   // 3) 검색 히트 → 종합 프롬프트 (Req 7.3)
@@ -142,7 +143,7 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
     await processIfChanged(ctx.app, existing, (content) =>
       upsertGeneratedBlock(content, SYNTHESIS_BLOCK_KEY, synthesisBody)
     );
-    return `종합 노트를 갱신했습니다: ${notePath}${staleNote}`;
+    return toolI18n(ctx.locale).synthesizeUpdated(notePath, staleNote);
   }
 
   // 신규 종합 노트: AI_First_Note 본문에 synthesis 블록을 담아 생성한다.
@@ -158,5 +159,5 @@ export async function runSynthesize(ctx: SecondBrainContext, topic: string): Pro
   // 동일하게 부모 폴더를 먼저 보장한다.
   await ensureWikiFolders(ctx.app, ctx.wikiFolder);
   await ctx.app.vault.create(notePath, noteContent);
-  return `종합 노트를 생성했습니다: ${notePath}${staleNote}`;
+  return toolI18n(ctx.locale).synthesizeCreated(notePath, staleNote);
 }

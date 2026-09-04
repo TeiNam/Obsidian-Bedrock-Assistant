@@ -17,6 +17,7 @@ import { SECOND_BRAIN_SYSTEM_PROMPT } from "./search-adapter";
 import type { SecondBrainContext } from "./scheduler";
 import type { VaultIndexEntry } from "../types";
 import type { GraphRagResult } from "../vault-indexer";
+import { TOOL_I18N } from "../tool-result-i18n";
 
 // 하루를 밀리초로 환산한 상수 (구현과 동일한 경계 계산을 독립적으로 재현하기 위함).
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -355,7 +356,7 @@ describe("runEmerge — 실행 단위 테스트 (Req 9.6)", () => {
     expect(t.getEntries).toHaveBeenCalledTimes(1);
     expect(t.search).not.toHaveBeenCalled();
     expect(t.converseLight).not.toHaveBeenCalled();
-    expect(result).toContain("5일");
+    expect(result).toBe(TOOL_I18N.en.emergeNoRecent(5));
     expectNoVaultWrites(t);
   });
 });

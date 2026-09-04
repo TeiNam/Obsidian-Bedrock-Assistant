@@ -14,7 +14,7 @@
 
 An AI assistant sidebar plugin for Obsidian with multi-provider backend support — AWS Bedrock, Google Gemini, OpenAI, and Ollama.
 
-> **Note on command names:** command palette entries, notices, and the status bar follow the UI language you pick in settings (English, 한국어, 日本語). Obsidian caches the palette at load time, so restart the app after switching languages to see the new names.
+> **Note on command names:** command palette entries, notices, the status bar, and tool results follow the UI language you pick in settings (English, 한국어, 日本語). Obsidian caches the palette at load time, so restart the app after switching languages to see the new names.
 
 ## Features
 
@@ -42,7 +42,7 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 - **Web Clipper** — Fetch, translate, and summarize web pages as markdown notes
 - **MCP Server Integration** — Model Context Protocol servers (uvx, Docker)
 - **File Management** — Create, edit, move, and delete notes through AI
-- **Multilingual UI** — English, 한국어, 日本語. Settings, sidebar, command palette, notices, and the status bar all follow your choice
+- **Multilingual UI** — English, 한국어, 日本語. Settings, sidebar, command palette, notices, status bar, tool results, and error messages all follow your choice
 - **File Attachments** — Drag-and-drop, clipboard, file search. Images work on all four backends; PDFs on Bedrock and Gemini; Office documents on Bedrock. Unsupported combinations are refused with the list of backends that can handle the format, rather than dropped silently
 - **Chat Session History** — Save and restore past conversations
 - **Obsidian Skills** — Six built-in knowledge modules: `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `korean-writing`, `business-english-writing`, `second-brain`
@@ -119,7 +119,7 @@ Required IAM permissions:
 
 ### 3. Open the Sidebar
 
-Click the ribbon icon, or run the command **Open assistant** ("Open Assistant") from the command palette.
+Click the ribbon icon, or run the command **Open assistant** from the command palette.
 
 ### 4. Index Your Vault (Optional)
 

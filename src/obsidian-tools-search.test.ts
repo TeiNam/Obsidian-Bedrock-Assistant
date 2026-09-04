@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
 import { ToolExecutor } from "./obsidian-tools";
 import type { VaultIndexer, GraphRagResult, GraphRagSearchItem } from "./vault-indexer";
+import { TOOL_I18N } from "./tool-result-i18n";
 
 /**
  * Graph_RAG_Search 결과 렌더링 속성 테스트
@@ -134,12 +135,11 @@ describe("Graph_RAG_Search 빈 결과/실패 메시지 (단위)", () => {
     const rendered = await executor.execute("search_vault", { query: "안녕" });
 
     // 결과가 없음을 명확히 안내하고, 인덱싱이 필요할 수 있음을 알린다.
-    expect(rendered).toContain("검색 결과가 없습니다");
-    expect(rendered).toContain("인덱싱");
+    expect(rendered).toContain(TOOL_I18N.en.searchNoResults(""));
   });
 
   // Req 7.6: 검색 자체가 실패(throw)하면 빈/부분 결과를 정상으로 위장하지 않고
-  // 명확한 "검색 실패" 오류 메시지를 반환한다.
+  // 명확한 TOOL_I18N.en.searchFailed("") 오류 메시지를 반환한다.
   it("indexer.search가 Error를 throw하면 검색 실패 오류 메시지를 반환한다", async () => {
     const executor = makeExecutorWith(async () => {
       throw new Error("boom");
@@ -148,10 +148,10 @@ describe("Graph_RAG_Search 빈 결과/실패 메시지 (단위)", () => {
     const rendered = await executor.execute("search_vault", { query: "안녕" });
 
     // 검색 실패 메시지와 원본 오류 메시지를 포함한다.
-    expect(rendered).toContain("검색 실패");
+    expect(rendered).toContain(TOOL_I18N.en.searchFailed(""));
     expect(rendered).toContain("boom");
     // 빈 결과 안내 메시지를 성공인 것처럼 반환하지 않는다.
-    expect(rendered).not.toContain("검색 결과가 없습니다");
+    expect(rendered).not.toContain(TOOL_I18N.en.searchNoResults(""));
   });
 
   // Req 4.7: 빈/공백 쿼리로 검색을 수행하지 않은 경우 안내 메시지를 반환한다.
@@ -161,8 +161,8 @@ describe("Graph_RAG_Search 빈 결과/실패 메시지 (단위)", () => {
     const rendered = await executor.execute("search_vault", { query: "   " });
 
     // 빈 쿼리 안내 — 빈 결과 안내가 아닌 쿼리 입력 안내를 우선한다.
-    expect(rendered).toContain("검색 쿼리가 비어 있습니다");
-    expect(rendered).not.toContain("검색 결과가 없습니다");
+    expect(rendered).toContain(TOOL_I18N.en.searchQueryEmpty);
+    expect(rendered).not.toContain(TOOL_I18N.en.searchNoResults(""));
   });
 });
 
