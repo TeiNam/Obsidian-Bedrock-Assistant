@@ -21,6 +21,22 @@ export interface RecoveryResult {
 }
 
 /**
+ * 비동기 쓰기를 호출 순서대로 실행한다.
+ *
+ * 각 호출자는 자기 쓰기의 성공/실패를 받되, 한 번 실패해도 뒤의 쓰기는 계속된다.
+ */
+export function createSerialWriter<T>(
+  write: (value: T) => Promise<void>
+): (value: T) => Promise<void> {
+  let tail = Promise.resolve();
+  return (value: T): Promise<void> => {
+    const current = tail.then(() => write(value));
+    tail = current.catch(() => {});
+    return current;
+  };
+}
+
+/**
  * 세션 파일을 로드하고, 파싱 실패 시 백업에서 복구를 시도하는 함수
  */
 export async function loadSessionsWithRecovery(

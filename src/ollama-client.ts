@@ -30,6 +30,7 @@ import {
 	toOllamaMessages,
 } from "./provider-utils";
 import { buildSystemPrompt } from "./system-prompt";
+import { noticeI18n, type NoticeLabels } from "./notice-i18n";
 
 // === 공급자 기본값/타임아웃 상수 ===
 /** Ollama 기본 엔드포인트(base URL 미설정 시 폴백) - Req 2.9 */
@@ -55,6 +56,16 @@ export class OllamaClient implements IAiClient {
 	// 설정 변경 시 내부 설정 갱신
 	updateSettings(settings: GeminiAssistantSettings): void {
 		this.settings = settings;
+	}
+
+	/** 현재 언어의 오류 문구. 설정이 바뀌면 다음 호출에서 자동으로 반영된다. */
+	private get t(): NoticeLabels {
+		return noticeI18n(this.settings.language);
+	}
+
+	/** `Ollama {무엇} 실패 (HTTP {상태})` 형태의 오류 문구. */
+	private httpError(what: string, status: number): string {
+		return this.t.errHttpStatus("Ollama", what, status);
 	}
 
 	/**
@@ -165,7 +176,7 @@ export class OllamaClient implements IAiClient {
 			}
 			// 연결 불가/10초 내 미수립: 서버 미접속 식별 오류 - Req 10.2
 			throw new Error(
-				`Ollama 서버에 접속할 수 없습니다 (${base}). Ollama가 실행 중인지 확인하세요.`
+				this.t.errServerUnreachable("Ollama", base)
 			);
 		}
 		// 응답 수립 → 연결 타임아웃 해제(이후 스트리밍은 사용자 signal로만 제어)
@@ -176,14 +187,14 @@ export class OllamaClient implements IAiClient {
 			const errText = await response.text().catch(() => "");
 			// 공급자 오류 응답(401/404/429 등) 식별 가능 메시지 - Req 10.3, 10.3.1
 			throw new Error(
-				`Ollama API 오류 (HTTP ${response.status}): ${errText}`
+				this.t.errApiHttp("Ollama", response.status, errText)
 			);
 		}
 
 		const reader = response.body?.getReader();
 		if (!reader) {
 			if (abortSignal) abortSignal.removeEventListener("abort", onUserAbort);
-			throw new Error("Ollama 응답 본문이 없습니다");
+			throw new Error(noticeI18n(this.settings.language).errNoResponseBody("Ollama"));
 		}
 
 		const decoder = new TextDecoder();
@@ -201,9 +212,7 @@ export class OllamaClient implements IAiClient {
 				chunk = JSON.parse(trimmed);
 			} catch (e) {
 				throw new Error(
-					`Ollama 스트림 JSON 파싱 실패: ${
-						e instanceof Error ? e.message : String(e)
-					}`
+					this.t.errStreamParseFailed("Ollama", e instanceof Error ? e.message : String(e))
 				);
 			}
 			const msg = chunk.message as Record<string, unknown> | undefined;
@@ -257,7 +266,7 @@ export class OllamaClient implements IAiClient {
 				// 스트리밍/파싱 오류는 부분 결과를 정상 반환하지 않고 전파 - Req 4.7, 10.5
 				throw e instanceof Error
 					? e
-					: new Error(`Ollama 스트리밍 처리 실패: ${String(e)}`);
+					: new Error(noticeI18n(this.settings.language).errStreamFailed("Ollama", String(e)));
 			}
 		} finally {
 			if (abortSignal) abortSignal.removeEventListener("abort", onUserAbort);
@@ -287,12 +296,12 @@ export class OllamaClient implements IAiClient {
 	async getEmbedding(text: string): Promise<number[]> {
 		// 빈/공백 입력은 요청 없이 잘못된 입력 오류 - Req 6.4
 		if (!text || text.trim() === "") {
-			throw new Error("임베딩 입력 텍스트가 비어 있습니다");
+			throw new Error(noticeI18n(this.settings.language).errEmptyEmbeddingInput);
 		}
 		// 임베딩 모델 ID 누락은 요청 없이 모델 미설정 오류 - Req 6.5
 		const model = this.settings.ollamaEmbeddingModel;
 		if (!model || model.trim() === "") {
-			throw new Error("Ollama 임베딩 모델 ID가 설정되지 않았습니다");
+			throw new Error(noticeI18n(this.settings.language).errNoEmbeddingModel("Ollama"));
 		}
 
 		const base = this.baseUrl();
@@ -310,26 +319,24 @@ export class OllamaClient implements IAiClient {
 					throw: false,
 				}),
 				NONSTREAM_TIMEOUT_MS,
-				"Ollama 임베딩 요청 시간 초과(60초)"
+				this.t.errTimeoutWhat("Ollama", this.t.whatEmbedding, NONSTREAM_TIMEOUT_MS / 1000)
 			);
 		} catch (e) {
 			// 네트워크 실패/타임아웃: 공급자 오류 응답과 구별되는 오류 - Req 10.6
 			throw new Error(
-				`Ollama 서버에 접속할 수 없습니다 (${base}): ${
-					e instanceof Error ? e.message : String(e)
-				}`
+				this.t.errServerUnreachableDetail("Ollama", base, e instanceof Error ? e.message : String(e))
 			);
 		}
 
 		if (resp.status < 200 || resp.status >= 300) {
 			// 공급자 오류 응답 식별 가능 메시지 - Req 6.6, 10.3
-			throw new Error(`Ollama 임베딩 요청 실패 (HTTP ${resp.status})`);
+			throw new Error(this.httpError(this.t.whatEmbedding, resp.status));
 		}
 
 		const data = resp.json;
 		const embedding = data?.embedding;
 		if (!Array.isArray(embedding) || embedding.length < 1) {
-			throw new Error("Ollama 임베딩 응답에 벡터가 없습니다");
+			throw new Error(noticeI18n(this.settings.language).errNoEmbeddingVector("Ollama"));
 		}
 		return embedding as number[];
 	}
@@ -347,7 +354,7 @@ export class OllamaClient implements IAiClient {
 			return await this.withTimeout(
 				this.fetchModels(kind),
 				LIST_MODELS_TIMEOUT_MS,
-				"Ollama 모델 목록 조회 시간 초과(10초)"
+				this.t.errTimeoutWhat("Ollama", this.t.whatModelList, LIST_MODELS_TIMEOUT_MS / 1000)
 			);
 		} catch (e) {
 			// 조회 실패/타임아웃 시 빈 배열 반환(부분 목록 미반환) → 설정 탭은 현재값 유지 - Req 7.8, 7.9
@@ -371,7 +378,7 @@ export class OllamaClient implements IAiClient {
 			throw: false,
 		});
 		if (tagsResp.status < 200 || tagsResp.status >= 300) {
-			throw new Error(`Ollama 태그 조회 실패 (HTTP ${tagsResp.status})`);
+			throw new Error(this.httpError(this.t.whatModelList, tagsResp.status));
 		}
 		const data = tagsResp.json;
 		const rawModels: unknown[] = Array.isArray(data?.models)
@@ -466,27 +473,25 @@ export class OllamaClient implements IAiClient {
 					throw: false,
 				}),
 				NONSTREAM_TIMEOUT_MS,
-				"Ollama converseLight 요청 시간 초과(60초)"
+				this.t.errTimeoutWhat("Ollama", this.t.whatRequest, NONSTREAM_TIMEOUT_MS / 1000)
 			);
 		} catch (e) {
 			// 네트워크 실패/타임아웃 - Req 8.4, 10.6
 			throw new Error(
-				`Ollama 서버에 접속할 수 없습니다 (${base}): ${
-					e instanceof Error ? e.message : String(e)
-				}`
+				this.t.errServerUnreachableDetail("Ollama", base, e instanceof Error ? e.message : String(e))
 			);
 		}
 
 		if (resp.status < 200 || resp.status >= 300) {
 			// 공급자 오류 응답 - Req 8.4, 10.3
-			throw new Error(`Ollama converseLight 실패 (HTTP ${resp.status})`);
+			throw new Error(this.httpError(this.t.whatRequest, resp.status));
 		}
 
 		const data = resp.json;
 		const content = data?.message?.content;
 		if (typeof content !== "string" || content === "") {
 			// 텍스트 부재 - Req 8.5
-			throw new Error("Ollama converseLight 응답에 텍스트가 없습니다");
+			throw new Error(noticeI18n(this.settings.language).errNoResponseText("Ollama"));
 		}
 		return { text: content };
 	}

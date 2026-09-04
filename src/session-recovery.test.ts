@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  createSerialWriter,
   loadSessionsWithRecovery,
   saveSessionsWithBackup,
   type FileAdapter,
@@ -37,6 +38,41 @@ function createMockAdapter(files: Record<string, string> = {}): FileAdapter {
 
 const SESSIONS_PATH = "sessions.json";
 const BACKUP_PATH = "sessions.json.bak";
+
+describe("createSerialWriter", () => {
+  it("앞 쓰기가 늦어도 호출 순서를 보존한다", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const written: string[] = [];
+    const write = createSerialWriter(async (value: string) => {
+      if (value === "old") await firstGate;
+      written.push(value);
+    });
+
+    const oldWrite = write("old");
+    const newWrite = write("new");
+    await Promise.resolve();
+    expect(written).toEqual([]);
+
+    releaseFirst();
+    await Promise.all([oldWrite, newWrite]);
+    expect(written).toEqual(["old", "new"]);
+  });
+
+  it("한 쓰기가 실패해도 다음 쓰기를 실행한다", async () => {
+    const written: string[] = [];
+    const write = createSerialWriter(async (value: string) => {
+      if (value === "bad") throw new Error("쓰기 실패");
+      written.push(value);
+    });
+
+    await expect(write("bad")).rejects.toThrow("쓰기 실패");
+    await write("latest");
+    expect(written).toEqual(["latest"]);
+  });
+});
 
 describe("세션 파일 손상 복구", () => {
   describe("loadSessionsWithRecovery", () => {

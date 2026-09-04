@@ -1,6 +1,6 @@
 import { App, FuzzySuggestModal, Modal, Notice, PluginSettingTab, Setting, TFolder, setIcon } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import type { CustomSkill, EffortLevel } from "./types";
+import type { CustomSkill, EffortLevel, Locale } from "./types";
 // Second Brain 설정 정규화 (Req 1.4, 1.5): onChange 시점 값 보정에 사용
 import { normalizeSecondBrainSettings } from "./types";
 import { SKILLS } from "./skills";
@@ -25,6 +25,7 @@ import {
 // Graph RAG 설정 보정 함수 (Req 9.4~9.7): 저장 전 값 보정에 사용
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
+import { parseMcpConfig } from "./mcp-client";
 
 // To-Do 폴더 기본값 (빈/공백 입력 정규화에 사용)
 const TODO_FOLDER_DEFAULT = "ToDo";
@@ -33,7 +34,58 @@ const TODO_FOLDER_DEFAULT = "ToDo";
 // (테스트에서 i18n 키 완전성 검증을 위해 export — 런타임 동작 변화 없음, 추가적 export일 뿐)
 export const I18N = {
   en: {
-    pluginDesc: "An AI assistant sidebar to run your whole Obsidian vault. Pick your backend — AWS Bedrock, Google Gemini, OpenAI, or Ollama — then chat with AI, search your vault with embeddings, auto-generate tags, manage to-dos, and use MCP tools, all from within Obsidian.",
+    pluginDesc: "An AI assistant sidebar that reads, searches, and writes your Obsidian vault. Everything below is off or empty until you configure it — nothing runs on your notes without your say-so.",
+    featuresLabel: "What's included",
+    features: [
+      {
+        name: "Four AI backends",
+        desc: "AWS Bedrock, Google Gemini, OpenAI (or any OpenAI-compatible endpoint), and Ollama for fully local models. Chat model and embedding model are picked separately.",
+      },
+      {
+        name: "Vault chat with tools",
+        desc: "The assistant searches, reads, creates, edits, moves, and deletes notes itself. Tools that change notes ask for confirmation first.",
+      },
+      {
+        name: "Graph RAG search",
+        desc: "Notes are indexed as chunks with embeddings, then results expand along wikilinks and merge with keyword hits — so a note found through its neighbour still surfaces.",
+      },
+      {
+        name: "LLM wiki (Second Brain)",
+        desc: "Synthesize a topic into one note, report contradictions, keep a decision ledger, flag duplicate candidates, suggest links for orphan notes, surface a review queue, triage your Inbox, and write a knowledge-gap report. Every write is opt-in and only replaces generated blocks.",
+      },
+      {
+        name: "Reusable templates",
+        desc: "Save a template once and reuse it. {{variable}} placeholders are filled in when the note is created, so notes written on different days keep the same shape.",
+      },
+      {
+        name: "Web page summary",
+        desc: "Paste a URL to fetch the page, translate and summarize it in your language, and save it as a note.",
+      },
+      {
+        name: "Automatic tags",
+        desc: "Analyze the open note and add three to five tags to its frontmatter — the same tags Obsidian's graph view uses for color groups and filters.",
+      },
+      {
+        name: "To-Do and retrospective",
+        desc: "Daily to-do notes with unfinished items carried over, automatic archiving and cleanup of old files, and an AI retrospective appended to today's note.",
+      },
+      {
+        name: "P.A.R.A setup",
+        desc: "Create the four P.A.R.A folders and let the AI classify existing notes into them.",
+      },
+      {
+        name: "MCP servers",
+        desc: "Connect external MCP servers and use their tools in the same conversation as the vault tools.",
+      },
+      {
+        name: "Skills",
+        desc: "Built-in Obsidian knowledge (Markdown, Bases, Canvas) plus your own skills, which the AI can draft for you. Enabled skills are injected into the system prompt.",
+      },
+      {
+        name: "Citation check",
+        desc: "Warns you when an answer cites a note that isn't actually in your vault.",
+      },
+    ],
     readmeLabel: "📖 Documentation",
     readmeFile: "README.md",
     sponsorLabel: "If you find this plugin useful, consider supporting its development.",
@@ -187,6 +239,7 @@ export const I18N = {
     mcpModalSave: "Save & Connect",
     mcpModalCancel: "Close",
     mcpModalJsonError: "❌ Invalid JSON format.",
+    mcpModalConfigError: (message: string) => `❌ Invalid MCP configuration: ${message}`,
     mcpModalSaving: "MCP config saved. Connecting...",
     mcpModalConnected: (names: string) => `✅ MCP connected: ${names}`,
     mcpModalFailed: (names: string) => `❌ MCP failed: ${names}`,
@@ -227,7 +280,58 @@ export const I18N = {
     mcpJsonErrorAt: (line: number, col: number, msg: string) => `JSON error at line ${line}, column ${col}: ${msg}`,
   },
   ko: {
-    pluginDesc: "옵시디언 볼트 전반을 AI로 다루는 어시스턴트 사이드바입니다. 백엔드(AWS Bedrock, Google Gemini, OpenAI, Ollama)를 선택해 AI와 대화하고, 임베딩으로 볼트를 검색하고, 태그 자동 생성, To-Do 관리, MCP 도구 연동까지 — 모두 옵시디언 안에서 할 수 있습니다.",
+    pluginDesc: "볼트를 읽고 검색하고 쓰는 AI 어시스턴트 사이드바입니다. 아래 기능은 설정하기 전까지 모두 꺼져 있거나 비어 있습니다 — 승인 없이 노트를 건드리지 않습니다.",
+    featuresLabel: "들어 있는 기능",
+    features: [
+      {
+        name: "AI 백엔드 4종",
+        desc: "AWS Bedrock, Google Gemini, OpenAI(호환 엔드포인트 포함), 그리고 완전히 로컬로 도는 Ollama. 대화 모델과 임베딩 모델을 따로 고릅니다.",
+      },
+      {
+        name: "볼트 도구를 쓰는 대화",
+        desc: "어시스턴트가 직접 노트를 검색·읽기·생성·수정·이동·삭제합니다. 노트를 바꾸는 도구는 실행 전에 확인을 받습니다.",
+      },
+      {
+        name: "Graph RAG 검색",
+        desc: "노트를 청크로 쪼개 임베딩으로 색인하고, 위키링크를 따라 결과를 넓힌 뒤 키워드 적중과 합칩니다 — 이웃 노트를 거쳐야 닿는 노트도 결과에 올라옵니다.",
+      },
+      {
+        name: "LLM 위키 (Second Brain)",
+        desc: "한 주제를 노트 하나로 종합하고, 모순을 리포트하고, 결정 원장을 쌓고, 중복 후보를 표시하고, 고아 노트에 링크를 제안하고, 복습 큐를 띄우고, Inbox를 정리하고, 지식 공백 리포트를 씁니다. 모든 쓰기는 옵트인이며 자동 생성 영역만 교체합니다.",
+      },
+      {
+        name: "재사용 템플릿",
+        desc: "템플릿을 한 번 저장해 두고 계속 씁니다. 노트를 만들 때 {{변수}} 자리를 채우므로, 다른 날 쓴 글도 같은 양식을 유지합니다.",
+      },
+      {
+        name: "웹 페이지 요약",
+        desc: "URL을 넣으면 본문을 가져와 설정 언어로 번역·요약해 노트로 저장합니다.",
+      },
+      {
+        name: "태그 자동 생성",
+        desc: "열려 있는 노트를 분석해 태그 3~5개를 프론트매터에 추가합니다 — 옵시디언 그래프 뷰의 색상 그룹·필터가 쓰는 그 태그입니다.",
+      },
+      {
+        name: "To-Do와 회고",
+        desc: "날짜별 To-Do 노트를 만들고 미완료 항목을 이월하며, 오래된 파일을 아카이브·정리합니다. AI 회고를 오늘 노트에 덧붙일 수 있습니다.",
+      },
+      {
+        name: "P.A.R.A 정리",
+        desc: "P.A.R.A 폴더 4개를 만들고 기존 노트를 AI가 분류해 옮깁니다.",
+      },
+      {
+        name: "MCP 서버",
+        desc: "외부 MCP 서버를 연결해 볼트 도구와 같은 대화에서 함께 씁니다.",
+      },
+      {
+        name: "스킬",
+        desc: "내장 옵시디언 지식(Markdown, Bases, Canvas)과 직접 만든 스킬(AI가 초안을 써줍니다). 활성화한 스킬은 시스템 프롬프트에 주입됩니다.",
+      },
+      {
+        name: "인용 검증",
+        desc: "답변이 인용한 노트가 볼트에 실제로 없으면 경고합니다.",
+      },
+    ],
     readmeLabel: "📖 사용 가이드",
     readmeFile: "README-KR.md",
     sponsorLabel: "이 플러그인이 유용하다면 개발을 후원해 주세요.",
@@ -381,6 +485,7 @@ export const I18N = {
     mcpModalSave: "저장 및 연결",
     mcpModalCancel: "닫기",
     mcpModalJsonError: "❌ JSON 형식이 올바르지 않습니다.",
+    mcpModalConfigError: (message: string) => `❌ MCP 설정이 올바르지 않습니다: ${message}`,
     mcpModalSaving: "MCP 설정 저장됨. 서버 연결 중...",
     mcpModalConnected: (names: string) => `✅ MCP 서버 연결: ${names}`,
     mcpModalFailed: (names: string) => `❌ MCP 서버 실패: ${names}`,
@@ -421,7 +526,58 @@ export const I18N = {
     mcpJsonErrorAt: (line: number, col: number, msg: string) => `줄 ${line}, 열 ${col}에서 JSON 오류: ${msg}`,
   },
   ja: {
-    pluginDesc: "Obsidianボルト全体をAIで扱えるアシスタントサイドバーです。バックエンド（AWS Bedrock、Google Gemini、OpenAI、Ollama）を選んでAIと対話し、埋め込みによるボルト検索、タグ自動生成、To-Do管理、MCPツール連携まで — すべてObsidian内で行えます。",
+    pluginDesc: "ボルトを読み・検索し・書くAIアシスタントサイドバーです。以下の機能は設定するまですべてオフか空の状態で、承認なしにノートを触ることはありません。",
+    featuresLabel: "含まれる機能",
+    features: [
+      {
+        name: "4種のAIバックエンド",
+        desc: "AWS Bedrock、Google Gemini、OpenAI（互換エンドポイントを含む）、そして完全ローカルで動くOllama。対話モデルと埋め込みモデルは別々に選べます。",
+      },
+      {
+        name: "ボルトツールを使う対話",
+        desc: "アシスタント自身がノートを検索・読み取り・作成・編集・移動・削除します。ノートを変更するツールは実行前に確認を求めます。",
+      },
+      {
+        name: "Graph RAG検索",
+        desc: "ノートをチャンクに分けて埋め込みでインデックスし、Wikiリンクをたどって結果を広げ、キーワード一致と統合します — 隣接ノート経由でしか届かないノートも結果に上がります。",
+      },
+      {
+        name: "LLM Wiki (Second Brain)",
+        desc: "1つのトピックをノート1件に統合し、矛盾をレポートし、決定台帳を積み、重複候補を示し、孤立ノートにリンクを提案し、復習キューを出し、Inboxを整理し、知識ギャップレポートを書きます。すべての書き込みはオプトインで、自動生成領域だけを置き換えます。",
+      },
+      {
+        name: "再利用できるテンプレート",
+        desc: "テンプレートを一度保存して使い続けます。ノート作成時に{{変数}}の箇所を埋めるため、別の日に書いた文書も同じ様式を保ちます。",
+      },
+      {
+        name: "Webページ要約",
+        desc: "URLを入れると本文を取得し、設定言語に翻訳・要約してノートに保存します。",
+      },
+      {
+        name: "タグ自動生成",
+        desc: "開いているノートを分析してタグ3〜5個をフロントマターに追加します — Obsidianのグラフビューのカラーグループ・フィルタが使うタグです。",
+      },
+      {
+        name: "To-Doと振り返り",
+        desc: "日付別のTo-Doノートを作り未完了項目を繰り越し、古いファイルをアーカイブ・整理します。AIによる振り返りを本日のノートに追記できます。",
+      },
+      {
+        name: "P.A.R.A整理",
+        desc: "P.A.R.Aの4フォルダを作成し、既存ノートをAIが分類して移動します。",
+      },
+      {
+        name: "MCPサーバー",
+        desc: "外部のMCPサーバーを接続し、ボルトツールと同じ会話の中で一緒に使えます。",
+      },
+      {
+        name: "スキル",
+        desc: "内蔵のObsidian知識（Markdown、Bases、Canvas）と自作スキル（AIが下書きを書きます）。有効にしたスキルはシステムプロンプトに注入されます。",
+      },
+      {
+        name: "引用チェック",
+        desc: "回答が引用したノートがボルトに実際に無い場合に警告します。",
+      },
+    ],
     readmeLabel: "📖 ドキュメント",
     readmeFile: "README-JA.md",
     sponsorLabel: "このプラグインが役に立ったら、開発を支援してください。",
@@ -575,6 +731,7 @@ export const I18N = {
     mcpModalSave: "保存して接続",
     mcpModalCancel: "閉じる",
     mcpModalJsonError: "❌ JSON形式が正しくありません。",
+    mcpModalConfigError: (message: string) => `❌ MCP設定が正しくありません: ${message}`,
     mcpModalSaving: "MCP設定を保存しました。サーバーに接続中...",
     mcpModalConnected: (names: string) => `✅ MCP接続: ${names}`,
     mcpModalFailed: (names: string) => `❌ MCP失敗: ${names}`,
@@ -615,6 +772,23 @@ export const I18N = {
     mcpJsonErrorAt: (line: number, col: number, msg: string) => `行${line}, 列${col}のJSONエラー: ${msg}`,
   },
 } as const;
+
+/** 설정 상단 기능 목록의 한 항목. */
+export interface FeatureSummary {
+  name: string;
+  desc: string;
+}
+
+/**
+ * 설정 상단에 나열할 기능 목록. 해당 언어에 없으면 en으로 폴백한다.
+ *
+ * `I18N[lang].features`는 `as const` 때문에 언어별로 다른 튜플 타입이 되므로, 화면에서
+ * 쓸 수 있는 하나의 타입으로 좁혀 돌려준다.
+ */
+export function localizedFeatures(lang: Locale): readonly FeatureSummary[] {
+  const dict = (I18N[lang] ?? I18N.en) as { features?: readonly FeatureSummary[] };
+  return dict.features ?? I18N.en.features;
+}
 
 // 설정 탭
 export class GeminiSettingTab extends PluginSettingTab {
@@ -663,9 +837,18 @@ export class GeminiSettingTab extends PluginSettingTab {
     // 아래에 렌더하므로, 심사 기준이 헤딩에 플러그인 이름과 "Settings"를 넣는 것을
     // 금지한다(첫 섹션이 하나뿐이면 헤딩 자체가 불필요하다).
 
-    // 플러그인 설명 + README 링크 + 후원 배너 (하나의 박스)
+    // 플러그인 설명 + 기능 목록 + README 링크. 후원 배너는 설정 맨 아래에 둔다.
     const aboutBox = containerEl.createDiv({ cls: "ba-about-box" });
     aboutBox.createEl("p", { text: t.pluginDesc, cls: "ba-about-desc" });
+
+    // 기능 목록 — 무엇이 들어 있는지 한눈에 보이게 항목별 제목 + 한 줄 설명으로 나열한다.
+    aboutBox.createEl("p", { text: tk("featuresLabel"), cls: "ba-features-label" });
+    const featureList = aboutBox.createEl("ul", { cls: "ba-features" });
+    for (const feature of localizedFeatures(lang)) {
+      const item = featureList.createEl("li");
+      item.createEl("strong", { text: feature.name });
+      item.createSpan({ text: ` — ${feature.desc}` });
+    }
 
     // README 링크 (GitHub에서 열기)
     const readmeRow = aboutBox.createDiv({ cls: "ba-about-readme" });
@@ -688,21 +871,6 @@ export class GeminiSettingTab extends PluginSettingTab {
       } catch {
         window.open(`https://github.com/teinam/obsidian-agent-llms/blob/main/${t.readmeFile}`);
       }
-    });
-
-    const sponsorRow = aboutBox.createDiv({ cls: "ba-about-sponsor" });
-    sponsorRow.createSpan({ text: t.sponsorLabel });
-    const sponsorLink = sponsorRow.createEl("a", {
-      href: "https://buymeacoffee.com/teinam",
-    });
-    sponsorLink.setAttr("target", "_blank");
-    sponsorLink.createEl("img", {
-      attr: {
-        src: "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
-        alt: "Buy Me A Coffee",
-        height: "36",
-      },
-      cls: "ba-sponsor-img",
     });
 
     // 언어 선택
@@ -1561,8 +1729,10 @@ export class GeminiSettingTab extends PluginSettingTab {
     const bundledToggleable = SKILLS.filter((s) => !s.builtin);
     for (const skill of bundledToggleable) {
       new Setting(containerEl)
-        .setName(skill.name)
-        .setDesc(this.plugin.settings.language === "en" ? skill.descriptionEn : skill.description)
+        // ko 이외의 언어는 영어 설명을 쓴다. `=== "en"`으로 갈랐을 때는 ja 사용자에게
+        // 한국어 설명이 보였다 — 폴백은 en이어야 한다.
+        .setName(this.plugin.settings.language === "ko" ? skill.name : skill.nameEn ?? skill.name)
+        .setDesc(this.plugin.settings.language === "ko" ? skill.description : skill.descriptionEn)
         .addToggle((toggle) =>
           toggle
             .setValue(this.plugin.settings.enabledSkills.includes(skill.id))
@@ -1697,6 +1867,22 @@ export class GeminiSettingTab extends PluginSettingTab {
       t.todoTasksInfo,
       t.pluginInstalled
     );
+
+    // 후원 배너 — 설정 맨 아래. 상단은 무엇을 설정해야 하는지 알려주는 자리다.
+    const sponsorRow = containerEl.createDiv({ cls: "ba-about-sponsor" });
+    sponsorRow.createSpan({ text: t.sponsorLabel });
+    const sponsorLink = sponsorRow.createEl("a", {
+      href: "https://buymeacoffee.com/teinam",
+    });
+    sponsorLink.setAttr("target", "_blank");
+    sponsorLink.createEl("img", {
+      attr: {
+        src: "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png",
+        alt: "Buy Me A Coffee",
+        height: "36",
+      },
+      cls: "ba-sponsor-img",
+    });
   }
 
   /**
@@ -2234,9 +2420,13 @@ class McpConfigModal extends Modal {
     const t = I18N[this.plugin.settings.language] || I18N.en;
 
     try {
-      JSON.parse(configText);
-    } catch {
-      new Notice(t.mcpModalJsonError);
+      parseMcpConfig(configText, this.plugin.settings.language);
+    } catch (error) {
+      new Notice(
+        error instanceof SyntaxError
+          ? t.mcpModalJsonError
+          : t.mcpModalConfigError((error as Error).message)
+      );
       return;
     }
 
@@ -2244,10 +2434,15 @@ class McpConfigModal extends Modal {
     const formattedText = formatJson(configText);
     this.textArea.value = formattedText;
 
-    await this.plugin.saveMcpConfig(formattedText);
-    new Notice(t.mcpModalSaving);
-
-    const result = await this.plugin.loadMcpConfig();
+    let result: Awaited<ReturnType<GeminiAssistantPlugin["loadMcpConfig"]>>;
+    try {
+      await this.plugin.saveMcpConfig(formattedText);
+      new Notice(t.mcpModalSaving);
+      result = await this.plugin.loadMcpConfig();
+    } catch (error) {
+      new Notice(t.mcpModalConfigError((error as Error).message));
+      return;
+    }
     if (result.connected.length > 0) {
       new Notice(t.mcpModalConnected(result.connected.join(", ")));
     }

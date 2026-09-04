@@ -11,6 +11,11 @@ const ERROR_PREFIXES = [
   "도구 실행 오류:",
 ];
 
+/** 도구 실패 문자열을 한 가지 계약으로 만든다. */
+export function formatToolError(message: string): string {
+  return `도구 실행 오류: ${message}`;
+}
+
 /**
  * 도구 실행 결과가 에러인지 판별
  * @param result - 도구 실행 결과 문자열

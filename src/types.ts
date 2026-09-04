@@ -126,9 +126,12 @@ export function normalizeSecondBrainSettings(raw: unknown): SecondBrainSettings 
  */
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+/** UI 표시 언어. 모든 i18n 딕셔너리(I18N, VIEW_I18N, NOTICE_I18N)가 이 키를 갖는다. */
+export type Locale = "en" | "ko" | "ja";
+
 
 // 플러그인 설정 타입
-export interface GeminiAssistantSettings {  language: "en" | "ko" | "ja";
+export interface GeminiAssistantSettings {  language: Locale;
   // Gemini API Key
   geminiApiKey: string;
   chatModel: string;

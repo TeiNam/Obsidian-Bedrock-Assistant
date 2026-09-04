@@ -20,7 +20,12 @@ import { GeminiSettingTab } from "./settings-tab";
 import { McpManager } from "./mcp-client";
 import { DEFAULT_SETTINGS, filterStaleCredentials, normalizeSecondBrainSettings, type GeminiAssistantSettings, type IAiClient, type ChatMessage, type ChatSession } from "./types";
 import { BRANDING, updateBranding, getBranding } from "./branding";
-import { loadSessionsWithRecovery, saveSessionsWithBackup, type FileAdapter } from "./session-recovery";
+import {
+  createSerialWriter,
+  loadSessionsWithRecovery,
+  saveSessionsWithBackup,
+  type FileAdapter,
+} from "./session-recovery";
 import {
   decryptSettings,
   stripSensitiveFields,
@@ -96,12 +101,16 @@ import {
 } from "./second-brain/link-suggestions";
 import { upsertGeneratedBlock, getGeneratedBlock } from "./second-brain/sentinel-blocks";
 import { VIEW_I18N } from "./chat-view-i18n";
+import { noticeI18n } from "./notice-i18n";
 import { runReconcileDetailed, applyReconciliations } from "./second-brain/reconcile";
 import { buildDateStr } from "./planner-paths";
 import { ReviewQueueModal } from "./modals/review-queue-modal";
+import { KeyedTaskQueue } from "./keyed-task-queue";
 
 /** 파일 변경 → 인덱스 갱신 디바운스 지연(ms). 연속 편집 중 중복 임베딩을 막는다. */
 const INDEX_DEBOUNCE_MS = 2000;
+/** 서로 다른 파일의 증분 인덱싱 동시 실행 수. 같은 파일은 큐가 직렬화한다. */
+const INDEX_CONCURRENCY = 2;
 
 /**
  * Second Brain 자동 스케줄러의 주기 검사 간격(ms).
@@ -218,10 +227,15 @@ export default class GeminiAssistantPlugin extends Plugin {
   private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
   private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // 디바운스를 통과한 인덱싱 작업을 직렬 실행하는 체인(동시성 1).
-  private indexQueue: Promise<void> = Promise.resolve();
+  // 서로 다른 파일은 2개까지 병렬 처리하고, 같은 경로는 오래된 작업이 뒤늦게 덮지 않게 직렬화한다.
+  private indexQueue = new KeyedTaskQueue(INDEX_CONCURRENCY);
   // 접근 이력 저장 디바운스 타이머. 노트를 열 때마다 디스크에 쓰지 않기 위함이다.
   private accessLogSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  // 대화 히스토리 쓰기는 호출 순서를 보존한다. 늦게 끝난 과거 쓰기가 최신 상태를 덮지 못한다.
+  private writeChatHistory = createSerialWriter((data: string) =>
+    this.app.vault.adapter.write(CHAT_HISTORY_FILE, data)
+  );
+  private chatHistoryWritePending: Promise<void> = Promise.resolve();
   // 마지막으로 관측한 계정 스코프(백엔드·인증·리전). 변경 시 모델 캐시를 비운다.
   private lastAccountScope = "";
   // 마이그레이션 복사 건수 누적 (두 단계 분리에 따라 집계용)
@@ -262,6 +276,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       () => this.settings.templateFolder,
       () => this.settings.secondBrain,
       () => this.aiClient,
+      () => this.settings.language,
     );
 
     // Second Brain 스케줄러 초기화 (수동 명령 + onLayoutReady 자동 트리거)
@@ -352,24 +367,29 @@ export default class GeminiAssistantPlugin extends Plugin {
     this.statusBarItem = this.addStatusBarItem();
 
     // 커맨드 등록
+    // 명령 이름은 등록 시점에 한 번만 읽힌다(옵시디언이 팔레트를 캐시한다). 언어를 바꾼
+    // 뒤에는 앱을 다시 열어야 바뀐 이름이 보인다 — 설정 탭 레이블과 달리 재렌더가 없다.
+    const n = noticeI18n(this.settings.language);
+
     this.addCommand({
       id: "open-assistant",
-      name: "어시스턴트 열기",
+      name: n.cmdOpenAssistant,
       callback: () => this.activateView(),
     });
 
     this.addCommand({
       id: "index-vault",
-      name: "볼트 인덱싱",
+      name: n.cmdIndexVault,
       callback: async () => {
         // 상태바에 인덱싱 진행률 표시
-        this.statusBarItem.setText("인덱싱 중... 0%");
+        const t = noticeI18n(this.settings.language);
+        this.statusBarItem.setText(t.statusIndexing(0));
         await this.indexer.indexVault((current, total) => {
           const percent = Math.round((current / total) * 100);
-          this.statusBarItem.setText(`인덱싱 중... ${percent}%`);
+          this.statusBarItem.setText(t.statusIndexing(percent));
         });
         // 완료 표시 후 3초 뒤 텍스트 제거
-        this.statusBarItem.setText("인덱싱 완료 ✓");
+        this.statusBarItem.setText(t.statusIndexDone);
         setTimeout(() => {
           this.statusBarItem.setText("");
         }, 3000);
@@ -492,20 +512,21 @@ export default class GeminiAssistantPlugin extends Plugin {
    * 연속 편집 중 매 키 입력마다 임베딩을 호출하지 않도록 마지막 변경만 처리한다.
    */
   private scheduleIndex(file: TFile): void {
-    const existing = this.indexDebounceTimers.get(file.path);
+    const path = file.path;
+    const existing = this.indexDebounceTimers.get(path);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
-      this.indexDebounceTimers.delete(file.path);
-      // 직렬 큐에 넣는다. 다중 파일 변경(폴더 이동, 플러그인 일괄 생성)이 동시에
-      // 디바운스를 통과하면 파일 수만큼 임베딩 요청이 병렬로 나가 API 쓰로틀링을 맞는다.
-      // ponytail: 단일 체인으로 동시성 1 — 처리량이 문제되면 워커 풀로 올린다.
-      this.indexQueue = this.indexQueue
-        .then(() => this.indexer.indexFile(file))
+      this.indexDebounceTimers.delete(path);
+      void this.indexQueue
+        .add(path, async () => {
+          const current = this.app.vault.getAbstractFileByPath(path);
+          if (current instanceof TFile) await this.indexer.indexFile(current);
+        })
         .catch((error) => {
-          console.error(`인덱스 갱신 실패: ${file.path}`, error);
+          console.error(`인덱스 갱신 실패: ${path}`, error);
         });
     }, INDEX_DEBOUNCE_MS);
-    this.indexDebounceTimers.set(file.path, timer);
+    this.indexDebounceTimers.set(path, timer);
   }
 
   async onunload(): Promise<void> {
@@ -523,11 +544,12 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
 
     this.mcpManager?.disconnectAll();
+    await this.chatHistoryWritePending;
 
     // 진행 중인 인덱싱을 먼저 끝낸다. 기다리지 않고 저장하면 대기 중 변경분이
     // 반영되지 않은 인덱스가 디스크에 남고, 다음 로드는 그 저장본을 그대로 믿는다
     // (자동 전체 인덱싱이 없으므로 해당 변경은 사용자가 수동 재인덱싱할 때까지 누락된다).
-    await this.indexQueue.catch(() => {});
+    await this.indexQueue.onIdle();
     await this.saveIndex();
   }
 
@@ -579,15 +601,16 @@ export default class GeminiAssistantPlugin extends Plugin {
    * MAX_TRIAGE_NOTES건만 처리한다 — LLM 비용과 승인 화면의 판단 가능성을 함께 제한한다.
    */
   private async openInboxTriage(folder: string): Promise<void> {
+    const n = noticeI18n(this.settings.language);
     if (!this.settings.secondBrain.enabled) {
-      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      new Notice(n.sbDisabled);
       return;
     }
 
     const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
     const target = normalizePath(folder.trim());
     if (target === "") {
-      new Notice("정리할 폴더 경로가 필요합니다.");
+      new Notice(n.triageFolderRequired);
       return;
     }
 
@@ -791,7 +814,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       }).open();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      new Notice(`Inbox 검토 실패: ${reason}`, 10000);
+      new Notice(n.triageFailed(reason), 10000);
     }
   }
 
@@ -802,15 +825,16 @@ export default class GeminiAssistantPlugin extends Plugin {
    * "결정 없음"으로 보고하면 사용자가 문제를 놓친다.
    */
   private async openDecisionReview(topic: string): Promise<void> {
+    const n = noticeI18n(this.settings.language);
     if (!this.settings.secondBrain.enabled) {
-      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      new Notice(n.sbDisabled);
       return;
     }
 
     const t = VIEW_I18N[this.settings.language] || VIEW_I18N.en;
     const trimmed = topic.trim();
     if (trimmed === "") {
-      new Notice("결정을 찾을 주제가 필요합니다.");
+      new Notice(n.decisionTopicRequired);
       return;
     }
 
@@ -920,7 +944,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       }).open();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      new Notice(`결정 추출 실패: ${reason}`, 10000);
+      new Notice(n.decisionFailed(reason), 10000);
     }
   }
 
@@ -932,7 +956,7 @@ export default class GeminiAssistantPlugin extends Plugin {
    */
   private async openCanonicalize(): Promise<void> {
     if (!this.settings.secondBrain.enabled) {
-      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      new Notice(noticeI18n(this.settings.language).sbDisabled);
       return;
     }
 
@@ -1027,7 +1051,7 @@ export default class GeminiAssistantPlugin extends Plugin {
    */
   private async openLinkSuggestions(): Promise<void> {
     if (!this.settings.secondBrain.enabled) {
-      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      new Notice(noticeI18n(this.settings.language).sbDisabled);
       return;
     }
 
@@ -1111,8 +1135,9 @@ export default class GeminiAssistantPlugin extends Plugin {
    * 실패하면 리포트만 알리고 승인 화면을 띄우지 않는다 — 빈 목록을 보여줄 이유가 없다.
    */
   private async openReconcileReview(topic: string): Promise<void> {
+    const n = noticeI18n(this.settings.language);
     if (!this.settings.secondBrain.enabled) {
-      new Notice("Second Brain 기능이 비활성 상태입니다. 설정에서 활성화해 주세요.");
+      new Notice(n.sbDisabled);
       return;
     }
 
@@ -1121,7 +1146,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       outcome = await runReconcileDetailed(this.buildSecondBrainContext(), topic);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      new Notice(`모순 점검 실패: ${reason}`, 10000);
+      new Notice(n.reconcileFailed(reason), 10000);
       return;
     }
 
@@ -1204,20 +1229,21 @@ export default class GeminiAssistantPlugin extends Plugin {
       if (reindexDone) refreshAll();
     });
 
-    // 재색인을 **기존 직렬 큐**에 넣는다. 직접 실행하면 create/modify 이벤트로 예약된
-    // 디바운스 작업과 겹쳐 같은 파일을 두 번 임베딩하고(비용), 그 사이 사용자가 다시
-    // 편집하면 앞 작업이 나중에 끝나 낡은 내용으로 인덱스를 덮어쓴다.
+    // 재색인을 **경로 키 큐**에 넣는다. 직접 실행하면 create/modify 이벤트로 예약된
+    // 작업과 같은 파일에서 겹쳐 앞 작업이 나중에 끝나 낡은 내용으로 덮을 수 있다.
+    const reindexTasks: Promise<void>[] = [];
     for (const path of changedPaths) {
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) continue;
-      this.indexQueue = this.indexQueue
-        .then(() => this.indexer.indexFile(file))
+      reindexTasks.push(this.indexQueue
+        .add(path, async () => {
+          const current = this.app.vault.getAbstractFileByPath(path);
+          if (current instanceof TFile) await this.indexer.indexFile(current);
+        })
         .catch((error) => {
-          console.error(`인덱스 갱신 실패: ${file.path}`, error);
-        });
+          console.error(`인덱스 갱신 실패: ${path}`, error);
+        }));
     }
-    // 큐가 이 작업까지 끝낸 뒤에 수렴 갱신을 해야 커밋에 덮어써지지 않는다.
-    await this.indexQueue;
+    // 이 적용 작업들이 끝난 뒤에 수렴 갱신을 해야 커밋에 덮어써지지 않는다.
+    await Promise.all(reindexTasks);
     reindexDone = true;
 
     const changedSet = new Set(changedPaths);
@@ -1276,7 +1302,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       new Notice(result, 10000);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      new Notice(`Second Brain 도구 실행 실패 (${toolName}): ${reason}`, 10000);
+      new Notice(noticeI18n(this.settings.language).toolFailed(toolName, reason), 10000);
     }
   }
 
@@ -1287,27 +1313,32 @@ export default class GeminiAssistantPlugin extends Plugin {
    * 채팅과 동일한 핸들러를 호출한다. update_index와 스케줄러 실행은 입력이 없으므로 즉시 실행한다.
    */
   private registerSecondBrainCommands(): void {
+    // 명령 이름은 등록 시점에 확정된다(옵시디언이 팔레트를 캐시). 모달 레이블은 열 때마다
+    // 다시 읽어야 언어 변경이 즉시 반영되므로 콜백 안에서 noticeI18n을 다시 호출한다.
+    const n = noticeI18n(this.settings.language);
+
     // create_wiki_note — 위키 노트 생성 (제목 + 본문). 활성 노트 제목/선택 텍스트를 프리필.
     this.addCommand({
       id: "second-brain-create-wiki-note",
-      name: "위키 노트 생성",
+      name: n.cmdCreateWikiNote,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "위키 노트 생성",
-          submitLabel: "생성",
+          title: t.modalCreateWikiNote,
+          submitLabel: t.submitCreate,
           fields: [
             {
               key: "title",
-              label: "제목",
+              label: t.fieldTitle,
               type: "text",
-              placeholder: "노트 제목",
+              placeholder: t.fieldTitlePlaceholder,
               defaultValue: this.getActiveNoteTitle(),
             },
             {
               key: "body",
-              label: "본문",
+              label: t.fieldBody,
               type: "textarea",
-              placeholder: "노트 본문",
+              placeholder: t.fieldBodyPlaceholder,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -1323,24 +1354,25 @@ export default class GeminiAssistantPlugin extends Plugin {
     // update_index — 위키 인덱스 카탈로그 갱신 (입력 불필요, 즉시 실행).
     this.addCommand({
       id: "second-brain-update-index",
-      name: "위키 인덱스 갱신",
+      name: n.cmdUpdateIndex,
       callback: () => this.runSecondBrainTool("update_index", {}),
     });
 
     // synthesize_topic — 주제 종합. 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-synthesize",
-      name: "주제 종합 (synthesize)",
+      name: n.cmdSynthesize,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "주제 종합 (synthesize)",
-          submitLabel: "종합",
+          title: t.modalSynthesize,
+          submitLabel: t.submitSynthesize,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.fieldTopic,
               type: "text",
-              placeholder: "종합할 주제/태그",
+              placeholder: t.fieldTopicSynthesizePlaceholder,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -1353,17 +1385,18 @@ export default class GeminiAssistantPlugin extends Plugin {
     // reconcile_topic — 모순 점검(비파괴). 활성 노트 제목을 기본값으로.
     this.addCommand({
       id: "second-brain-reconcile",
-      name: "모순 점검 (reconcile)",
+      name: n.cmdReconcile,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "모순 점검 (reconcile)",
-          submitLabel: "점검",
+          title: t.modalReconcile,
+          submitLabel: t.submitReconcile,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.fieldTopic,
               type: "text",
-              placeholder: "모순을 점검할 주제",
+              placeholder: t.fieldTopicReconcilePlaceholder,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -1379,17 +1412,18 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 처음부터 별 함수로 분리돼 있었지만(Req 8.4) 승인 화면이 없어 도달할 수 없었다.
     this.addCommand({
       id: "second-brain-reconcile-review",
-      name: "모순 검토 및 반영 (reconcile → apply)",
+      name: n.cmdReconcileReview,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "모순 검토 및 반영",
-          submitLabel: "점검",
+          title: t.modalReconcileReview,
+          submitLabel: t.submitReconcile,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.fieldTopic,
               type: "text",
-              placeholder: "모순을 점검할 주제",
+              placeholder: t.fieldTopicReconcilePlaceholder,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -1401,17 +1435,18 @@ export default class GeminiAssistantPlugin extends Plugin {
     // challenge — 주장 반박. 에디터 선택 텍스트를 기본값으로.
     this.addCommand({
       id: "second-brain-challenge",
-      name: "주장 반박 (challenge)",
+      name: n.cmdChallenge,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "주장 반박 (challenge)",
-          submitLabel: "반박",
+          title: t.modalChallenge,
+          submitLabel: t.submitChallenge,
           fields: [
             {
               key: "claim",
-              label: "주장",
+              label: t.fieldClaim,
               type: "textarea",
-              placeholder: "검토(반박)할 주장",
+              placeholder: t.fieldClaimPlaceholder,
               defaultValue: this.getEditorSelection(),
             },
           ],
@@ -1424,14 +1459,15 @@ export default class GeminiAssistantPlugin extends Plugin {
     // connect — 두 주제 연결 (topicA, topicB).
     this.addCommand({
       id: "second-brain-connect",
-      name: "두 주제 연결 (connect)",
+      name: n.cmdConnect,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "두 주제 연결 (connect)",
-          submitLabel: "연결",
+          title: t.modalConnect,
+          submitLabel: t.submitConnect,
           fields: [
-            { key: "topicA", label: "주제 A", type: "text", placeholder: "첫 번째 주제" },
-            { key: "topicB", label: "주제 B", type: "text", placeholder: "두 번째 주제" },
+            { key: "topicA", label: t.fieldTopicA, type: "text", placeholder: t.fieldTopicAPlaceholder },
+            { key: "topicB", label: t.fieldTopicB, type: "text", placeholder: t.fieldTopicBPlaceholder },
           ],
           onSubmit: (values) =>
             this.runSecondBrainTool("connect", {
@@ -1445,15 +1481,16 @@ export default class GeminiAssistantPlugin extends Plugin {
     // emerge — 최근 N일 패턴 발견 (days, 기본 7).
     this.addCommand({
       id: "second-brain-emerge",
-      name: "최근 패턴 발견 (emerge)",
+      name: n.cmdEmerge,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "최근 패턴 발견 (emerge)",
-          submitLabel: "발견",
+          title: t.modalEmerge,
+          submitLabel: t.submitEmerge,
           fields: [
             {
               key: "days",
-              label: "최근 일수",
+              label: t.fieldDays,
               type: "number",
               placeholder: "7",
               defaultValue: "7",
@@ -1472,17 +1509,18 @@ export default class GeminiAssistantPlugin extends Plugin {
     // architect — 코드베이스 아키텍트. 경로 입력(미입력 시 볼트 전체).
     this.addCommand({
       id: "second-brain-architect",
-      name: "코드베이스 아키텍트 (architect)",
+      name: n.cmdArchitect,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "코드베이스 아키텍트 (architect)",
-          submitLabel: "분석",
+          title: t.modalArchitect,
+          submitLabel: t.submitArchitect,
           fields: [
             {
               key: "path",
-              label: "스캔 경로 (비우면 볼트 전체)",
+              label: t.fieldScanPath,
               type: "text",
-              placeholder: "예: src",
+              placeholder: t.fieldScanPathPlaceholder,
             },
           ],
           onSubmit: (values) => {
@@ -1499,10 +1537,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 스케줄러 파이프라인에도 같은 단계가 있지만, 주기를 기다리지 않고 즉시 보고 싶을 때 쓴다.
     this.addCommand({
       id: "second-brain-knowledge-gaps",
-      name: "지식 공백 리포트 갱신",
+      name: n.cmdKnowledgeGaps,
       callback: async () => {
+        const t = noticeI18n(this.settings.language);
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {
@@ -1518,11 +1557,11 @@ export default class GeminiAssistantPlugin extends Plugin {
           await writeGapReport(this.app, wikiFolder, buildGapReport(gaps));
           new Notice(
             gaps.length === 0
-              ? "구조적 공백이 발견되지 않았습니다."
-              : `지식 공백 ${gaps.length}건을 리포트에 기록했습니다: ${wikiFolder}/${GAP_REPORT_FILE}`
+              ? t.gapsNone
+              : t.gapsWritten(gaps.length, `${wikiFolder}/${GAP_REPORT_FILE}`)
           );
         } catch (error) {
-          new Notice(`지식 공백 리포트 실패: ${error instanceof Error ? error.message : String(error)}`);
+          new Notice(t.gapsFailed(error instanceof Error ? error.message : String(error)));
         }
       },
     });
@@ -1531,17 +1570,18 @@ export default class GeminiAssistantPlugin extends Plugin {
     // LLM 호출 0회. 점수는 인덱스 데이터 + 접근 이력으로만 계산한다.
     this.addCommand({
       id: "second-brain-inbox-triage",
-      name: "Inbox 검토 (제목·이동·태그 제안)",
+      name: n.cmdInboxTriage,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "Inbox 검토",
-          submitLabel: "검토",
+          title: t.modalInboxTriage,
+          submitLabel: t.submitTriage,
           fields: [
             {
               key: "folder",
-              label: "폴더",
+              label: t.fieldFolder,
               type: "text",
-              placeholder: "정리할 폴더 (예: Inbox)",
+              placeholder: t.fieldFolderPlaceholder,
               defaultValue: "Inbox",
             },
           ],
@@ -1552,17 +1592,18 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     this.addCommand({
       id: "second-brain-decisions",
-      name: "결정 추출 → 원장 (decisions)",
+      name: n.cmdDecisions,
       callback: () => {
+        const t = noticeI18n(this.settings.language);
         new SecondBrainInputModal(this.app, {
-          title: "결정 추출",
-          submitLabel: "추출",
+          title: t.modalDecisions,
+          submitLabel: t.submitExtract,
           fields: [
             {
               key: "topic",
-              label: "주제",
+              label: t.fieldTopic,
               type: "text",
-              placeholder: "결정을 찾을 주제",
+              placeholder: t.fieldTopicDecisionPlaceholder,
               defaultValue: this.getActiveNoteTitle(),
             },
           ],
@@ -1573,22 +1614,23 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     this.addCommand({
       id: "second-brain-canonicalize",
-      name: "중복 후보 검토 (정본·별칭 정리)",
+      name: n.cmdCanonicalize,
       callback: () => void this.openCanonicalize(),
     });
 
     this.addCommand({
       id: "second-brain-link-suggestions",
-      name: "링크 제안 (고아·스텁 노트 연결)",
+      name: n.cmdLinkSuggestions,
       callback: () => void this.openLinkSuggestions(),
     });
 
     this.addCommand({
       id: "second-brain-review-queue",
-      name: "복습 큐 (다시 볼 노트)",
+      name: n.cmdReviewQueue,
       callback: async () => {
+        const t = noticeI18n(this.settings.language);
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         const now = Date.now();
@@ -1602,7 +1644,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
 
         if (queue.length === 0) {
-          new Notice("지금 다시 볼 노트가 없습니다.");
+          new Notice(t.reviewQueueEmpty);
           return;
         }
 
@@ -1623,10 +1665,11 @@ export default class GeminiAssistantPlugin extends Plugin {
     // (자동 트리거와 달리 수동 실행은 schedulerEnabled와 무관하게 사용자 명시 요청으로 동작)
     this.addCommand({
       id: "second-brain-run-scheduler",
-      name: "Second Brain 정리 실행 (스케줄러)",
+      name: n.cmdRunScheduler,
       callback: async () => {
+        const t = noticeI18n(this.settings.language);
         if (!this.settings.secondBrain.enabled) {
-          new Notice("Second Brain 기능이 비활성화되어 있습니다. 설정에서 활성화한 뒤 다시 시도해 주세요.");
+          new Notice(t.sbDisabled);
           return;
         }
         try {
@@ -1637,21 +1680,19 @@ export default class GeminiAssistantPlugin extends Plugin {
             Date.now(),
           );
           if (!result.ran) {
-            new Notice("Second Brain 정리가 이미 진행 중입니다.");
+            new Notice(t.schedulerBusy);
           } else if (result.failed === 0) {
-            new Notice("Second Brain 정리(catalog·공백 리포트 갱신)를 실행했습니다.");
+            new Notice(t.schedulerDone);
           } else if (result.succeeded === 0) {
-            new Notice(
-              `Second Brain 정리 실패: 모든 단계가 실패했습니다 (${result.failedSteps.join(", ")}). 콘솔 로그를 확인해 주세요.`
-            );
+            new Notice(t.schedulerAllFailed(result.failedSteps.join(", ")));
           } else {
             new Notice(
-              `Second Brain 정리 일부 실패: ${result.succeeded}개 성공, ${result.failed}개 실패 (${result.failedSteps.join(", ")}).`
+              t.schedulerPartial(result.succeeded, result.failed, result.failedSteps.join(", "))
             );
           }
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          new Notice(`Second Brain 정리 실행 실패: ${reason}`);
+          new Notice(t.schedulerFailed(reason));
         }
       },
     });
@@ -1811,6 +1852,8 @@ export default class GeminiAssistantPlugin extends Plugin {
     // 임베딩 구성 시그니처를 주입한다. 인덱스 저장 시 함께 기록되고, 로드 시
     // 비교되어 임베딩 모델 변경(벡터 공간 변경)을 감지한다.
     this.indexer?.setEmbeddingSignature(embeddingSignature(this.settings));
+    // 인덱서는 설정 객체를 받지 않으므로 Notice 문구의 언어를 여기서 주입한다.
+    this.indexer?.setLocale(this.settings.language);
   }
 
   /** 백엔드 전환 시 기존 클라이언트를 폐기하고 새 클라이언트를 생성한다 */
@@ -2037,11 +2080,10 @@ export default class GeminiAssistantPlugin extends Plugin {
   async loadChatHistory(): Promise<ChatMessage[]> {
     if (!this.settings.persistChat) return [];
     try {
-      const file = this.app.vault.getAbstractFileByPath(CHAT_HISTORY_FILE);
-      if (file && file instanceof TFile) {
-        const data = await this.app.vault.read(file);
-        return JSON.parse(data) as ChatMessage[];
-      }
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(CHAT_HISTORY_FILE))) return [];
+      const parsed = JSON.parse(await adapter.read(CHAT_HISTORY_FILE));
+      return Array.isArray(parsed) ? parsed as ChatMessage[] : [];
     } catch {
       // 히스토리 파일 없거나 파싱 실패 시 빈 배열
     }
@@ -2050,22 +2092,11 @@ export default class GeminiAssistantPlugin extends Plugin {
 
   async saveChatHistory(messages: ChatMessage[]): Promise<void> {
     if (!this.settings.persistChat) return;
+    const data = JSON.stringify(messages);
+    const pending = this.writeChatHistory(data);
+    this.chatHistoryWritePending = pending.catch(() => {});
     try {
-      const data = JSON.stringify(messages);
-      const file = this.app.vault.getAbstractFileByPath(CHAT_HISTORY_FILE);
-      if (file && file instanceof TFile) {
-        await this.app.vault.modify(file, data);
-      } else {
-        try {
-          await this.app.vault.create(CHAT_HISTORY_FILE, data);
-        } catch {
-          // race condition: 다른 호출이 먼저 파일을 생성한 경우
-          const retry = this.app.vault.getAbstractFileByPath(CHAT_HISTORY_FILE);
-          if (retry && retry instanceof TFile) {
-            await this.app.vault.modify(retry, data);
-          }
-        }
-      }
+      await pending;
     } catch (error) {
       console.error("대화 히스토리 저장 실패:", error);
     }
@@ -2164,9 +2195,9 @@ export default class GeminiAssistantPlugin extends Plugin {
       const result = await loadSessionsWithRecovery(adapter, CHAT_SESSIONS_FILE, CHAT_SESSIONS_BACKUP_FILE);
 
       if (result.recovered) {
-        new Notice("세션 파일이 손상되어 백업에서 복구했습니다.");
+        new Notice(noticeI18n(this.settings.language).sessionRecovered);
       } else if (result.error) {
-        new Notice("세션 파일 복구에 실패했습니다. 새로운 세션으로 시작합니다.");
+        new Notice(noticeI18n(this.settings.language).sessionRecoverFailed);
       }
 
       return result.sessions;
@@ -2243,10 +2274,10 @@ export default class GeminiAssistantPlugin extends Plugin {
     await this.saveSessions([]);
     // 현재 히스토리 파일도 삭제
     try {
-      const file = this.app.vault.getAbstractFileByPath(CHAT_HISTORY_FILE);
-      if (file && file instanceof TFile) {
-        await this.app.vault.modify(file, "[]");
-      }
+      // 파일 존재 확인보다 먼저 예약된 저장이 늦게 끝날 수 있으므로 항상 마지막 쓰기로 넣는다.
+      const pending = this.writeChatHistory("[]");
+      this.chatHistoryWritePending = pending.catch(() => {});
+      await pending;
     } catch { /* 무시 */ }
   }
 
@@ -2263,7 +2294,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       const adapter = this.app.vault.adapter;
       if (await adapter.exists(configPath)) {
         const data = await adapter.read(configPath);
-        return await this.mcpManager.loadConfig(data);
+        return await this.mcpManager.loadConfig(data, this.settings.language);
       }
     } catch (error) {
       console.error("MCP 설정 로드 실패:", error);
@@ -2279,6 +2310,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       await this.app.vault.adapter.write(configPath, configJson);
     } catch (error) {
       console.error("MCP 설정 저장 실패:", error);
+      throw error;
     }
   }
 

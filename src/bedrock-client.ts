@@ -27,6 +27,7 @@ import {
   supportsPromptCaching,
 } from "./provider-utils";
 import { buildSystemPromptSegments } from "./system-prompt";
+import { noticeI18n } from "./notice-i18n";
 
 /** 임베딩 입력 최대 글자 수 (Titan v2 8192 토큰 기준의 보수적 상한). */
 const EMBEDDING_MAX_CHARS = 20000;
@@ -139,7 +140,7 @@ export function buildBedrockClientConfig(
   } else {
     config.credentials = () =>
       Promise.reject(
-        new Error("Bedrock API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요")
+        new Error(noticeI18n(settings.language).errNoApiKey("Bedrock"))
       );
     // 값이 비어도 스킴을 고정한다 — authSchemePreference 주석 참조.
     config.authSchemePreference = [SIGV4_AUTH_SCHEME];
@@ -510,7 +511,7 @@ export class BedrockClient implements IAiClient {
     const body = JSON.parse(new TextDecoder().decode(response.body));
     const embedding = extractEmbedding(modelId, body);
     if (embedding === null) {
-      throw new Error(`임베딩 응답을 해석할 수 없습니다 (model=${modelId})`);
+      throw new Error(noticeI18n(this.settings.language).errEmbeddingUnparsable("Bedrock", modelId));
     }
     return embedding;
   }
@@ -542,6 +543,6 @@ export class BedrockClient implements IAiClient {
         }
       }
     }
-    throw new Error("converseLight 응답에 텍스트가 없습니다");
+    throw new Error(noticeI18n(this.settings.language).errNoResponseText("Bedrock"));
   }
 }

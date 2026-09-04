@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isToolError, updateFailureCount } from "./tool-failure-tracker";
+import { formatToolError, isToolError, updateFailureCount } from "./tool-failure-tracker";
 
 describe("isToolError", () => {
   it("영어 에러 접두사를 감지한다", () => {
@@ -28,6 +28,10 @@ describe("isToolError", () => {
   it("사용자 거부 메시지는 에러가 아니다", () => {
     expect(isToolError("Tool execution denied by user.")).toBe(false);
     expect(isToolError("사용자가 도구 실행을 거부했습니다.")).toBe(false);
+  });
+
+  it("공통 포맷터 결과는 실패로 판별한다", () => {
+    expect(isToolError(formatToolError("파일을 찾을 수 없습니다"))).toBe(true);
   });
 });
 

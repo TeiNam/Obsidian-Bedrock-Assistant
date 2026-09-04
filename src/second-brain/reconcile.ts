@@ -421,27 +421,30 @@ function parseReconcileBlock(block: string | null): string[] {
  * @param now YYYY-MM-DD 형식의 갱신 시점
  */
 function updateLearnedAtMinimal(content: string, now: string): string {
-  if (content.startsWith("---\n")) {
-    const afterOpen = content.slice(4); // 여는 "---\n" 제거
-    const closeIdx = afterOpen.indexOf("\n---");
-    if (closeIdx !== -1) {
-      const frontmatter = afterOpen.slice(0, closeIdx);
-      const rest = afterOpen.slice(closeIdx); // "\n---..." (닫는 구분자 이후 본문 포함)
-      const lines = frontmatter.split("\n");
-      let found = false;
-      const newLines = lines.map((line) => {
-        if (/^learned_at:\s?/.test(line)) {
-          found = true;
-          return `learned_at: ${now}`;
-        }
-        return line;
-      });
-      if (!found) newLines.push(`learned_at: ${now}`);
-      return `---\n${newLines.join("\n")}${rest}`;
-    }
+  // 닫는 구분자는 줄 전체가 `---`인 경우만 인정한다. CRLF도 원래 줄바꿈을 보존한다.
+  const match = /^---(\r?\n)([\s\S]*?)^---(?=\r?\n|$)/m.exec(content);
+  if (match?.index === 0) {
+    const newline = match[1];
+    const rawFrontmatter = match[2].endsWith(newline)
+      ? match[2].slice(0, -newline.length)
+      : match[2];
+    const lines = rawFrontmatter === "" ? [] : rawFrontmatter.split(newline);
+    let found = false;
+    const newLines = lines.map((line) => {
+      if (/^learned_at:\s?/.test(line)) {
+        found = true;
+        return `learned_at: ${now}`;
+      }
+      return line;
+    });
+    if (!found) newLines.push(`learned_at: ${now}`);
+    const updatedFrontmatter = `---${newline}${newLines.join(newline)}${newline}---`;
+    return updatedFrontmatter + content.slice(match[0].length);
   }
+
   // 프론트매터 부재/손상 → 최소 프론트매터를 앞에 추가(기존 내용 보존)
-  return `---\nlearned_at: ${now}\n---\n${content}`;
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  return `---${newline}learned_at: ${now}${newline}---${newline}${content}`;
 }
 
 /**

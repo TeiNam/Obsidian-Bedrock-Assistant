@@ -197,6 +197,27 @@ describe("인덱싱 도중 삭제: 삭제된 노트가 부활하지 않는다", 
   });
 });
 
+describe("인덱싱 도중 이름 변경", () => {
+  it("이전 경로 작업은 새 경로에 결과를 덮어쓰지 않는다", async () => {
+    const file = makeTFile("old.md");
+    const contents = new Map([
+      ["old.md", "# 이전\n본문"],
+      ["new.md", "# 새 경로\n본문"],
+    ]);
+    const client = {
+      getEmbedding: vi.fn(async () => {
+        file.path = "new.md";
+        return [0.1, 0.2, 0.3];
+      }),
+    } as unknown as ConstructorParameters<typeof VaultIndexer>[1];
+    const indexer = new VaultIndexer(makeApp([file], contents), client);
+
+    await indexer.indexFile(file);
+
+    expect(indexer.size).toBe(0);
+  });
+});
+
 // ============================================
 // 그래프 메타데이터만 갱신
 // ============================================

@@ -13,6 +13,12 @@ vi.mock("obsidian", () => ({
 
 // 모킹 후 구현체 import
 import { OllamaClient } from "./ollama-client";
+import { NOTICE_I18N } from "./notice-i18n";
+
+/** 정규식 메타문자를 이스케이프한다. i18n 문구를 부분 일치로 검증하기 위해 쓴다. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // ============================================
 // 테스트 헬퍼
@@ -183,7 +189,7 @@ describe("OllamaClient", () => {
 
 			const client = new OllamaClient(makeSettings());
 			await expect(client.converse([], [])).rejects.toThrow(
-				/JSON 파싱 실패/
+				new RegExp(escapeRegExp(NOTICE_I18N.en.errStreamParseFailed("Ollama", "")))
 			);
 		});
 
@@ -210,7 +216,7 @@ describe("OllamaClient", () => {
 
 			const client = new OllamaClient(makeSettings());
 			await expect(client.converse([], [])).rejects.toThrow(
-				/서버에 접속할 수 없습니다/
+				new RegExp(escapeRegExp(NOTICE_I18N.en.errServerUnreachable("Ollama", "http://localhost:11434")))
 			);
 		});
 
@@ -294,7 +300,7 @@ describe("OllamaClient", () => {
 		it("빈/공백 입력은 요청 없이 오류를 던진다", async () => {
 			const client = new OllamaClient(makeSettings());
 			await expect(client.getEmbedding("   ")).rejects.toThrow(
-				/입력 텍스트가 비어 있습니다/
+				NOTICE_I18N.en.errEmptyEmbeddingInput
 			);
 			expect(requestUrlMock).not.toHaveBeenCalled();
 		});
@@ -304,7 +310,7 @@ describe("OllamaClient", () => {
 				makeSettings({ ollamaEmbeddingModel: "" })
 			);
 			await expect(client.getEmbedding("hello")).rejects.toThrow(
-				/모델 ID가 설정되지 않았습니다/
+				NOTICE_I18N.en.errNoEmbeddingModel("Ollama")
 			);
 			expect(requestUrlMock).not.toHaveBeenCalled();
 		});
@@ -314,7 +320,7 @@ describe("OllamaClient", () => {
 
 			const client = new OllamaClient(makeSettings());
 			await expect(client.getEmbedding("hello")).rejects.toThrow(
-				/임베딩 요청 실패 \(HTTP 500\)/
+				NOTICE_I18N.en.errHttpStatus("Ollama", NOTICE_I18N.en.whatEmbedding, 500)
 			);
 		});
 
@@ -323,7 +329,7 @@ describe("OllamaClient", () => {
 
 			const client = new OllamaClient(makeSettings());
 			await expect(client.getEmbedding("hello")).rejects.toThrow(
-				/벡터가 없습니다/
+				NOTICE_I18N.en.errNoEmbeddingVector("Ollama")
 			);
 		});
 	});
@@ -476,7 +482,7 @@ describe("OllamaClient", () => {
 
 			const client = new OllamaClient(makeSettings());
 			await expect(client.converseLight("q", "s")).rejects.toThrow(
-				/텍스트가 없습니다/
+				NOTICE_I18N.en.errNoResponseText("Ollama")
 			);
 		});
 	});

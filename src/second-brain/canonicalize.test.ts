@@ -68,6 +68,29 @@ describe("buildTitleBuckets", () => {
     expect(buckets.get("token:회의록")).toHaveLength(2);
   });
 
+  it("numeronym과 머리글자 약어를 같은 후보 버킷에 묶는다", () => {
+    const buckets = buildTitleBuckets([
+      entry("a.md", "Kubernetes", SAME),
+      entry("b.md", "K8s", SAME),
+      entry("c.md", "Machine Learning", SAME),
+      entry("d.md", "ML", SAME),
+    ]);
+
+    expect(buckets.get("abbr:k8s")).toEqual(["a.md", "b.md"]);
+    expect(buckets.get("abbr:ml")).toEqual(["c.md", "d.md"]);
+  });
+
+  it("프론트매터 별칭도 후보 이름으로 사용한다", () => {
+    const buckets = buildTitleBuckets([
+      entry("a.md", "컨테이너 오케스트레이션", SAME, {
+        frontmatter: { aliases: ["Kubernetes"] },
+      }),
+      entry("b.md", "K8s", SAME),
+    ]);
+
+    expect(buckets.get("abbr:k8s")).toEqual(["a.md", "b.md"]);
+  });
+
   it("혼자인 버킷은 내보내지 않는다", () => {
     const buckets = buildTitleBuckets([entry("a.md", "유일한 제목", SAME)]);
     expect(buckets.size).toBe(0);
@@ -94,6 +117,16 @@ describe("findDuplicateClusters", () => {
     expect(clusters[0].canonical.path).toBe("A/Kubernetes.md");
     expect(clusters[0].duplicates.map((d) => d.path)).toEqual(["B/Kubernetes.md"]);
     expect(clusters[0].reason).toBe("same-title");
+  });
+
+  it("Kubernetes와 K8s처럼 약어인 제목도 임베딩으로 확증해 군집화한다", () => {
+    const clusters = findDuplicateClusters([
+      entry("Kubernetes.md", "Kubernetes", SAME),
+      entry("K8s.md", "K8s", SAME),
+    ]);
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].reason).toBe("similar-title");
   });
 
   it("제목만 비슷하고 내용이 다르면 군집으로 내지 않는다", () => {

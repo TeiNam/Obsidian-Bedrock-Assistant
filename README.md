@@ -14,7 +14,7 @@
 
 An AI assistant sidebar plugin for Obsidian with multi-provider backend support — AWS Bedrock, Google Gemini, OpenAI, and Ollama.
 
-> **Note on command names:** the command palette labels shipped by this plugin are currently Korean only. This document quotes them verbatim so you can find them in the palette.
+> **Note on command names:** command palette entries, notices, and the status bar follow the UI language you pick in settings (English, 한국어, 日本語). Obsidian caches the palette at load time, so restart the app after switching languages to see the new names.
 
 ## Features
 
@@ -42,7 +42,7 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 - **Web Clipper** — Fetch, translate, and summarize web pages as markdown notes
 - **MCP Server Integration** — Model Context Protocol servers (uvx, Docker)
 - **File Management** — Create, edit, move, and delete notes through AI
-- **Multilingual UI** — English, 한국어, 日本語
+- **Multilingual UI** — English, 한국어, 日本語. Settings, sidebar, command palette, notices, and the status bar all follow your choice
 - **File Attachments** — Drag-and-drop, clipboard, file search. Images work on all four backends; PDFs on Bedrock and Gemini; Office documents on Bedrock. Unsupported combinations are refused with the list of backends that can handle the format, rather than dropped silently
 - **Chat Session History** — Save and restore past conversations
 - **Obsidian Skills** — Six built-in knowledge modules: `obsidian-markdown`, `obsidian-bases`, `json-canvas`, `korean-writing`, `business-english-writing`, `second-brain`
@@ -119,11 +119,11 @@ Required IAM permissions:
 
 ### 3. Open the Sidebar
 
-Click the ribbon icon, or run the command **어시스턴트 열기** ("Open Assistant") from the command palette.
+Click the ribbon icon, or run the command **Open assistant** ("Open Assistant") from the command palette.
 
 ### 4. Index Your Vault (Optional)
 
-Click 🔍 in the chat header to index notes for semantic search, or run **볼트 인덱싱**. Indexing is required for Graph RAG search and for the Second Brain tools that search the vault. `emerge` needs the index too, because it enumerates index entries. `architect` and `update_index` read the vault file list directly and work without an index.
+Click 🔍 in the chat header to index notes for semantic search, or run **Index vault**. Indexing is required for Graph RAG search and for the Second Brain tools that search the vault. `emerge` needs the index too, because it enumerates index entries. `architect` and `update_index` read the vault file list directly and work without an index.
 
 ## Usage
 
@@ -147,7 +147,7 @@ Allowed values depend on the selected provider and model (for example, Anthropic
 
 Notes are split into chunks and embedded, then a search walks outlinks and backlinks
 from the best matches to pull in related neighbours. Start indexing from the search icon
-in the sidebar header, or the `볼트 인덱싱` command. Edited files are re-indexed automatically.
+in the sidebar header, or the `Index vault` command. Edited files are re-indexed automatically.
 
 Details: [Graph RAG & Second Brain](docs/second-brain-en.md)
 
