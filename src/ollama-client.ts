@@ -46,6 +46,29 @@ const NONSTREAM_TIMEOUT_MS = 60000;
 /** converseLight 기본 maxTokens - Req 8.3 */
 const DEFAULT_LIGHT_MAX_TOKENS = 1024;
 
+
+/**
+ * Ollama REST 응답 중 이 클라이언트가 읽는 필드만 선언한다.
+ *
+ * `resp.json` 은 `any` 라 그대로 쓰면 타입 검사가 통째로 꺼진다. 선언은 낙관적이고
+ * 실제 방어는 각 사용처의 런타임 검사(Array.isArray, typeof)가 담당한다.
+ */
+interface OllamaEmbedResponse {
+	embedding?: unknown[];
+}
+
+interface OllamaTagsResponse {
+	models?: unknown[];
+}
+
+interface OllamaShowResponse {
+	capabilities?: unknown[];
+}
+
+interface OllamaChatResponse {
+	message?: { content?: unknown };
+}
+
 export class OllamaClient implements IAiClient {
 	private settings: GeminiAssistantSettings;
 
@@ -87,13 +110,13 @@ export class OllamaClient implements IAiClient {
 		timeoutMs: number,
 		timeoutMessage: string
 	): Promise<T> {
-		let timer: ReturnType<typeof setTimeout>;
+		let timer: number;
 		const timeout = new Promise<never>((_, reject) => {
-			timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+			timer = window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
 		});
 		return Promise.race([promise, timeout]).finally(() =>
-			clearTimeout(timer)
-		) as Promise<T>;
+			window.clearTimeout(timer)
+		);
 	}
 
 	/**
@@ -147,7 +170,7 @@ export class OllamaClient implements IAiClient {
 
 		// 연결 타임아웃(10초) + 사용자 signal 결합용 컨트롤러
 		const controller = new AbortController();
-		const connectTimer = setTimeout(
+		const connectTimer = window.setTimeout(
 			() => controller.abort(),
 			CONNECT_TIMEOUT_MS
 		);
@@ -167,8 +190,8 @@ export class OllamaClient implements IAiClient {
 				body: JSON.stringify(body),
 				signal: controller.signal,
 			});
-		} catch (e) {
-			clearTimeout(connectTimer);
+		} catch {
+			window.clearTimeout(connectTimer);
 			if (abortSignal) abortSignal.removeEventListener("abort", onUserAbort);
 			// 사용자 중단: 예외 미전파, 빈 결과 반환 - Req 9.1
 			if (abortSignal?.aborted) {
@@ -180,7 +203,7 @@ export class OllamaClient implements IAiClient {
 			);
 		}
 		// 응답 수립 → 연결 타임아웃 해제(이후 스트리밍은 사용자 signal로만 제어)
-		clearTimeout(connectTimer);
+		window.clearTimeout(connectTimer);
 
 		if (!response.ok) {
 			if (abortSignal) abortSignal.removeEventListener("abort", onUserAbort);
@@ -209,7 +232,7 @@ export class OllamaClient implements IAiClient {
 			if (!trimmed) return;
 			let chunk: Record<string, unknown>;
 			try {
-				chunk = JSON.parse(trimmed);
+				chunk = JSON.parse(trimmed) as Record<string, unknown>;
 			} catch (e) {
 				throw new Error(
 					this.t.errStreamParseFailed("Ollama", e instanceof Error ? e.message : String(e))
@@ -333,7 +356,7 @@ export class OllamaClient implements IAiClient {
 			throw new Error(this.httpError(this.t.whatEmbedding, resp.status));
 		}
 
-		const data = resp.json;
+		const data = resp.json as OllamaEmbedResponse;
 		const embedding = data?.embedding;
 		if (!Array.isArray(embedding) || embedding.length < 1) {
 			throw new Error(noticeI18n(this.settings.language).errNoEmbeddingVector("Ollama"));
@@ -380,10 +403,8 @@ export class OllamaClient implements IAiClient {
 		if (tagsResp.status < 200 || tagsResp.status >= 300) {
 			throw new Error(this.httpError(this.t.whatModelList, tagsResp.status));
 		}
-		const data = tagsResp.json;
-		const rawModels: unknown[] = Array.isArray(data?.models)
-			? data.models
-			: [];
+		const data = tagsResp.json as OllamaTagsResponse;
+		const rawModels: unknown[] = Array.isArray(data?.models) ? data.models : [];
 
 		const installed: ModelInfo[] = rawModels
 			.map((raw) => {
@@ -421,7 +442,7 @@ export class OllamaClient implements IAiClient {
 					throw: false,
 				});
 				if (showResp.status >= 200 && showResp.status < 300) {
-					const caps = showResp.json?.capabilities;
+					const caps = (showResp.json as OllamaShowResponse | undefined)?.capabilities;
 					if (Array.isArray(caps)) {
 						anyProbeSucceeded = true;
 						if (caps.includes("embedding")) {
@@ -487,7 +508,7 @@ export class OllamaClient implements IAiClient {
 			throw new Error(this.httpError(this.t.whatRequest, resp.status));
 		}
 
-		const data = resp.json;
+		const data = resp.json as OllamaChatResponse;
 		const content = data?.message?.content;
 		if (typeof content !== "string" || content === "") {
 			// 텍스트 부재 - Req 8.5

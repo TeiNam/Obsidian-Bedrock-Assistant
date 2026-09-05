@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { createTodoNote, archiveOldTodos } from "./todo-manager";
 import { buildTodoDocPath } from "./planner-paths";
 
@@ -40,12 +40,17 @@ function makeFile(path: string, content = ""): any {
 }
 
 /**
- * 폴더 엔트리(plain object)를 생성한다.
- * 구현은 `!(child instanceof TFile)`로 폴더를 판단하므로 절대 TFile 인스턴스가 아니어야 한다.
+ * 폴더 엔트리를 생성한다.
+ *
+ * 실제 볼트가 돌려주는 것과 같이 TFolder 인스턴스여야 한다 — 구현은 `instanceof TFolder`로
+ * 폴더를 판별하고, 그 안의 파일은 `child instanceof TFile`로 걸러낸다.
  */
 function makeFolder(path: string, children: any[] = []): any {
-  const name = path.split("/").pop() ?? path;
-  return { path, name, children };
+  const folder: any = new TFolder();
+  folder.path = path;
+  folder.name = path.split("/").pop() ?? path;
+  folder.children = children;
+  return folder;
 }
 
 // ── 가짜 Vault / App / Plugin / t ─────────────────────

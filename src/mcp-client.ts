@@ -6,6 +6,7 @@ import { BRANDING } from "./branding";
 import { formatToolError } from "./tool-failure-tracker";
 import { noticeI18n } from "./notice-i18n";
 import { toolI18n } from "./tool-result-i18n";
+import { getErrorMessage } from "./error-utils";
 import type { Locale } from "./types";
 
 // PATH에서 실행 파일의 절대 경로를 찾는 유틸리티 (GUI 앱에서 which 대체)
@@ -99,7 +100,8 @@ interface McpToolDef {
 
 /** 텍스트 외 이미지·리소스 블록도 버리지 않고 JSON으로 보존한다. */
 export function formatMcpToolResult(result: unknown): string {
-  if (!isRecord(result)) return JSON.stringify(result) ?? String(result ?? "");
+  // JSON.stringify 는 undefined·함수·심볼에서 undefined 를 돌려주므로 빈 문자열로 떨어뜨린다.
+  if (!isRecord(result)) return JSON.stringify(result) ?? "";
 
   const parts: string[] = [];
   if (Array.isArray(result.content)) {
@@ -129,7 +131,7 @@ export function encodeMcpStdioMessage(message: unknown): string {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: number;
 }
 
 // 단일 MCP 서버 연결
@@ -152,7 +154,7 @@ class McpServerConnection {
   private static MAX_RECONNECT = 3;
   private static RECONNECT_DELAY = 5000; // 5초
   private intentionalDisconnect = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: number | null = null;
 
   // 재연결 성공 시 호출되는 콜백 (McpManager에서 도구 목록 갱신용)
   onReconnect: (() => void) | null = null;
@@ -234,7 +236,7 @@ class McpServerConnection {
     this.process.on("exit", (code) => {
       this._connected = false;
       for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
+        window.clearTimeout(p.timer);
         p.reject(new Error(this.t.mcpServerExited(code)));
       }
       this.pending.clear();
@@ -242,7 +244,7 @@ class McpServerConnection {
       // 비정상 종료 시 자동 재연결 시도
       if (!this.intentionalDisconnect && code !== 0 && this.reconnectAttempts < McpServerConnection.MAX_RECONNECT) {
         this.reconnectAttempts++;
-        this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null;
           if (this.intentionalDisconnect) return;
           this.connect().then(() => {
@@ -328,7 +330,7 @@ class McpServerConnection {
 
       const id = this.nextId++;
       const request: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
           reject(new Error(this.t.mcpRequestTimeout(method)));
@@ -339,9 +341,9 @@ class McpServerConnection {
       try {
         this.process.stdin.write(encodeMcpStdioMessage(request));
       } catch (error) {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         this.pending.delete(id);
-        reject(error as Error);
+        reject(error instanceof Error ? error : new Error(getErrorMessage(error)));
       }
     });
   }
@@ -401,7 +403,7 @@ class McpServerConnection {
         if (msg.id !== undefined && this.pending.has(msg.id)) {
           const p = this.pending.get(msg.id)!;
           this.pending.delete(msg.id);
-          clearTimeout(p.timer);
+          window.clearTimeout(p.timer);
           if (msg.error) {
             p.reject(new Error(this.t.mcpError(msg.error.message)));
           } else {
@@ -419,7 +421,7 @@ class McpServerConnection {
   disconnect(): void {
     this.intentionalDisconnect = true; // 의도적 종료 표시
     if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+      window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this._connected = false;
@@ -432,13 +434,13 @@ class McpServerConnection {
       } catch { /* 이미 종료된 경우 */ }
       // SIGTERM으로 안 죽으면 강제 종료
       const proc = this.process;
-      setTimeout(() => {
+      window.setTimeout(() => {
         try { if (!proc.killed) proc.kill("SIGKILL"); } catch { /* 무시 */ }
       }, 3000);
       this.process = null;
     }
     for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
+      window.clearTimeout(p.timer);
       p.reject(new Error(this.t.mcpConnectionClosed));
     }
     this.pending.clear();

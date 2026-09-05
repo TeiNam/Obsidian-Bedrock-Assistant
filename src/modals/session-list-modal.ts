@@ -7,6 +7,7 @@ import type { ChatSession } from "../types";
 import type { ViewLang } from "../chat-view-i18n";
 import { filterSessions, type HighlightSegment } from "../session-search";
 import { harvestSession } from "../conversation-harvest";
+import { voidAsync } from "../async-utils";
 
 /**
  * 지난 대화 세션 목록을 표시하고 선택/삭제할 수 있는 모달
@@ -112,15 +113,15 @@ export class SessionListModal extends Modal {
         attr: { "aria-label": this.t.harvestSession },
       });
       setIcon(harvestBtn, "sprout");
-      harvestBtn.addEventListener("click", async (e) => {
+      harvestBtn.addEventListener("click", voidAsync(async (e: MouseEvent) => {
         e.stopPropagation();
         await this.harvest(session, harvestBtn);
-      });
+      }));
 
       // 삭제 버튼
       const delBtn = row.createDiv({ cls: "ba-session-delete", attr: { "aria-label": this.t.deleteSession } });
       setIcon(delBtn, "trash-2");
-      delBtn.addEventListener("click", async (e) => {
+      delBtn.addEventListener("click", voidAsync(async (e: MouseEvent) => {
         e.stopPropagation();
         this.sessions = this.sessions.filter((s) => s.id !== session.id);
         await this.plugin.saveSessions(this.sessions);
@@ -129,7 +130,7 @@ export class SessionListModal extends Modal {
           this.listEl?.empty();
           this.listEl?.createEl("p", { text: this.t.noSessions, cls: "setting-item-description" });
         }
-      });
+      }));
     }
   }
 

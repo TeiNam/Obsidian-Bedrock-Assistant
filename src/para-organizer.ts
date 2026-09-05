@@ -1,8 +1,9 @@
 // P.A.R.A 환경 설정 — 볼트를 P.A.R.A 구조로 정리하는 모듈
 
-import { TFile, TFolder, Notice } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
+import { getErrorMessage } from "./error-utils";
 
 /** P.A.R.A 폴더 정의 */
 const PARA_FOLDERS = [
@@ -74,14 +75,13 @@ async function ensureParaFolders(app: App): Promise<string[]> {
 /**
  * P.A.R.A 폴더 내부 또는 시스템 폴더에 속한 파일인지 확인
  */
-function shouldSkip(path: string, pluginConfigDir: string): boolean {
+function shouldSkip(path: string, configDir: string): boolean {
   // P.A.R.A 폴더 내부 파일은 이미 분류됨
   for (const folder of PARA_FOLDERS) {
     if (path.startsWith(folder + "/")) return true;
   }
-  // Obsidian 설정 폴더, 플러그인 폴더 등 시스템 경로 제외
-  if (path.startsWith(pluginConfigDir + "/")) return true;
-  if (path.startsWith(".obsidian/")) return true;
+  // 설정 폴더(기본 ".obsidian", 사용자가 바꿀 수 있음) 하위는 제외한다.
+  if (path.startsWith(configDir + "/")) return true;
   // 루트의 폴더 자체는 건너뜀 (파일만 이동)
   return false;
 }
@@ -243,10 +243,10 @@ export async function organizeVaultPara(
       const oldPath = file.path;
       await app.fileManager.renameFile(file, newPath);
       result.moved.push({ from: oldPath, to: newPath });
-    } catch (e: any) {
+    } catch (e: unknown) {
       // 예외는 백엔드 장애 신호로 본다(자격증명·네트워크·쓰로틀링).
       consecutiveErrors++;
-      result.errors.push(`${file.path}: ${e?.message || String(e)}`);
+      result.errors.push(`${file.path}: ${getErrorMessage(e)}`);
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         aborted = true;
         result.errors.push(
@@ -305,7 +305,7 @@ async function cleanEmptyFolders(app: App, configDir: string): Promise<void> {
     if (insidePara) continue;
 
     if (folder.children.length === 0) {
-      try { await app.vault.delete(folder); } catch { /* 무시 */ }
+      try { await app.fileManager.trashFile(folder); } catch { /* 무시 */ }
     }
   }
 }

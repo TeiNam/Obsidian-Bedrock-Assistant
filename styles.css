@@ -546,6 +546,8 @@ body.theme-light .ba-message-content pre {
 }
 
 .ba-progress-bar-inner.ba-progress-done {
+  /* 완료 시 100% 폭은 JS 대신 이 클래스가 담당한다. */
+  width: 100%;
   background: var(--color-green);
 }
 

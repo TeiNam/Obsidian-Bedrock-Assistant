@@ -40,7 +40,7 @@ function escapeRegExp(value: string): string {
 /**
  * Generated_Region 에 기록할 내용에서 sentinel 마커를 무력화한다.
  *
- * `<!-- @generated:X -->` / `<!-- @end:X -->` 형태를 `<!-- @generated​:X -->` 처럼
+ * `<!-- @generated:X -->` / `<!-- @end:X -->` 형태를 `<!-- @generated\u200b:X -->` 처럼
  * 제로폭 공백을 끼워 치환한다. 사람이 읽을 때는 동일하게 보이지만 마커 정규식과는
  * 일치하지 않으므로 블록 경계를 침범하지 못한다. 원문의 정보는 보존된다.
  */
@@ -48,7 +48,7 @@ export function sanitizeGeneratedContent(content: string): string {
   if (typeof content !== "string" || content === "") return content ?? "";
   return content.replace(
     /<!--\s*@(generated|end):/g,
-    (_match, kind: string) => `<!-- @${kind}​:`
+    (_match, kind: string) => `<!-- @${kind}\u200b:`
   );
 }
 

@@ -13,8 +13,8 @@
  * 이렇게 하면 기기별 키체인으로 암호화된 값이 다른 기기로 전파되지 않습니다.
  */
 
-/* eslint-disable @typescript-eslint/no-var-requires */
-declare const require: (id: string) => any;
+
+declare const require: (id: string) => unknown;
 declare class Buffer {
   static from(data: string, encoding: string): Buffer;
   toString(encoding: string): string;
@@ -30,9 +30,59 @@ const ENCRYPTED_PREFIX = "enc:";
 // 같은 규칙으로 마이그레이션 대상 파일명을 만든다.
 const CREDENTIALS_FILE = "agent-llms-credentials.json";
 
+/** 이 모듈이 실제로 쓰는 `fs` API만 좁혀 선언한다. */
+interface NodeFsSubset {
+  existsSync(path: string): boolean;
+  readFileSync(path: string, encoding: string): string;
+  writeFileSync(
+    path: string,
+    data: string,
+    options: { encoding: string; mode: number }
+  ): void;
+  chmodSync(path: string, mode: number): void;
+}
+
+/** 이 모듈이 실제로 쓰는 `path` API만 좁혀 선언한다. */
+interface NodePathSubset {
+  join(...parts: string[]): string;
+}
+
+interface SafeStorageApi {
+  encryptString(value: string): Buffer;
+  decryptString(buffer: Buffer): string;
+  isEncryptionAvailable(): boolean;
+}
+
+interface ElectronApp {
+  getPath(name: string): string;
+}
+
+/**
+ * Electron 모듈 표면. `remote`는 구 버전 옵시디언에서만 존재하므로 모두 옵셔널이다.
+ */
+interface ElectronModule {
+  safeStorage?: SafeStorageApi;
+  app?: ElectronApp;
+  remote?: { safeStorage?: SafeStorageApi; app?: ElectronApp };
+}
+
+/**
+ * Node/Electron 모듈을 가져온다. 없는 환경(테스트, 모바일)에서는 null.
+ *
+ * 선언한 타입은 이 파일이 호출하는 멤버로 한정한다 — 런타임 검증이 아니라
+ * 호출부의 오타를 잡기 위한 좁은 계약이다.
+ */
+function requireModule<T>(id: string): T | null {
+  try {
+    return require(id) as T;
+  } catch {
+    return null;
+  }
+}
+
 // Node.js 모듈 (Obsidian/Electron 런타임에서 사용 가능)
-const nodeFs: any = (() => { try { return require("fs"); } catch { return null; } })();
-const nodePath: any = (() => { try { return require("path"); } catch { return null; } })();
+const nodeFs = requireModule<NodeFsSubset>("fs");
+const nodePath = requireModule<NodePathSubset>("path");
 
 /** 암호화할 설정 필드 목록 (Gemini + Bedrock + OpenAI 자격증명) */
 export const SENSITIVE_FIELDS = [
@@ -71,18 +121,16 @@ export const LEGACY_OBSOLETE_FIELDS = ["awsAuthMethod", "awsProfile"] as const;
  * Electron safeStorage 모듈 가져오기 (런타임에서만 사용 가능)
  * 옵시디언 환경이 아니거나 safeStorage를 지원하지 않으면 null 반환
  */
-function getSafeStorage(): { encryptString: (s: string) => Buffer; decryptString: (b: Buffer) => string; isEncryptionAvailable: () => boolean } | null {
+function getSafeStorage(): SafeStorageApi | null {
+  const electron = requireModule<ElectronModule>("electron");
+  const ss = electron?.remote?.safeStorage ?? electron?.safeStorage;
+  if (!ss || typeof ss.isEncryptionAvailable !== "function") return null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require("electron");
-    const ss = electron?.remote?.safeStorage ?? electron?.safeStorage;
-    if (ss && typeof ss.isEncryptionAvailable === "function" && ss.isEncryptionAvailable()) {
-      return ss;
-    }
+    return ss.isEncryptionAvailable() ? ss : null;
   } catch {
-    // Electron 없는 환경 (테스트 등)
+    // 키체인 접근 실패(잠긴 세션 등)는 평문 폴백으로 처리한다.
+    return null;
   }
-  return null;
 }
 
 /**
@@ -91,17 +139,14 @@ function getSafeStorage(): { encryptString: (s: string) => Buffer; decryptString
  * 예: macOS → ~/Library/Application Support/obsidian
  */
 function getLocalStoragePath(): string | null {
+  const electron = requireModule<ElectronModule>("electron");
+  const app = electron?.remote?.app ?? electron?.app;
+  if (!app || typeof app.getPath !== "function") return null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require("electron");
-    const app = electron?.remote?.app ?? electron?.app;
-    if (app && typeof app.getPath === "function") {
-      return app.getPath("userData");
-    }
+    return app.getPath("userData");
   } catch {
-    // Electron 없는 환경
+    return null;
   }
-  return null;
 }
 
 /**

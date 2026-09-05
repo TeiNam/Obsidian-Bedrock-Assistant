@@ -61,6 +61,8 @@ AWS Bedrock、Google Gemini、OpenAI、Ollamaのマルチプロバイダーバ�
 
 ## インストール
 
+Obsidian 1.7.2 以降、デスクトップ環境が必要です。
+
 ### BRAT（推奨）
 
 1. [BRAT](https://github.com/TfTHacker/obsidian42-brat)プラグインをインストール

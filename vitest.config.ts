@@ -5,6 +5,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // window.setTimeout 등 브라우저 전역을 node 환경에서도 쓸 수 있게 맞춘다.
+    setupFiles: ["./vitest.setup.ts"],
   },
   resolve: {
     alias: {

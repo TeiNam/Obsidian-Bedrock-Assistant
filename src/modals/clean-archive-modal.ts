@@ -1,20 +1,18 @@
 // 아카이브 비우기 모달 (chat-view.ts에서 분리)
 
-import { Modal, TFile, Notice, normalizePath } from "obsidian";
-import type { App } from "obsidian";
+import { Modal, TFile, TFolder, Notice, normalizePath } from "obsidian";
+import type { App, TAbstractFile } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ViewLang } from "../chat-view-i18n";
 
 /**
  * 아카이브 폴더에서 오래된 파일을 선택적으로 삭제하는 모달
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export class CleanArchiveModal extends Modal {
   private plugin: GeminiAssistantPlugin;
-  private t: Record<string, any>;
+  private t: ViewLang;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
+  constructor(app: App, plugin: GeminiAssistantPlugin, t: ViewLang) {
     super(app);
     this.plugin = plugin;
     this.t = t;
@@ -33,12 +31,12 @@ export class CleanArchiveModal extends Modal {
     // 아카이브 폴더에서 하위 폴더 포함 재귀 탐색, 생성일(ctime) 기준 n일 이전 파일 수집
     const folder = this.app.vault.getAbstractFileByPath(archiveFolder);
     const oldFiles: TFile[] = [];
-    const collectFiles = (parent: any) => {
-      if (!parent || !("children" in parent)) return;
+    const collectFiles = (parent: TAbstractFile | null) => {
+      if (!(parent instanceof TFolder)) return;
       for (const child of parent.children) {
         if (child instanceof TFile && child.stat.ctime < cutoff) {
           oldFiles.push(child);
-        } else if ("children" in child) {
+        } else if (child instanceof TFolder) {
           collectFiles(child);
         }
       }
@@ -58,7 +56,7 @@ export class CleanArchiveModal extends Modal {
 
     // 전체 선택 토글
     const selectAllRow = contentEl.createDiv({ cls: "ba-clean-archive-select-all" });
-    const selectAllCb = selectAllRow.createEl("input", { type: "checkbox" }) as HTMLInputElement;
+    const selectAllCb = selectAllRow.createEl("input", { type: "checkbox" });
     selectAllCb.checked = true;
     selectAllRow.createSpan({ text: this.t.cleanArchiveSelectAll });
     selectAllCb.addEventListener("change", () => {
@@ -73,7 +71,7 @@ export class CleanArchiveModal extends Modal {
 
     for (const file of oldFiles) {
       const row = listEl.createDiv({ cls: "ba-clean-archive-item" });
-      const cb = row.createEl("input", { type: "checkbox" }) as HTMLInputElement;
+      const cb = row.createEl("input", { type: "checkbox" });
       cb.checked = true;
       const dateStr = new Date(file.stat.ctime).toLocaleDateString();
       row.createSpan({ text: file.path.replace(archiveFolder + "/", ""), cls: "ba-clean-archive-name" });
@@ -90,36 +88,42 @@ export class CleanArchiveModal extends Modal {
       text: this.t.cleanArchiveDelete,
       cls: "mod-warning",
     });
-    deleteBtn.addEventListener("click", async () => {
-      const toDelete = checkboxes.filter((c) => c.checkbox.checked).map((c) => c.file);
-      if (toDelete.length === 0) {
-        this.close();
-        return;
-      }
-      // 선택된 파일 삭제
-      for (const file of toDelete) {
-        await this.app.vault.delete(file);
-      }
-      // 빈 하위 폴더 정리 (깊은 폴더부터 삭제)
-      const removeEmptyFolders = (parent: any) => {
-        if (!parent || !("children" in parent)) return;
-        // 하위 폴더 먼저 재귀 처리
-        for (const child of [...parent.children]) {
-          if ("children" in child) {
-            removeEmptyFolders(child);
-          }
-        }
-        // 루트 아카이브 폴더는 유지, 하위 빈 폴더만 삭제
-        if (parent.children.length === 0 && parent.path !== archiveFolder) {
-          this.app.vault.delete(parent);
-        }
-      };
-      const rootFolder = this.app.vault.getAbstractFileByPath(archiveFolder);
-      removeEmptyFolders(rootFolder);
-
-      new Notice(this.t.cleanArchiveDeleted(toDelete.length));
-      this.close();
+    deleteBtn.addEventListener("click", () => {
+      void this.deleteSelected(
+        checkboxes.filter((c) => c.checkbox.checked).map((c) => c.file),
+        archiveFolder
+      );
     });
+  }
+
+  /**
+   * 선택된 파일을 사용자의 삭제 설정(휴지통/OS 휴지통)에 따라 지우고,
+   * 그 결과로 비게 된 하위 폴더를 정리한다. 루트 아카이브 폴더는 남긴다.
+   */
+  private async deleteSelected(toDelete: TFile[], archiveFolder: string): Promise<void> {
+    if (toDelete.length === 0) {
+      this.close();
+      return;
+    }
+
+    for (const file of toDelete) {
+      await this.app.fileManager.trashFile(file);
+    }
+
+    // 깊은 폴더부터 비었는지 확인해야 상위 폴더도 같은 패스에서 정리된다.
+    const removeEmptyFolders = async (parent: TAbstractFile | null): Promise<void> => {
+      if (!(parent instanceof TFolder)) return;
+      for (const child of [...parent.children]) {
+        await removeEmptyFolders(child);
+      }
+      if (parent.children.length === 0 && parent.path !== archiveFolder) {
+        await this.app.fileManager.trashFile(parent);
+      }
+    };
+    await removeEmptyFolders(this.app.vault.getAbstractFileByPath(archiveFolder));
+
+    new Notice(this.t.cleanArchiveDeleted(toDelete.length));
+    this.close();
   }
 
   onClose(): void {

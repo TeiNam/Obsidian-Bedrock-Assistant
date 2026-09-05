@@ -1,6 +1,6 @@
 import { Component, ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, MarkdownView, TFile, FuzzySuggestModal, Notice } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
-import type { ChatMessage, ConverseMessage, ContentBlock, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
+import type { ChatMessage, ConverseMessage, ContentBlockToolUse, ModelInfo, ChatSession } from "./types";
 import { TOOLS } from "./obsidian-tools";
 import { BRANDING } from "./branding";
 import { trimConversationHistory, CHARS_PER_TOKEN } from "./token-trimmer";
@@ -28,8 +28,26 @@ import { SessionListModal } from "./modals/session-list-modal";
 import { ToolConfirmModal } from "./modals/tool-confirm-modal";
 import { isRetrospectiveCommand } from "./retrospective-command";
 import { generateRetrospective } from "./retrospective-service";
+import { voidAsync } from "./async-utils";
 
 export const VIEW_TYPE = BRANDING.viewType;
+
+/** 입력창 자동 확장 상한(px). 이보다 길어지면 내부 스크롤로 넘긴다. */
+const INPUT_MAX_HEIGHT_PX = 200;
+
+/** IME 조합 중임을 뜻하는 legacy keyCode. */
+const IME_COMPOSING_KEY_CODE = 229;
+
+/**
+ * leaf가 마지막으로 활성화된 시각.
+ *
+ * `activeTime`은 공개 타입 정의에 없는 내부 필드다. 없으면 0으로 보는데,
+ * 용도가 정렬뿐이라 최악의 경우 "가장 최근" 판정이 흔들릴 뿐 동작은 유지된다.
+ */
+function leafActiveTime(leaf: WorkspaceLeaf): number {
+  const activeTime = (leaf as WorkspaceLeaf & { activeTime?: number }).activeTime;
+  return typeof activeTime === "number" ? activeTime : 0;
+}
 
 // Claudian 스타일 사이드바 채팅 뷰
 export class ChatView extends ItemView {
@@ -128,7 +146,7 @@ export class ChatView extends ItemView {
         this.updateContextRing();
 
         // 모델 목록 백그라운드 프리로드 (라벨에 올바른 모델명 표시)
-        this.preloadModels();
+        void this.preloadModels();
       }
 
 
@@ -282,20 +300,23 @@ export class ChatView extends ItemView {
     this.uiEvents.registerDomEvent(this.stopBtn, "click", () => this.handleStop());
 
     this.uiEvents.registerDomEvent(this.inputEl, "keydown", (e: KeyboardEvent) => {
-      // 한글 등 IME 조합 중에는 Enter 무시
-      if (e.isComposing || e.keyCode === 229) return;
+      // 한글 등 IME 조합 중에는 Enter 무시.
+      // keyCode 는 폐기된 속성이지만 조합 중 isComposing 을 올리지 않는 IME 가 있어
+      // 229(조합 중)를 함께 본다. 빼면 한글 입력이 조합 도중 전송된다.
+      if (e.isComposing || e.keyCode === IME_COMPOSING_KEY_CODE) return;
       // Enter 단독: 전송, Shift+Enter: 줄바꿈
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
-        this.handleSend();
+        void this.handleSend();
       }
     });
 
-    // 자동 높이 조절
+    // 자동 높이 조절 — 내용 높이를 재려면 먼저 height를 풀어야 하므로 인라인 스타일을 쓴다.
     this.uiEvents.registerDomEvent(this.inputEl, "input", () => {
-      this.inputEl.style.height = "auto";
-      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 200) + "px";
+      this.inputEl.setCssStyles({ height: "auto" });
+      const height = Math.min(this.inputEl.scrollHeight, INPUT_MAX_HEIGHT_PX);
+      this.inputEl.setCssStyles({ height: `${height}px` });
       this.updateContextRing();
     });
 
@@ -311,7 +332,7 @@ export class ChatView extends ItemView {
     this.uiEvents.registerEvent(
       this.app.workspace.on("file-open", (file) => {
         if (file && this.plugin.settings.autoAttachActiveNote) {
-          this.autoAttachFile(file.path);
+          void this.autoAttachFile(file.path);
         }
       })
     );
@@ -323,7 +344,7 @@ export class ChatView extends ItemView {
         if (!this.plugin.settings.autoAttachActiveNote) return;
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (activeView?.file) {
-          this.autoAttachFile(activeView.file.path);
+          void this.autoAttachFile(activeView.file.path);
         }
       })
     );
@@ -419,7 +440,7 @@ export class ChatView extends ItemView {
     if (!text || this.isGenerating) return;
 
     this.inputEl.value = "";
-    this.inputEl.style.height = "auto";
+    this.inputEl.setCssStyles({ height: "auto" });
 
     // 환영 메시지 제거
     const welcome = this.messagesEl.querySelector(".ba-welcome");
@@ -490,7 +511,7 @@ export class ChatView extends ItemView {
     setIcon(regenBtn, "refresh-cw");
     regenBtn.createSpan({ text: this.t.regenerate });
     regenBtn.addEventListener("click", () => {
-      if (!this.isGenerating) this.regenerateLastResponse();
+      if (!this.isGenerating) void this.regenerateLastResponse();
     });
   }
 
@@ -644,7 +665,7 @@ export class ChatView extends ItemView {
           if (converseMessages[lastUserIdx].role !== "user") continue;
           const block = this.buildBinaryContentBlock(path, ext, data);
           if (block) {
-            (converseMessages[lastUserIdx].content as unknown[]).unshift(block);
+            converseMessages[lastUserIdx].content.unshift(block);
           }
         }
 
@@ -695,7 +716,7 @@ export class ChatView extends ItemView {
               if (renderPending) return;
               renderPending = true;
 
-              requestAnimationFrame(() => {
+              window.requestAnimationFrame(() => {
                 renderPending = false;
                 if (this.abortController?.signal.aborted) return;
 
@@ -801,7 +822,7 @@ export class ChatView extends ItemView {
           converseMessages.push({ role: "user", content: toolResultContents });
 
           // 다음 라운드 전 "생각 중..." 표시
-          const nextThinking = contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
+          contentEl.createSpan({ cls: "ba-thinking", text: this.t.thinking });
           this.scrollToBottom();
         }
 
@@ -822,7 +843,7 @@ export class ChatView extends ItemView {
         regenBtn.createSpan({ text: this.t.regenerate });
         regenBtn.addEventListener("click", () => {
           if (!this.isGenerating) {
-            this.regenerateLastResponse();
+            void this.regenerateLastResponse();
           }
         });
 
@@ -885,7 +906,7 @@ export class ChatView extends ItemView {
               new ToolConfirmModal(
                 this.app,
                 toolBlock.name,
-                toolBlock.input as Record<string, unknown>,
+                toolBlock.input,
                 this.t,
                 this.plugin,
                 resolve
@@ -972,10 +993,10 @@ export class ChatView extends ItemView {
     const copyBtn = actions.createSpan({ attr: { "aria-label": this.t.copy } });
     setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(msg.content);
+      void navigator.clipboard.writeText(msg.content);
       copyBtn.empty();
       copyBtn.setText("✓");
-      setTimeout(() => {
+      window.setTimeout(() => {
         copyBtn.empty();
         setIcon(copyBtn, "copy");
       }, 1500);
@@ -1012,7 +1033,7 @@ export class ChatView extends ItemView {
       if (!file || !(file instanceof TFile)) return;
       if (!isAllowedTextExtension(file.extension)) return;
 
-      const content = await this.app.vault.cachedRead(file as any);
+      const content = await this.app.vault.cachedRead(file);
       if (
         !manual &&
         (autoAttachVersion !== this.autoAttachVersion || this.autoAttachedPath !== path)
@@ -1095,7 +1116,7 @@ export class ChatView extends ItemView {
 
         chip.addEventListener("click", () => {
           const f = this.app.vault.getAbstractFileByPath(path);
-          if (f) this.app.workspace.getLeaf(false).openFile(f as any);
+          if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
         });
       }
 
@@ -1118,7 +1139,7 @@ export class ChatView extends ItemView {
       path: string,
       ext: string,
       data: ArrayBuffer
-    ): unknown | null {
+    ): unknown {
       const bytes = new Uint8Array(data);
 
       // 이미지 파일
@@ -1166,21 +1187,21 @@ export class ChatView extends ItemView {
       const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
       // 가장 최근 활성화된 마크다운 leaf 찾기
       const sorted = markdownLeaves.sort(
-        (a, b) => ((b as any).activeTime ?? 0) - ((a as any).activeTime ?? 0)
+        (a, b) => leafActiveTime(b) - leafActiveTime(a)
       );
       const leaf = sorted[0];
       if (!leaf) return;
 
       const view = leaf.view as MarkdownView;
       if (!view?.file) return;
-      this.addFileContext(view.file.path);
+      void this.addFileContext(view.file.path);
     }
 
 
   // 파일 검색 모달 열기
   private openFileSearchModal(): void {
     const modal = new FileSearchModal(this.app, (file: TFile) => {
-      this.addFileContext(file.path);
+      void this.addFileContext(file.path);
     }, this.t.searchPlaceholder);
     modal.open();
   }
@@ -1267,7 +1288,7 @@ export class ChatView extends ItemView {
     const totalCount = status.length;
     const allConnected = connectedCount === totalCount;
 
-    const dot = this.mcpStatusEl.createSpan({ cls: `ba-mcp-dot ${allConnected ? "connected" : "disconnected"}` });
+    this.mcpStatusEl.createSpan({ cls: `ba-mcp-dot ${allConnected ? "connected" : "disconnected"}` });
     const label = `MCP ${connectedCount}/${totalCount}`;
     this.mcpStatusEl.createSpan({ cls: "ba-mcp-indicator-label", text: label });
 
@@ -1326,7 +1347,7 @@ export class ChatView extends ItemView {
         if (model.modelId === currentModelId) {
           item.createSpan({ cls: "ba-model-dropdown-check", text: "✓" });
         }
-        item.addEventListener("click", async () => {
+        item.addEventListener("click", voidAsync(async () => {
           this.setActiveChatModel(model.modelId);
           // 모델이 바뀌면 effort 허용 집합이 달라진다. 요청 시점에도 보정되지만
           // 저장값과 실제 전송값이 어긋나지 않도록 여기서 확정한다.
@@ -1338,11 +1359,11 @@ export class ChatView extends ItemView {
           await this.plugin.saveSettings();
           this.updateModelLabel();
           this.closeModelDropdown();
-        });
+        }));
       }
 
       // 외부 클릭 시 닫기
-      setTimeout(() => {
+      window.setTimeout(() => {
         document.addEventListener("click", this.handleDropdownOutsideClick);
       }, 0);
     }
@@ -1365,16 +1386,16 @@ export class ChatView extends ItemView {
   // 바이너리 파일 첨부 (이미지, PDF, XLSX 등)
   // 로컬 디바이스에서 파일 첨부 (네이티브 파일 선택)
     private openBinaryFileAttach(): void {
-      const input = document.createElement("input");
+      const input = createEl("input");
       input.type = "file";
       input.accept = ".png,.jpg,.jpeg,.gif,.webp,.pdf,.csv,.doc,.docx,.xls,.xlsx,.html,.txt";
       input.multiple = true;
-      input.addEventListener("change", async () => {
+      input.addEventListener("change", voidAsync(async () => {
         if (!input.files) return;
         for (const file of Array.from(input.files)) {
           await this.addLocalFile(file);
         }
-      });
+      }));
       input.click();
     }
 
@@ -1424,7 +1445,7 @@ export class ChatView extends ItemView {
     // 현재 열린 마크다운 노트 찾기
     const markdownLeaves = this.app.workspace.getLeavesOfType("markdown");
     const sorted = markdownLeaves.sort(
-      (a, b) => ((b as any).activeTime ?? 0) - ((a as any).activeTime ?? 0)
+      (a, b) => leafActiveTime(b) - leafActiveTime(a)
     );
     const leaf = sorted[0];
     if (!leaf) {
@@ -1534,7 +1555,6 @@ export class ChatView extends ItemView {
       if (!this.contextRingEl || !this.contextLabelEl) return;
 
       // 모델별 컨텍스트 윈도우 크기 (토큰)
-      const modelId = this.getActiveChatModel();
       const contextWindow = this.getModelContextWindow();
 
       // 현재 사용 중인 토큰 추정
@@ -1627,10 +1647,9 @@ export class ChatView extends ItemView {
   // 연결된 MCP 중 웹 서치용(fetch/exa/brave) 도구가 하나라도 있는지 확인
   private hasWebSearchMcp(): boolean {
     const KEYWORDS = ["fetch", "exa", "brave"];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tools = (this.plugin.mcpManager?.getAllTools?.() ?? []) as any[];
+    const tools = this.plugin.mcpManager?.getAllTools() ?? [];
     return tools.some((t) => {
-      const hay = `${t._mcpServer ?? ""} ${t._mcpToolName ?? ""} ${t.name ?? ""}`.toLowerCase();
+      const hay = `${t._mcpServer ?? ""} ${t._mcpToolName ?? ""} ${t.name}`.toLowerCase();
       return KEYWORDS.some((k) => hay.includes(k));
     });
   }
@@ -1696,7 +1715,6 @@ export class ChatView extends ItemView {
           // 변경 파일 없음
           labelText.setText(this.t.allUpToDate);
           progressDetail.setText(this.t.totalIndexed(this.plugin.indexer.size));
-          progressBarInner.style.width = "100%";
           progressBarInner.addClass("ba-progress-done");
         } else {
           // 변경 파일 처리됨
@@ -1706,7 +1724,6 @@ export class ChatView extends ItemView {
           if (result.errors.length > 0) parts.push(this.t.failed(result.errors.length));
           parts.push(this.t.totalIndexedShort(this.plugin.indexer.size));
           progressDetail.setText(parts.join(" · "));
-          progressBarInner.style.width = "100%";
           progressBarInner.addClass("ba-progress-done");
         }
 
@@ -1805,7 +1822,8 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async clearChat(): Promise<void> {
+  // 설정 탭의 "히스토리 전체 삭제"에서도 호출하므로 공개 메서드다.
+  async clearChat(): Promise<void> {
           this.messages = [];
           this.messagesEl.empty();
           this.renderWelcome();
@@ -1830,9 +1848,9 @@ export class ChatView extends ItemView {
   // 지난 대화 목록 표시
   private async showSessionList(): Promise<void> {
     const sessions = await this.plugin.loadSessions();
-    new SessionListModal(this.app, this.plugin, sessions, this.t, async (session) => {
+    new SessionListModal(this.app, this.plugin, sessions, this.t, voidAsync(async (session) => {
       await this.loadSession(session);
-    }).open();
+    })).open();
   }
 
   // 세션 복원

@@ -56,7 +56,7 @@ export function sanitizeTitleForFilename(title: string): string {
     // 상위 경로 참조를 무해화한다.
     .replace(/\.{2,}/g, "")
     // 제어문자 제거.
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- 파일명에서 제어문자를 걸러내는 것이 이 정규식의 목적이다
     .replace(/[\u0000-\u001f\u007f]/g, "")
     // 연속 하이픈 축약.
     .replace(/-{2,}/g, "-")

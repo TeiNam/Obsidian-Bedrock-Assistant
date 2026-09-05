@@ -3,11 +3,12 @@
 // LLM 호출이 없는 순수 표시 계층이다. 점수 계산과 원자료 수집은 review-queue.ts가
 // 담당하고, 이 모달은 원자료를 현재 언어의 문구로 조립해 보여주고 열기만 한다.
 
-import { Modal } from "obsidian";
+import { Modal, TFile } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import type { ReviewItem } from "../second-brain/review-queue";
 import { VIEW_I18N } from "../chat-view-i18n";
+import { voidAsync } from "../async-utils";
 
 export class ReviewQueueModal extends Modal {
   private plugin: GeminiAssistantPlugin;
@@ -45,14 +46,14 @@ export class ReviewQueueModal extends Modal {
       info.createDiv({ cls: "ba-review-title", text: item.title || item.path });
       info.createDiv({ cls: "ba-review-reason", text: reason });
 
-      row.addEventListener("click", async () => {
+      row.addEventListener("click", voidAsync(async () => {
         // 기존 open_note 경로와 동일하게 워크스페이스에서 연다.
         const file = this.app.vault.getAbstractFileByPath(item.path);
-        if (file) {
-          await this.app.workspace.getLeaf(false).openFile(file as never);
+        if (file instanceof TFile) {
+          await this.app.workspace.getLeaf(false).openFile(file);
         }
         this.close();
-      });
+      }));
     }
   }
 

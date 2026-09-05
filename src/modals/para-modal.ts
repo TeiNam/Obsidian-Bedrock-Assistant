@@ -1,6 +1,6 @@
 // P.A.R.A 환경 설정 모달 — 진행 상황 표시 및 결과 요약
 
-import { Modal, Notice } from "obsidian";
+import { Modal } from "obsidian";
 import type { App } from "obsidian";
 import type GeminiAssistantPlugin from "../main";
 import { organizeVaultPara, type ParaResult } from "../para-organizer";

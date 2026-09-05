@@ -14,6 +14,36 @@ import { noticeI18n } from "./notice-i18n";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
+/**
+ * Gemini REST 응답 중 이 클라이언트가 실제로 읽는 부분만 선언한다.
+ *
+ * `requestUrl(...).json` 과 `JSON.parse` 는 `any` 를 돌려주므로 응답을 만지기 전에
+ * 이 타입으로 한 번만 좁힌다. 서버가 다른 모양을 보내면 옵셔널 필드가 undefined 로
+ * 떨어져 기존과 같은 폴백 경로를 탄다.
+ */
+interface GeminiPart {
+  text?: string;
+  thoughtSignature?: string;
+  functionCall?: { name?: string; args?: Record<string, unknown> };
+}
+
+interface GeminiCandidate {
+  content?: { parts?: GeminiPart[] };
+  finishReason?: string;
+}
+
+interface GeminiGenerateResponse {
+  candidates?: GeminiCandidate[];
+}
+
+interface GeminiModelsResponse {
+  models?: { name?: string; displayName?: string; supportedGenerationMethods?: string[] }[];
+}
+
+interface GeminiEmbedResponse {
+  embedding?: { values?: number[] };
+}
+
 // Gemini API 클라이언트 (BedrockClient와 동일한 public 인터페이스)
 export class GeminiClient {
   private settings: GeminiAssistantSettings;
@@ -34,14 +64,15 @@ export class GeminiClient {
     try {
       const url = `${GEMINI_BASE}/models?key=${this.settings.geminiApiKey}`;
       const resp = await requestUrl({ url, method: "GET" });
-      const data = resp.json;
+      const data = resp.json as GeminiModelsResponse;
       if (!data.models) return [];
 
       const models: ModelInfo[] = [];
       for (const m of data.models) {
-        const id = (m.name as string).replace("models/", "");
+        const id = (m.name ?? "").replace("models/", "");
+        if (!id) continue;
         // generateContent를 지원하는 모델만 필터
-        const methods: string[] = m.supportedGenerationMethods || [];
+        const methods = m.supportedGenerationMethods ?? [];
         if (!methods.includes("generateContent")) continue;
         // 임베딩 전용 모델 제외
         if (id.includes("embedding")) continue;
@@ -80,7 +111,7 @@ export class GeminiClient {
       const role = msg.role === "assistant" ? "model" : "user";
       const parts: unknown[] = [];
 
-      for (const block of msg.content as unknown[]) {
+      for (const block of msg.content) {
         if (typeof block === "object" && block !== null) {
           const b = block as Record<string, unknown>;
           if ("text" in b && typeof b.text === "string") {
@@ -112,9 +143,9 @@ export class GeminiClient {
             let responseText = "";
             if (Array.isArray(resultContent)) {
               for (const rc of resultContent) {
-                if (typeof rc === "object" && rc !== null && "text" in (rc as Record<string, unknown>)) {
-                  responseText += (rc as Record<string, unknown>).text;
-                }
+                if (typeof rc !== "object" || rc === null || !("text" in rc)) continue;
+                const { text } = rc;
+                if (typeof text === "string") responseText += text;
               }
             }
             // Gemini functionResponse.name은 도구 이름이어야 함
@@ -305,11 +336,11 @@ export class GeminiClient {
         if (!jsonStr) continue;
 
         try {
-          const chunk = JSON.parse(jsonStr);
-          const candidates = chunk.candidates;
-          if (!candidates || candidates.length === 0) continue;
+          const chunk = JSON.parse(jsonStr) as GeminiGenerateResponse;
+          const candidate = chunk.candidates?.[0];
+          if (!candidate) continue;
 
-          const parts = candidates[0].content?.parts;
+          const parts = candidate.content?.parts;
           if (!parts) continue;
 
           for (const part of parts) {
@@ -325,20 +356,20 @@ export class GeminiClient {
               const toolBlock: ContentBlock = {
                 type: "tool_use",
                 toolUseId: part.functionCall.name || `call_${Date.now()}`,
-                name: part.functionCall.name,
-                input: part.functionCall.args || {},
+                name: part.functionCall.name ?? "",
+                input: part.functionCall.args ?? {},
               };
               // Gemini 3.x thought signature 보존 (function calling 시 필수)
               if (part.thoughtSignature) {
-                (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
+                (toolBlock).thoughtSignature = part.thoughtSignature;
               }
               contentBlocks.push(toolBlock);
             }
           }
 
           // 종료 이유 확인
-          if (candidates[0].finishReason) {
-            const reason = candidates[0].finishReason;
+          if (candidate.finishReason) {
+            const reason = candidate.finishReason;
             if (reason === "STOP") stopReason = "end_turn";
             else if (reason === "MAX_TOKENS") stopReason = "max_tokens";
             else stopReason = reason;
@@ -353,7 +384,7 @@ export class GeminiClient {
       const textBlock: ContentBlock = { type: "text", text: fullText };
       // 텍스트 파트의 thoughtSignature 보존 (Gemini 3.x 권장)
       if (lastTextThoughtSignature) {
-        (textBlock as import("./types").ContentBlockText).thoughtSignature = lastTextThoughtSignature;
+        (textBlock).thoughtSignature = lastTextThoughtSignature;
       }
       contentBlocks.unshift(textBlock);
     }
@@ -384,20 +415,20 @@ export class GeminiClient {
       body: JSON.stringify(body),
     });
 
-    const data = resp.json;
+    const data = resp.json as GeminiGenerateResponse;
     const contentBlocks: ContentBlock[] = [];
     let stopReason = "end_turn";
 
-    const candidates = data.candidates;
-    if (candidates && candidates.length > 0) {
-      const parts = candidates[0].content?.parts;
+    const candidate = data.candidates?.[0];
+    if (candidate) {
+      const parts = candidate.content?.parts;
       if (parts) {
         for (const part of parts) {
           if (part.text) {
             const textBlock: ContentBlock = { type: "text", text: part.text };
             // 텍스트 파트의 thoughtSignature 보존 (Gemini 3.x 권장)
             if (part.thoughtSignature) {
-              (textBlock as import("./types").ContentBlockText).thoughtSignature = part.thoughtSignature;
+              (textBlock).thoughtSignature = part.thoughtSignature;
             }
             contentBlocks.push(textBlock);
             onTextDelta?.(part.text);
@@ -406,20 +437,20 @@ export class GeminiClient {
             const toolBlock: ContentBlock = {
               type: "tool_use",
               toolUseId: part.functionCall.name || `call_${Date.now()}`,
-              name: part.functionCall.name,
-              input: part.functionCall.args || {},
+              name: part.functionCall.name ?? "",
+              input: part.functionCall.args ?? {},
             };
             // Gemini 3.x thought signature 보존 (function calling 시 필수)
             if (part.thoughtSignature) {
-              (toolBlock as import("./types").ContentBlockToolUse).thoughtSignature = part.thoughtSignature;
+              (toolBlock).thoughtSignature = part.thoughtSignature;
             }
             contentBlocks.push(toolBlock);
           }
         }
       }
 
-      if (candidates[0].finishReason) {
-        const reason = candidates[0].finishReason;
+      if (candidate.finishReason) {
+        const reason = candidate.finishReason;
         if (reason === "STOP") stopReason = "end_turn";
         else if (reason === "MAX_TOKENS") stopReason = "max_tokens";
         else stopReason = reason;
@@ -452,11 +483,12 @@ export class GeminiClient {
       }),
     });
 
-    const data = resp.json;
-    if (!data.embedding?.values) {
+    const data = resp.json as GeminiEmbedResponse;
+    const values = data.embedding?.values;
+    if (!values) {
       throw new Error(noticeI18n(this.settings.language).errNoEmbeddingVector("Gemini"));
     }
-    return data.embedding.values;
+    return values;
   }
 
   /**
@@ -488,17 +520,10 @@ export class GeminiClient {
       }),
     });
 
-    const data = resp.json;
-    const candidates = data.candidates;
-    if (candidates && candidates.length > 0) {
-      const parts = candidates[0].content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.text) {
-            return { text: part.text };
-          }
-        }
-      }
+    const data = resp.json as GeminiGenerateResponse;
+    const parts = data.candidates?.[0]?.content?.parts;
+    for (const part of parts ?? []) {
+      if (part.text) return { text: part.text };
     }
     throw new Error(noticeI18n(this.settings.language).errNoResponseText("Gemini"));
   }
