@@ -53,14 +53,16 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Determine edition prefix
+      # 태그에 접두어를 붙이지 않는다. 옵시디언 커뮤니티 플러그인 제출 요건은
+      # 릴리스 태그가 manifest.json의 version과 **정확히 일치**할 것을 요구한다
+      # (`0.7.5`, `agent-llms-0.7.5`가 아님). 접두어는 이 레포가 kiro-edition·
+      # bedrock-assistant를 함께 담던 시절의 잔재이고, 지금은 플러그인이 하나뿐이다.
+      - name: Resolve target branch
         id: edition
         run: |
           BRANCH="${{ steps.branch.outputs.ref }}"
-          PREFIX="agent-llms"
-          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "에디션: $PREFIX (브랜치: $BRANCH)"
+          echo "대상 브랜치: $BRANCH"
 
       - name: Bump version
         id: version
@@ -71,15 +73,14 @@ jobs:
           # 이미 릴리스된 버전인지 확인한다. manifest에 적힌 버전의 태그가 없으면
           # 그 버전을 그대로 배포한다 — bump하면 의도한 버전(예: 0.3.0)을 건너뛰고
           # 0.3.1로 나가버린다. 태그가 이미 있으면 patch를 올려 중복을 피한다.
-          PREFIX="${{ steps.edition.outputs.prefix }}"
-          if git rev-parse -q --verify "refs/tags/$PREFIX-$CURRENT" >/dev/null; then
+          if git rev-parse -q --verify "refs/tags/$CURRENT" >/dev/null; then
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             PATCH=$((PATCH + 1))
             NEW_VERSION="$MAJOR.$MINOR.$PATCH"
-            echo "태그 $PREFIX-$CURRENT 이미 존재 → $NEW_VERSION 으로 증가"
+            echo "태그 $CURRENT 이미 존재 → $NEW_VERSION 으로 증가"
           else
             NEW_VERSION="$CURRENT"
-            echo "태그 $PREFIX-$CURRENT 없음 → manifest 버전 그대로 배포"
+            echo "태그 $CURRENT 없음 → manifest 버전 그대로 배포"
           fi
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
@@ -122,8 +123,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.edition.outputs.prefix }}-${{ steps.version.outputs.new }}
-          name: "${{ steps.edition.outputs.prefix }} v${{ steps.version.outputs.new }}"
+          tag_name: ${{ steps.version.outputs.new }}
+          name: "${{ steps.version.outputs.new }}"
           generate_release_notes: true
           files: |
             main.js
