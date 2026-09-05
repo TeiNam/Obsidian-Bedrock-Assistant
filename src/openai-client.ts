@@ -280,7 +280,7 @@ export class OpenAIClient implements IAiClient {
       // requestUrl 대신 fetch를 쓰는 이유: 이 엔드포인트는 SSE 스트림을 돌려주고
       // 아래에서 body.getReader()로 델타를 점진적으로 읽는다. requestUrl은 응답을
       // 전부 버퍼링한 뒤 한 번에 반환하므로 토큰 단위 표시가 불가능하다.
-      const response = await fetch(`${this.baseUrl()}/chat/completions`, {
+      const response = await window.fetch(`${this.baseUrl()}/chat/completions`, {
         method: "POST",
         headers: this.authHeaders(key),
         body: JSON.stringify(body),

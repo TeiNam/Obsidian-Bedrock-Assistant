@@ -319,7 +319,7 @@ export function encryptSettings<T extends object>(settings: T): T {
 /**
  * 설정 객체의 민감한 필드들을 복호화하여 새 객체로 반환
  * 원본 객체를 변경하지 않습니다.
- * @deprecated data.json에서 직접 읽는 레거시 방식. 마이그레이션 호환용으로 유지.
+ * data.json에서 직접 읽는 레거시 마이그레이션 전용이다. 신규 저장 경로에서는 사용하지 않는다.
  */
 export function decryptSettings<T extends object>(settings: T): T {
   const result = { ...settings } as Record<string, unknown>;
