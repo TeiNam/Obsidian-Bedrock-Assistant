@@ -16,6 +16,9 @@ on:
 
 permissions:
   contents: write
+  # 릴리스 자산에 artifact attestation을 붙이기 위해 필요하다.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -119,6 +122,18 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add manifest.json package.json versions.json 2>/dev/null || true
           git diff --cached --quiet && echo "No changes to commit" || (git commit -m "chore: bump version to ${{ steps.version.outputs.new }}" && git push origin HEAD:${{ steps.edition.outputs.branch }})
+
+      # 릴리스 자산의 출처(provenance)를 증명한다. 사용자가
+      # `gh attestation verify <파일> --repo <레포>` 로 이 파일들이 이 저장소의
+      # 소스에서 빌드됐음을 검증할 수 있다.
+      # 버전 bump가 manifest.json을 다시 쓰므로 bump 이후에 증명해야 다이제스트가 맞는다.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
