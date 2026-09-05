@@ -184,7 +184,7 @@ export class OllamaClient implements IAiClient {
 			// requestUrl 대신 fetch를 쓰는 이유: /api/chat 은 stream:true 로 NDJSON을
 			// 줄 단위로 흘려보내고 아래에서 body.getReader()로 점진적으로 읽는다.
 			// requestUrl은 응답을 전부 버퍼링하므로 스트리밍이 불가능하다.
-			response = await fetch(url, {
+			response = await window.fetch(url, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),

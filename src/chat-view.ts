@@ -303,7 +303,8 @@ export class ChatView extends ItemView {
       // 한글 등 IME 조합 중에는 Enter 무시.
       // keyCode 는 폐기된 속성이지만 조합 중 isComposing 을 올리지 않는 IME 가 있어
       // 229(조합 중)를 함께 본다. 빼면 한글 입력이 조합 도중 전송된다.
-      if (e.isComposing || e.keyCode === IME_COMPOSING_KEY_CODE) return;
+      const legacyKeyCode = (e as unknown as { readonly keyCode?: number }).keyCode;
+      if (e.isComposing || legacyKeyCode === IME_COMPOSING_KEY_CODE) return;
       // Enter 단독: 전송, Shift+Enter: 줄바꿈
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();

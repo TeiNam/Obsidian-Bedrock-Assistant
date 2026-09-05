@@ -26,5 +26,28 @@ export default defineConfig([
         },
       },
     },
+    rules: {
+      "obsidianmd/ui/sentence-case": [
+        "warn",
+        {
+          enforceCamelCaseLower: true,
+          ignoreRegex: [
+            "^AWS Bedrock$",
+            "^text-embedding-004$",
+            "^Second Brain$",
+            "^ToDo/Archive$",
+            "^WebClips$",
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // 최소 지원 버전이 1.7.2라 기존 display() 경로를 유지한다.
+    // 1.13+ 전용으로 올릴 때 설정 전체를 SettingDefinition으로 전환한다.
+    files: ["src/settings-tab.ts"],
+    rules: {
+      "obsidianmd/settings-tab/prefer-setting-definitions": "off",
+    },
   },
 ]);
