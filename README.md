@@ -218,6 +218,24 @@ This plugin makes network requests to the following external services:
 
 No data is sent to any third-party analytics or tracking services.
 
+## System Access
+
+Beyond the vault, the plugin touches the following. Each item lists its full scope.
+
+- **Shell execution** (`child_process.spawn`) — Used only to start the MCP servers you add yourself under Settings → MCP Servers. Nothing is spawned until you configure a server, and commands run with `shell: false`, so no shell interpretation takes place. See `src/mcp-client.ts`.
+- **Filesystem access outside the vault** (Node `fs`) — Two places only. API keys and other credentials are encrypted and written to a single owner-only (`0600`) file under Electron's `userData` directory, deliberately kept out of the vault so vault sync never carries them (`src/safe-storage.ts`). Separately, `existsSync` locates the MCP server executable on `PATH` (`src/mcp-client.ts`). No other path on the system is read or written.
+- **Environment variables** — `PATH` and `HOME`/`USERPROFILE` are read to rebuild a usable search path, because Obsidian is a GUI app and does not inherit your shell's `PATH`. The parent environment is then passed to MCP child processes so that servers launched through `docker` or `uvx` find their own configuration. No environment value is sent over the network.
+- **Vault enumeration** — The Graph RAG index and the Second Brain layer walk the vault to build the search index. Note content leaves your machine only as part of a request to the AI backend you configured.
+- **Clipboard** — Written only when you press the copy button on a message; read only when you paste into the chat input.
+
+### Verifying a release
+
+Release assets from `0.7.6` onward carry GitHub artifact attestations, so you can confirm they were built from this repository:
+
+```bash
+gh attestation verify main.js --repo TeiNam/obsidian-agent-llms
+```
+
 ## Desktop Only
 
 This plugin is desktop-only (`isDesktopOnly: true`) because MCP server integration relies on spawning local child processes via stdio, which is not available on mobile platforms.
