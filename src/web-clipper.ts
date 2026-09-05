@@ -50,8 +50,14 @@ export const CLIPPER_I18N = {
   },
 } as const;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ClipperLang = Record<string, any>;
+/** 클리퍼 레이블 묶음. `as const`인 en 을 기준으로 문자열·함수 형태만 남긴 모양. */
+type ClipperLang = {
+  [K in keyof typeof CLIPPER_I18N.en]: (typeof CLIPPER_I18N.en)[K] extends (
+    ...args: infer A
+  ) => infer R
+    ? (...args: A) => R
+    : string;
+};
 
 /**
  * HTML에서 본문 텍스트를 추출하는 유틸리티
@@ -124,7 +130,7 @@ export class WebClipperModal extends Modal {
       cls: "web-clipper-url-input",
     });
     this.urlInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") this.handleSubmit();
+      if (e.key === "Enter") void this.handleSubmit();
     });
 
     // 상태 표시
@@ -136,10 +142,12 @@ export class WebClipperModal extends Modal {
     cancelBtn.addEventListener("click", () => this.close());
 
     this.submitBtn = btnRow.createEl("button", { text: this.t.summarizeBtn, cls: "web-clipper-btn-submit" });
-    this.submitBtn.addEventListener("click", () => this.handleSubmit());
+    this.submitBtn.addEventListener("click", () => {
+      void this.handleSubmit();
+    });
 
     // 포커스
-    setTimeout(() => this.urlInput.focus(), 50);
+    window.setTimeout(() => this.urlInput.focus(), 50);
   }
 
   private setStatus(msg: string, isError = false): void {
@@ -183,7 +191,7 @@ export class WebClipperModal extends Modal {
       let summary: string;
       try {
         summary = await this.summarizeWithAI(url, title, trimmedBody);
-      } catch (e) {
+      } catch {
         // AI 요약 실패 시 원본 텍스트 앞부분으로 폴백
         new Notice(this.t.summaryFallback);
         summary = body.slice(0, 2000) + (body.length > 2000 ? "\n\n..." : "");

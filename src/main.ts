@@ -9,6 +9,7 @@ import {
   MarkdownView,
   TFolder,
 } from "obsidian";
+import type { WorkspaceLeaf } from "obsidian";
 import { VaultIndexer } from "./vault-indexer";
 import type { App } from "obsidian";
 import type { MetadataSource } from "./graph-rag/graph-extractor";
@@ -239,11 +240,11 @@ export default class GeminiAssistantPlugin extends Plugin {
   // 리본 아이콘 엘리먼트 참조 (브랜딩 전환 시 갱신용)
   private ribbonIconEl!: HTMLElement;
   // modify 이벤트 파일별 디바운스 타이머
-  private indexDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private indexDebounceTimers = new Map<string, number>();
   // 서로 다른 파일은 2개까지 병렬 처리하고, 같은 경로는 오래된 작업이 뒤늦게 덮지 않게 직렬화한다.
   private indexQueue = new KeyedTaskQueue(INDEX_CONCURRENCY);
   // 접근 이력 저장 디바운스 타이머. 노트를 열 때마다 디스크에 쓰지 않기 위함이다.
-  private accessLogSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private accessLogSaveTimer: number | null = null;
   // 대화 히스토리 쓰기는 호출 순서를 보존한다. 늦게 끝난 과거 쓰기가 최신 상태를 덮지 못한다.
   private writeChatHistory = createSerialWriter((data: string) =>
     this.app.vault.adapter.write(CHAT_HISTORY_FILE, data)
@@ -317,7 +318,7 @@ export default class GeminiAssistantPlugin extends Plugin {
       const refreshMcpIndicator = () => {
         const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
         for (const leaf of leaves) {
-          (leaf.view as any).updateMcpIndicator?.();
+          if (leaf.view instanceof ChatView) leaf.view.updateMcpIndicator();
         }
       };
       refreshMcpIndicator();
@@ -379,7 +380,7 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     // 리본 아이콘 추가
     this.ribbonIconEl = this.addRibbonIcon(BRANDING.icon.id, BRANDING.displayName, () => {
-      this.activateView();
+      void this.activateView();
     });
 
     // 설정 탭 추가
@@ -418,7 +419,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         );
         // 완료 표시 후 3초 뒤 텍스트 제거
         this.statusBarItem.setText(t.statusIndexDone);
-        setTimeout(() => {
+        window.setTimeout(() => {
           this.statusBarItem.setText("");
         }, 3000);
         await this.saveIndex();
@@ -490,7 +491,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 구 경로에 예약된 인덱싱 타이머는 무의미하므로 취소한다.
         const pending = this.indexDebounceTimers.get(oldPath);
         if (pending) {
-          clearTimeout(pending);
+          window.clearTimeout(pending);
           this.indexDebounceTimers.delete(oldPath);
         }
         this.indexer.removeFile(oldPath);
@@ -536,8 +537,8 @@ export default class GeminiAssistantPlugin extends Plugin {
       Date.now(),
     );
 
-    if (this.accessLogSaveTimer) clearTimeout(this.accessLogSaveTimer);
-    this.accessLogSaveTimer = setTimeout(() => {
+    if (this.accessLogSaveTimer) window.clearTimeout(this.accessLogSaveTimer);
+    this.accessLogSaveTimer = window.setTimeout(() => {
       this.accessLogSaveTimer = null;
       void this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
     }, ACCESS_LOG_SAVE_DEBOUNCE_MS);
@@ -558,8 +559,8 @@ export default class GeminiAssistantPlugin extends Plugin {
 
     sb.accessLog = forgetPath(normalizeAccessLog(sb.accessLog), path);
     sb.reviewSurfaced = forgetPath(normalizeAccessLog(sb.reviewSurfaced), path);
-    if (this.accessLogSaveTimer) clearTimeout(this.accessLogSaveTimer);
-    this.accessLogSaveTimer = setTimeout(() => {
+    if (this.accessLogSaveTimer) window.clearTimeout(this.accessLogSaveTimer);
+    this.accessLogSaveTimer = window.setTimeout(() => {
       this.accessLogSaveTimer = null;
       void this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
     }, ACCESS_LOG_SAVE_DEBOUNCE_MS);
@@ -572,8 +573,8 @@ export default class GeminiAssistantPlugin extends Plugin {
   private scheduleIndex(file: TFile): void {
     const path = file.path;
     const existing = this.indexDebounceTimers.get(path);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
+    if (existing) window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
       this.indexDebounceTimers.delete(path);
       void this.indexQueue
         .add(path, async () => {
@@ -605,28 +606,45 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
   }
 
-  async onunload(): Promise<void> {
+  onunload(): void {
     // 디바운스 타이머 정리
     for (const timer of this.indexDebounceTimers.values()) {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
     }
     this.indexDebounceTimers.clear();
 
-    // 접근 이력 저장이 예약돼 있으면 지금 확정한다(마지막 열람 기록 유실 방지).
+    // 접근 이력 저장이 예약돼 있으면 예약을 취소하고 아래에서 지금 확정한다
+    // (마지막 열람 기록 유실 방지).
+    const settingsSavePending = this.accessLogSaveTimer !== null;
     if (this.accessLogSaveTimer) {
-      clearTimeout(this.accessLogSaveTimer);
+      window.clearTimeout(this.accessLogSaveTimer);
       this.accessLogSaveTimer = null;
-      await this.saveSettings().catch((e) => console.error("접근 이력 저장 실패:", e));
     }
 
     this.mcpManager?.disconnectAll();
-    await this.chatHistoryWritePending;
 
-    // 진행 중인 인덱싱을 먼저 끝낸다. 기다리지 않고 저장하면 대기 중 변경분이
-    // 반영되지 않은 인덱스가 디스크에 남고, 다음 로드는 그 저장본을 그대로 믿는다
-    // (자동 전체 인덱싱이 없으므로 해당 변경은 사용자가 수동 재인덱싱할 때까지 누락된다).
-    await this.indexQueue.onIdle();
-    await this.saveIndex();
+    void this.flushBeforeUnload(settingsSavePending);
+  }
+
+  /**
+   * 언로드 시 확정해야 하는 비동기 정리.
+   *
+   * `onunload`는 동기 API라 옵시디언이 반환값을 기다리지 않는다. 그래서 await 하지 않고
+   * 분리해 진행시킨다 — async onunload 로 두던 이전 구현도 실제로는 기다려지지 않았다.
+   */
+  private async flushBeforeUnload(shouldSaveSettings: boolean): Promise<void> {
+    try {
+      if (shouldSaveSettings) await this.saveSettings();
+      await this.chatHistoryWritePending;
+
+      // 진행 중인 인덱싱을 먼저 끝낸다. 기다리지 않고 저장하면 대기 중 변경분이
+      // 반영되지 않은 인덱스가 디스크에 남고, 다음 로드는 그 저장본을 그대로 믿는다
+      // (자동 전체 인덱싱이 없으므로 해당 변경은 사용자가 수동 재인덱싱할 때까지 누락된다).
+      await this.indexQueue.onIdle();
+      await this.saveIndex();
+    } catch (error) {
+      console.error("플러그인 언로드 정리 실패:", error);
+    }
   }
 
   // 사이드바 뷰 활성화
@@ -643,7 +661,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     }
 
     if (leaf) {
-      workspace.revealLeaf(leaf);
+      void workspace.revealLeaf(leaf);
     }
   }
 
@@ -823,14 +841,15 @@ export default class GeminiAssistantPlugin extends Plugin {
           // 태그는 이동보다 먼저 붙인다. 이동 후에는 경로가 바뀌어 파일 참조를 다시 찾아야 한다.
           let tagsAdded = false;
           if (plan.tags.length > 0) {
-            await this.app.fileManager.processFrontMatter(file, (fm) => {
+            await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
               // 비교 기준은 **정규화 후** 목록이다. 문자열 아닌 값이나 중복이 섞인
               // `["work", "work"]`에서 원시 길이와 비교하면 태그가 실제로 늘었는데도
               // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
-              const raw = Array.isArray(fm.tags)
-                ? fm.tags.filter((v: unknown): v is string => typeof v === "string")
-                : typeof fm.tags === "string"
-                  ? [fm.tags]
+              const rawTags = fm.tags;
+              const raw = Array.isArray(rawTags)
+                ? (rawTags as unknown[]).filter((v): v is string => typeof v === "string")
+                : typeof rawTags === "string"
+                  ? [rawTags]
                   : [];
               // 중복 판정은 **제안 태그와 같은 정규화 기준**으로 한다. 기존 `Work`나
               // `#work`가 있는데 제안 `work`를 별개로 추가하면 의미가 같은 태그가 둘
@@ -1091,7 +1110,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         // 별칭은 프론트매터 전용 API로 고친다. YAML을 직접 파싱·재직렬화하면 주석과
         // 형식이 뭉개진다.
         let addedAliases = 0;
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
           // 원시 배열 길이가 아니라 **정규화 후** 개수와 비교한다. `[1, null, "old"]`처럼
           // 잡음이 섞이면 정규화 후가 원시 길이보다 짧아, 별칭이 실제로 늘었는데도
           // 안 늘어난 것으로 보고 쓰기를 건너뛴다.
@@ -1896,7 +1915,7 @@ export default class GeminiAssistantPlugin extends Plugin {
     if (hasMigratedKeys) {
       // 기존 data.json의 키를 복호화 후 로컬 파일로 저장
       const decrypted = decryptSettings(raw);
-      saveCredentialsToLocal(decrypted as unknown as Record<string, unknown>);
+      saveCredentialsToLocal(decrypted);
       // data.json에서 민감 필드 제거하여 저장
       const stripped = stripSensitiveFields(decrypted);
       await this.saveData(stripped);
@@ -1911,7 +1930,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         raw as { awsAuthMethod?: string },
         loadCredentialsFromLocal()
       );
-      this.settings = { ...raw, ...credentials } as GeminiAssistantSettings;
+      this.settings = { ...raw, ...credentials };
     }
 
     // 마이그레이션: 임베딩 모델이 빈 문자열이면 기본값으로 복원
@@ -2194,9 +2213,12 @@ export default class GeminiAssistantPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     for (const leaf of leaves) {
       // 뷰 내부 헤더(ba-title-icon 등)는 rebuildUI(=onOpen 재실행)로 새 BRANDING을 반영한다.
-      (leaf.view as any).rebuildUI?.();
-      // 탭 헤더 아이콘/타이틀(getIcon/getDisplayText)도 갱신 시도 (미지원 시 no-op)
-      (leaf as any).updateHeader?.();
+      if (leaf.view instanceof ChatView) void leaf.view.rebuildUI();
+      // 탭 헤더 아이콘/타이틀(getIcon/getDisplayText)을 즉시 갱신한다.
+      // `updateHeader`는 공개 타입 정의에 없으므로 존재할 때만 부른다 —
+      // 없으면 다음 리렌더에 반영되므로 no-op으로 둬도 안전하다.
+      const leafHeader = leaf as WorkspaceLeaf & { updateHeader?: () => void };
+      leafHeader.updateHeader?.();
     }
   }
 
@@ -2230,8 +2252,8 @@ export default class GeminiAssistantPlugin extends Plugin {
     try {
       const adapter = this.app.vault.adapter;
       if (!(await adapter.exists(CHAT_HISTORY_FILE))) return [];
-      const parsed = JSON.parse(await adapter.read(CHAT_HISTORY_FILE));
-      return Array.isArray(parsed) ? parsed as ChatMessage[] : [];
+      const parsed: unknown = JSON.parse(await adapter.read(CHAT_HISTORY_FILE));
+      return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
     } catch {
       // 히스토리 파일 없거나 파싱 실패 시 빈 배열
     }
@@ -2285,7 +2307,7 @@ export default class GeminiAssistantPlugin extends Plugin {
         const tags = getAllTags(cache) ?? undefined;
         return {
           tags: tags ?? undefined,
-          frontmatter: cache.frontmatter as Record<string, unknown> | undefined,
+          frontmatter: cache.frontmatter,
           // frontmatter 끝 오프셋(본문 분리용). 캐시에 위치 정보가 없으면 undefined
           frontmatterEndOffset: cache.frontmatterPosition?.end?.offset,
         };

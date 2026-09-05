@@ -75,6 +75,10 @@ function makeApp(initial: Record<string, string> = {}) {
       },
       delete: async (target: TFile | TFolder) => remove(target.path),
     },
+    // 원복 시 삭제는 사용자 삭제 설정을 따르는 fileManager.trashFile 로 한다.
+    fileManager: {
+      trashFile: async (target: TFile | TFolder) => remove(target.path),
+    },
   } as any;
 
   return {

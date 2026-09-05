@@ -202,7 +202,7 @@ export function normalizeSearchFilter(raw: Record<string, unknown>): {
     const value = raw[key];
     if (value === undefined || value === null || value === "") continue;
     if (typeof value !== "string" || parseLocalDayStart(value) === null) {
-      problems.push(`${key}는 "YYYY-MM-DD" 형식이어야 합니다 (받은 값: ${String(value)}).`);
+      problems.push(`${key}는 "YYYY-MM-DD" 형식이어야 합니다 (받은 값: ${JSON.stringify(value)}).`);
       continue;
     }
     filter[key] = value.trim();
@@ -275,7 +275,7 @@ const MISSING = Symbol("missing-frontmatter-property");
 function getPropertyValue(
   frontmatter: Record<string, unknown> | undefined,
   path: string
-): unknown | typeof MISSING {
+): unknown {
   let current: unknown = frontmatter;
   for (const segment of path.split(".").map((part) => part.trim())) {
     if (!current || typeof current !== "object" || Array.isArray(current) || segment === "") {

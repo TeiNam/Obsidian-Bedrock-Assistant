@@ -6,19 +6,25 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "keywords": [],
   "author": "teinam",
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@eslint/json": "^0.14.0",
     "@types/node": "^20.0.0",
-    "builtin-modules": "^3.3.0",
     "esbuild": "^0.21.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.2",
+    "fast-check": "^3.23.2",
     "obsidian": "latest",
     "tslib": "2.6.2",
     "typescript": "5.4.5",
-    "fast-check": "^3.23.2",
+    "typescript-eslint": "^8.69.0",
     "vitest": "^4.0.18"
   },
   "dependencies": {

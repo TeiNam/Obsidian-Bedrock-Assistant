@@ -454,6 +454,10 @@ export interface ToolDefinition {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+  /** MCP 서버에서 온 도구일 때 그 서버 이름. 내장 도구에는 없다. */
+  _mcpServer?: string;
+  /** MCP 서버가 보고한 원래 도구 이름(접두어 없는 형태). */
+  _mcpToolName?: string;
 }
 
 export interface ToolUseBlock {

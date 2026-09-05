@@ -4,6 +4,10 @@ import {
   ConverseStreamCommand,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import type {
+  ConverseCommandInput,
+  ConverseStreamCommandInput,
+} from "@aws-sdk/client-bedrock-runtime";
 import {
   BedrockClient as BedrockControlClient,
   ListInferenceProfilesCommand,
@@ -172,7 +176,7 @@ export class BedrockClient implements IAiClient {
 
   private createClient(): BedrockRuntimeClient {
     const config = this.buildClientConfig();
-    return new BedrockRuntimeClient(config as any);
+    return new BedrockRuntimeClient(config);
   }
 
   /**
@@ -278,7 +282,7 @@ export class BedrockClient implements IAiClient {
   // Bedrock 컨트롤 플레인 클라이언트 생성 (모델 목록 조회용)
   private createControlClient(): BedrockControlClient {
     const config = this.buildClientConfig();
-    return new BedrockControlClient(config as any);
+    return new BedrockControlClient(config);
   }
 
   // Converse API 입력 구성
@@ -365,10 +369,12 @@ export class BedrockClient implements IAiClient {
     onTextDelta?: (text: string) => void,
     abortSignal?: AbortSignal
   ): Promise<ConverseResult> {
-    const command = new ConverseStreamCommand(input as any);
+    // 요청 본문은 모델별 추론 강도 필드까지 동적으로 조립하므로 SDK 입력 타입과
+    // 정적으로 맞물리지 않는다. 단정은 이 경계 한 곳에서만 한다.
+    const command = new ConverseStreamCommand(input as unknown as ConverseStreamCommandInput);
     const response = await this.client.send(command, {
       abortSignal,
-    } as any);
+    });
 
     const contentBlocks: ContentBlock[] = [];
     let currentText = "";
@@ -420,7 +426,7 @@ export class BedrockClient implements IAiClient {
             // 도구 호출 블록 완성
             let parsedInput: Record<string, unknown> = {};
             try {
-              parsedInput = JSON.parse(currentToolUse.inputJson || "{}");
+              parsedInput = JSON.parse(currentToolUse.inputJson || "{}") as Record<string, unknown>;
             } catch {
               // JSON 파싱 실패 시 빈 객체
             }
@@ -459,10 +465,10 @@ export class BedrockClient implements IAiClient {
     onTextDelta?: (text: string) => void,
     abortSignal?: AbortSignal
   ): Promise<ConverseResult> {
-    const command = new ConverseCommand(input as any);
+    const command = new ConverseCommand(input as unknown as ConverseCommandInput);
     const response = await this.client.send(command, {
       abortSignal,
-    } as any);
+    });
 
     const contentBlocks: ContentBlock[] = [];
     const stopReason = response.stopReason || "end_turn";
@@ -508,7 +514,7 @@ export class BedrockClient implements IAiClient {
     });
 
     const response = await this.client.send(command);
-    const body = JSON.parse(new TextDecoder().decode(response.body));
+    const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
     const embedding = extractEmbedding(modelId, body);
     if (embedding === null) {
       throw new Error(noticeI18n(this.settings.language).errEmbeddingUnparsable("Bedrock", modelId));
@@ -533,7 +539,7 @@ export class BedrockClient implements IAiClient {
       // 분류·요약은 짧고 결정적인 출력이 바람직하므로 최저 강도를 쓴다.
       ...this.effortRequestFields("minimal"),
     };
-    const command = new ConverseCommand(input as any);
+    const command = new ConverseCommand(input as unknown as ConverseCommandInput);
     const response = await this.client.send(command);
     const output = response.output;
     if (output && "message" in output && output.message?.content) {

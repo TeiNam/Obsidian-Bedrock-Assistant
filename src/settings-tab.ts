@@ -26,6 +26,7 @@ import {
 import { normalizeChunkConfig } from "./graph-rag/chunker";
 import { normalizeTraversalDepth } from "./graph-rag/graph-traversal";
 import { parseMcpConfig } from "./mcp-client";
+import { voidAsync } from "./async-utils";
 
 // To-Do 폴더 기본값 (빈/공백 입력 정규화에 사용)
 const TODO_FOLDER_DEFAULT = "ToDo";
@@ -620,11 +621,50 @@ export const I18N = {
   },
 } as const;
 
+/**
+ * 설정 탭 레이블 묶음.
+ *
+ * `I18N`은 `as const`라 값마다 리터럴 타입이 붙는다. 모달에 넘길 때는 언어별 리터럴을
+ * 구분할 이유가 없으므로 en 을 기준으로 문자열·함수 형태만 남긴 모양으로 넓힌다.
+ */
+export type SettingsLang = {
+  [K in keyof typeof I18N.en]: (typeof I18N.en)[K] extends (...args: infer A) => infer R
+    ? (...args: A) => R
+    : string;
+};
+
+/**
+ * 설정 변경을 반영하기 위해 채팅 뷰에서 호출하는 메서드들.
+ *
+ * ChatView 를 직접 import 하지 않는다 — 설정 탭이 뷰 모듈 전체를 끌어올 이유가 없고,
+ * 필요한 건 이 네 개뿐이다. 옵시디언 1.7+ 는 백그라운드 leaf 의 뷰를 지연 생성하므로
+ * 아직 실체가 없는 뷰도 있다. 그래서 전부 옵셔널이고 호출도 옵셔널 체이닝으로 한다.
+ */
+interface ChatViewHooks {
+  rebuildUI?: () => Promise<void>;
+  applyFontSize?: () => void;
+  clearChat?: () => Promise<void>;
+  updateMcpIndicator?: () => void;
+}
+
+/**
+ * 열려 있는 채팅 뷰마다 콜백을 실행한다.
+ *
+ * 설정 변경(언어·폰트 크기·히스토리 삭제·MCP 연결)을 이미 떠 있는 뷰에 즉시 반영하는
+ * 경로가 네 군데라 한곳으로 모았다. 뷰가 없으면 아무 일도 하지 않는다.
+ */
+function forEachChatView(app: App, apply: (view: ChatViewHooks) => void): void {
+  for (const leaf of app.workspace.getLeavesOfType(BRANDING.viewType)) {
+    // 이 뷰 타입으로 등록되는 것은 ChatView 뿐이다.
+    apply(leaf.view as unknown as ChatViewHooks);
+  }
+}
+
 // 설정 탭
 export class GeminiSettingTab extends PluginSettingTab {
   plugin: GeminiAssistantPlugin;
   // 자격증명 변경 시 모델 목록 재로드 디바운스 타이머
-  private credentialDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private credentialDebounceTimer: number | null = null;
   // 탭 오픈 시점의 임베딩 구성 시그니처. 탭을 닫을 때 변경 여부를 비교해
   // 재인덱싱 안내를 띄운다. (display()는 재렌더로 여러 번 호출되므로 최초 1회만 기록)
   private embeddingSignatureSnapshot: string | null = null;
@@ -637,9 +677,9 @@ export class GeminiSettingTab extends PluginSettingTab {
   // 자격증명 변경 후 모델 목록 재로드 (디바운스 1.5초)
   private scheduleModelReload(): void {
     if (this.credentialDebounceTimer) {
-      clearTimeout(this.credentialDebounceTimer);
+      window.clearTimeout(this.credentialDebounceTimer);
     }
-    this.credentialDebounceTimer = setTimeout(() => {
+    this.credentialDebounceTimer = window.setTimeout(() => {
       this.credentialDebounceTimer = null;
       this.display();
     }, 1500);
@@ -687,10 +727,7 @@ export class GeminiSettingTab extends PluginSettingTab {
             // MCP 연결은 설정을 참조하지 않으므로 언어를 직접 밀어준다.
             this.plugin.mcpManager?.setLocale(value as Locale);
             // 열려있는 채팅 뷰 UI 즉시 재빌드
-            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-            for (const leaf of leaves) {
-              (leaf.view as any).rebuildUI?.();
-            }
+            forEachChatView(this.app, (view) => void view.rebuildUI?.());
             this.display();
           })
       );
@@ -860,7 +897,7 @@ export class GeminiSettingTab extends PluginSettingTab {
             this.display();
           });
           // 비동기로 모델 목록 로드 후 드롭다운 갱신
-          (async () => {
+          void (async () => {
             try {
               const models = await this.plugin.aiClient.listModels();
               dropdown.selectEl.empty();
@@ -911,7 +948,7 @@ export class GeminiSettingTab extends PluginSettingTab {
             this.display();
           });
           // 비동기로 모델 목록 로드 후 드롭다운 갱신
-          (async () => {
+          void (async () => {
             try {
               const models = await this.plugin.aiClient.listModels();
               // 빈 목록이면 기존 옵션을 지우지 않는다. 목록 조회는 컨트롤 플레인
@@ -949,7 +986,7 @@ export class GeminiSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
           // 비동기로 임베딩 모델 목록 로드 후 드롭다운 갱신 (kind="embedding")
-          (async () => {
+          void (async () => {
             try {
               const models = await this.plugin.aiClient.listModels("embedding");
               // 빈 목록/오류 시 현재값 유지 (Req 7.9)
@@ -1086,11 +1123,7 @@ export class GeminiSettingTab extends PluginSettingTab {
           this.plugin.settings.chatFontSize = clamped;
           await this.plugin.saveSettings();
           // 열려있는 채팅 뷰에 즉시 반영
-          const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-          for (const leaf of leaves) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (leaf.view as any).applyFontSize?.();
-          }
+          forEachChatView(this.app, (view) => view.applyFontSize?.());
           // 범위를 벗어난 입력은 보정된 값으로 표시 갱신
           if (clamped !== parsed) text.setValue(String(clamped));
         });
@@ -1157,11 +1190,7 @@ export class GeminiSettingTab extends PluginSettingTab {
           .onClick(async () => {
             await this.plugin.clearAllSessions();
             // 열려있는 채팅 뷰도 초기화
-            const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-            for (const leaf of leaves) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (leaf.view as any).clearChat?.();
-            }
+            forEachChatView(this.app, (view) => void view.clearChat?.());
             new Notice(t.clearHistoryConfirm);
           })
       );
@@ -1183,11 +1212,11 @@ export class GeminiSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
+          new FolderSuggestModal(this.app, voidAsync(async (folder) => {
             this.plugin.settings.templateFolder = folder;
             await this.plugin.saveSettings();
             this.display();
-          }, t.folderSelectPlaceholder).open();
+          }), t.folderSelectPlaceholder).open();
         })
       );
 
@@ -1332,7 +1361,7 @@ export class GeminiSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
+          new FolderSuggestModal(this.app, voidAsync(async (folder) => {
             const normalized = normalizeSecondBrainSettings({
               ...this.plugin.settings.secondBrain,
               wikiFolder: folder,
@@ -1340,7 +1369,7 @@ export class GeminiSettingTab extends PluginSettingTab {
             Object.assign(this.plugin.settings.secondBrain, normalized);
             await this.plugin.saveSettings();
             this.display();
-          }, t.folderSelectPlaceholder).open();
+          }), t.folderSelectPlaceholder).open();
         })
       );
 
@@ -1410,11 +1439,11 @@ export class GeminiSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
+          new FolderSuggestModal(this.app, voidAsync(async (folder) => {
             this.plugin.settings.todoFolder = normalizePlannerSetting(folder, TODO_FOLDER_DEFAULT);
             await this.plugin.saveSettings();
             this.display();
-          }, t.folderSelectPlaceholder).open();
+          }), t.folderSelectPlaceholder).open();
         })
       );
 
@@ -1445,11 +1474,11 @@ export class GeminiSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
+          new FolderSuggestModal(this.app, voidAsync(async (folder) => {
             this.plugin.settings.todoArchiveFolder = folder;
             await this.plugin.saveSettings();
             this.display();
-          }, t.folderSelectPlaceholder).open();
+          }), t.folderSelectPlaceholder).open();
         })
       );
 
@@ -1512,11 +1541,11 @@ export class GeminiSettingTab extends PluginSettingTab {
       )
       .addButton((btn) =>
         btn.setIcon("folder").setTooltip("Browse").onClick(() => {
-          new FolderSuggestModal(this.app, async (folder) => {
+          new FolderSuggestModal(this.app, voidAsync(async (folder) => {
             this.plugin.settings.webClipFolder = folder;
             await this.plugin.saveSettings();
             this.display();
-          }, t.folderSelectPlaceholder).open();
+          }), t.folderSelectPlaceholder).open();
         })
       );
 
@@ -1690,21 +1719,11 @@ export class GeminiSettingTab extends PluginSettingTab {
       text: t.readmeLabel,
       cls: "ba-readme-link",
     });
-    const readmeFilePath = `${this.app.vault.configDir}/plugins/${BRANDING.pluginId}/${t.readmeFile}`;
-    readmeLink.addEventListener("click", async (e) => {
+    readmeLink.addEventListener("click", (e) => {
       e.preventDefault();
-      try {
-        // README 파일은 .obsidian 하위 플러그인 폴더에 위치하므로 adapter를 직접 사용
-        await this.app.vault.adapter.read(readmeFilePath);
-        const leaf = this.app.workspace.getLeaf("tab");
-        await leaf.openFile(
-          this.app.vault.getAbstractFileByPath(readmeFilePath) as any
-        ).catch(() => {
-          window.open(`https://github.com/teinam/obsidian-agent-llms/blob/main/${t.readmeFile}`);
-        });
-      } catch {
-        window.open(`https://github.com/teinam/obsidian-agent-llms/blob/main/${t.readmeFile}`);
-      }
+      // README는 플러그인 폴더(설정 디렉터리 하위)에 있어 볼트 인덱스에 잡히지 않는다.
+      // 즉 탭으로 열 수 있는 TFile 이 존재하지 않으므로 GitHub 사본으로 보낸다.
+      window.open(`https://github.com/teinam/obsidian-agent-llms/blob/main/${t.readmeFile}`);
     });
   }
 
@@ -1831,7 +1850,7 @@ export class GeminiSettingTab extends PluginSettingTab {
           if (kind === "chat") this.display();
         });
         // 비동기로 모델 목록 로드 후 드롭다운 갱신
-        (async () => {
+        void (async () => {
           try {
             const models = await this.plugin.aiClient.listModels(kind);
             // 빈 목록이면 현재값 유지 (Req 7.9, 12.4)
@@ -1860,7 +1879,7 @@ export class GeminiSettingTab extends PluginSettingTab {
   // 비밀 입력 필드 옆에 눈 아이콘 토글 버튼 추가
   private addToggleVisibilityButton(controlEl: HTMLElement): void {
     const wrapper = controlEl.querySelector(".setting-item-control") || controlEl;
-    const input = wrapper.querySelector("input") as HTMLInputElement | null;
+    const input = wrapper.querySelector("input");
     if (!input) return;
 
     // 입력 필드를 감싸는 래퍼 생성
@@ -1883,13 +1902,12 @@ export class GeminiSettingTab extends PluginSettingTab {
 
 
 // 시스템 프롬프트 편집 모달
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 class SystemPromptModal extends Modal {
   private plugin: GeminiAssistantPlugin;
-  private t: Record<string, any>;
+  private t: SettingsLang;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(app: App, plugin: GeminiAssistantPlugin, t: Record<string, any>) {
+  constructor(app: App, plugin: GeminiAssistantPlugin, t: SettingsLang) {
     super(app);
     this.plugin = plugin;
     this.t = t;
@@ -1917,13 +1935,13 @@ class SystemPromptModal extends Modal {
       text: this.t.systemPromptSave,
       cls: "mod-cta",
     });
-    saveBtn.addEventListener("click", async () => {
+    saveBtn.addEventListener("click", voidAsync(async () => {
       this.plugin.settings.systemPrompt = textarea.value;
       await this.plugin.saveSettings();
       this.close();
-    });
+    }));
 
-    setTimeout(() => textarea.focus(), 50);
+    window.setTimeout(() => textarea.focus(), 50);
   }
 
   onClose(): void {
@@ -1932,19 +1950,17 @@ class SystemPromptModal extends Modal {
 }
 
 // 커스텀 스킬 추가/편집 모달 (A안)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 class SkillEditModal extends Modal {
   private plugin: GeminiAssistantPlugin;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private t: Record<string, any>;
+  private t: SettingsLang;
   private existing: CustomSkill | null;
   private onSaved: () => void;
 
   constructor(
     app: App,
     plugin: GeminiAssistantPlugin,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    t: Record<string, any>,
+    t: SettingsLang,
     existing: CustomSkill | null,
     onSaved: () => void
   ) {
@@ -1996,7 +2012,7 @@ class SkillEditModal extends Modal {
     textarea.rows = 14;
 
     // 생성하기: 이름 + 설명(어떤 일을 하는지)을 LLM에 전달해 스킬 본문(마크다운)을 작성
-    genBtn.addEventListener("click", async () => {
+    genBtn.addEventListener("click", voidAsync(async () => {
       const name = nameInput.value.trim();
       const purpose = descInput.value.trim();
       if (!name || !purpose) {
@@ -2023,14 +2039,14 @@ class SkillEditModal extends Modal {
         genBtn.disabled = false;
         if (label) genBtn.textContent = label;
       }
-    });
+    }));
 
     const btnRow = contentEl.createDiv({ cls: "ba-sysprompt-btn-row" });
     const cancelBtn = btnRow.createEl("button", { text: this.t.skillCancel });
     cancelBtn.addEventListener("click", () => this.close());
 
     const saveBtn = btnRow.createEl("button", { text: this.t.skillSave, cls: "mod-cta" });
-    saveBtn.addEventListener("click", async () => {
+    saveBtn.addEventListener("click", voidAsync(async () => {
       const name = nameInput.value.trim();
       const content = textarea.value.trim();
       if (!name || !content) {
@@ -2056,9 +2072,9 @@ class SkillEditModal extends Modal {
       await this.plugin.saveSettings();
       this.close();
       this.onSaved();
-    });
+    }));
 
-    setTimeout(() => nameInput.focus(), 50);
+    window.setTimeout(() => nameInput.focus(), 50);
   }
 
   // 이름에서 slug형 고유 id를 생성한다(중복 시 -2, -3 ... 접미사).
@@ -2095,7 +2111,7 @@ class McpConfigModal extends Modal {
   // 오류 표시 영역 참조
   private errorIndicatorEl!: HTMLElement;
   // 디바운스 타이머 (입력 시 300ms 지연 후 검증 실행)
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private debounceTimer: number | null = null;
   // 템플릿 삽입 버튼 참조 (input 핸들러에서 가시성 토글에 사용)
   private templateBtn!: HTMLButtonElement;
 
@@ -2157,10 +2173,10 @@ class McpConfigModal extends Modal {
     this.textArea.addEventListener("input", () => {
       // 기존 타이머가 있으면 취소
       if (this.debounceTimer) {
-        clearTimeout(this.debounceTimer);
+        window.clearTimeout(this.debounceTimer);
       }
       // 300ms 후 검증 실행
-      this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = window.setTimeout(() => {
         this.debounceTimer = null;
         const text = this.textArea.value;
         // 빈 텍스트일 때 검증 건너뛰기: 오류 표시 숨김, 템플릿 버튼 표시
@@ -2232,7 +2248,9 @@ class McpConfigModal extends Modal {
       text: t.mcpModalSave,
       cls: "mod-cta",
     });
-    saveBtn.addEventListener("click", () => this.handleSave());
+    saveBtn.addEventListener("click", () => {
+      void this.handleSave();
+    });
 
     const cancelBtn = btnRow.createEl("button", { text: t.mcpModalCancel });
     cancelBtn.addEventListener("click", () => this.close());
@@ -2281,10 +2299,7 @@ class McpConfigModal extends Modal {
     this.onSaved();
 
     // 채팅 뷰의 MCP 인디케이터도 갱신
-    const leaves = this.app.workspace.getLeavesOfType(BRANDING.viewType);
-    for (const leaf of leaves) {
-      (leaf.view as any).updateMcpIndicator?.();
-    }
+    forEachChatView(this.app, (view) => view.updateMcpIndicator?.());
   }
 
   /**
@@ -2344,7 +2359,7 @@ class McpConfigModal extends Modal {
   onClose(): void {
     // 디바운스 타이머 정리
     if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+      window.clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
     this.contentEl.empty();

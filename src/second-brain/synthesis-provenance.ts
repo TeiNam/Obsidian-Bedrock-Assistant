@@ -1,4 +1,4 @@
-import { TFile, normalizePath, type App } from "obsidian";
+import { normalizePath, type App } from "obsidian";
 import type { Locale, VaultIndexEntry } from "../types";
 import type { VaultIndexer } from "../vault-indexer";
 import { contentHash } from "../content-hash";

@@ -867,8 +867,8 @@ export class ToolExecutor {
     }
     const isFolder = target instanceof TFolder;
     const kind = isFolder ? this.tt.kindFolder : this.tt.kindFile;
-    // 옵시디언 휴지통(.trash)으로 이동
-    await this.app.vault.trash(target, false);
+    // 사용자가 설정한 삭제 방식(시스템 휴지통 / .trash / 영구 삭제)을 따른다.
+    await this.app.fileManager.trashFile(target);
     new Notice(this.n.toolDeleted(kind, path));
     return this.tt.deleted(kind, path);
   }
@@ -912,7 +912,7 @@ export class ToolExecutor {
     const body = typeof input.body === "string" ? input.body : "";
     const category = typeof input.category === "string" ? input.category : "";
     const metaInput = (input.meta && typeof input.meta === "object"
-      ? (input.meta as Record<string, unknown>)
+      ? input.meta
       : {}) as Partial<AiFirstMeta>;
 
     // 카테고리가 표준 카테고리면 하위 폴더, 아니면 위키 루트에 생성

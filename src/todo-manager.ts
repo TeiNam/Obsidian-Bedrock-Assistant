@@ -1,7 +1,7 @@
 // To-Do 관련 유틸리티 함수 (chat-view.ts에서 분리)
 // createTodoNote, getUnfinishedTasks, injectCarryOverTasks 등 To-Do 생성/관리 로직
 
-import { TFile, Notice, normalizePath } from "obsidian";
+import { TFile, TFolder, Notice, normalizePath } from "obsidian";
 import type { App, TAbstractFile } from "obsidian";
 import type GeminiAssistantPlugin from "./main";
 import type { ViewLang } from "./chat-view-i18n";
@@ -171,7 +171,7 @@ export async function getUnfinishedTasks(app: App, todoFolder: string, today: Da
   const folder = app.vault.getAbstractFileByPath(todoFolder);
   if (!folder) return [];
 
-  const children = (folder as any).children || [];
+  const children = folder instanceof TFolder ? folder.children : [];
   // YYYY-MM-DD.md 형식 파일만 필터링하고 날짜순 정렬 (내림차순)
   const dated: { file: TFile; date: Date }[] = [];
   for (const child of children) {
@@ -273,7 +273,7 @@ export async function getUnfinishedTasksBySection(
   const folder = app.vault.getAbstractFileByPath(todoFolder);
   if (!folder) return new Map<string, string[]>();
 
-  const children = (folder as any).children || [];
+  const children = folder instanceof TFolder ? folder.children : [];
   const dated: { file: TFile; date: Date }[] = [];
   for (const child of children) {
     if (!(child instanceof TFile) || child.extension !== "md") continue;
@@ -399,7 +399,7 @@ export async function collectTodoCandidates(
   const folder = app.vault.getAbstractFileByPath(normalizePath(todoFolder));
   if (!folder) return candidates;
 
-  const children = (folder as any).children || [];
+  const children = folder instanceof TFolder ? folder.children : [];
   for (const child of children) {
     if (!(child instanceof TFile) || child.extension !== "md") continue;
     const parsed = parseTodoBasename(child.basename);
@@ -651,7 +651,7 @@ export async function getDatedNotesFromPrevTodo(
   const folder = app.vault.getAbstractFileByPath(todoFolder);
   if (!folder) return [];
 
-  const children = (folder as any).children || [];
+  const children = folder instanceof TFolder ? folder.children : [];
   const dated: { file: TFile; date: Date }[] = [];
   for (const child of children) {
     if (!(child instanceof TFile) || child.extension !== "md") continue;
@@ -697,7 +697,7 @@ export function parseDateFromNoteLine(
   // 1) YYYY-MM-DD
   const m1 = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
   // 2) M/D 또는 MM/DD (요일 옵션)
-  const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^\)]*\))?/) : null;
+  const m2 = !m1 ? cleaned.match(/(\d{1,2})\/(\d{1,2})(?:\([^)]*\))?/) : null;
   // 3) N월 N일
   const m3 = (!m1 && !m2) ? cleaned.match(/(\d{1,2})월\s*(\d{1,2})일/) : null;
 
@@ -725,7 +725,7 @@ export function parseDateFromNoteLine(
   if (datePattern && datePattern.index !== undefined) {
     afterDateRaw = cleaned.substring(datePattern.index + datePattern[0].length).trim();
     // 요일 괄호 제거: (화), (월) 등
-    afterDateRaw = afterDateRaw.replace(/^\([^\)]*\)\s*/, "").trim();
+    afterDateRaw = afterDateRaw.replace(/^\([^)]*\)\s*/, "").trim();
   }
 
   const timeMatchInAfter = afterDateRaw.match(/^(\d{1,2}:\d{2})/);
@@ -847,7 +847,7 @@ export async function archiveOldTodos(
 
   const folder = app.vault.getAbstractFileByPath(normalizePath(todoFolder));
   if (folder) {
-    const children = ((folder as any).children || []) as TAbstractFile[];
+    const children: TAbstractFile[] = folder instanceof TFolder ? folder.children : [];
     for (const child of children) {
       if (!(child instanceof TFile) || child.extension !== "md") continue;
       const parsed = parseTodoBasename(child.basename);

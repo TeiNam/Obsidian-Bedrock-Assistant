@@ -202,9 +202,9 @@ function parseConfidenceToken(raw: string): Confidence | undefined {
 function parseTagsToken(raw: string): string[] | undefined {
   const t = raw.trim();
   try {
-    const parsed = JSON.parse(t);
+    const parsed: unknown = JSON.parse(t);
     if (Array.isArray(parsed)) {
-      return parsed.map((x) => String(x));
+      return (parsed as unknown[]).map((x) => String(x));
     }
   } catch {
     // 손상된 tags 토큰은 무시(부분 파싱)

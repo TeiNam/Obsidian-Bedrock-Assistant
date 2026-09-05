@@ -546,7 +546,7 @@ export function buildEffortParams(
  */
 export function generateToolUseId(): string {
 	// crypto.randomUUID는 부수효과가 없는 순수 난수 생성으로, 호출마다 고유 ID를 반환한다.
-	const cryptoObj = (globalThis as { crypto?: { randomUUID?: () => string } })
+	const cryptoObj = (window as { crypto?: { randomUUID?: () => string } })
 		.crypto;
 	if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
 		return `tooluse_${cryptoObj.randomUUID()}`;
@@ -888,7 +888,7 @@ export function toOpenAIMessages(messages: ConverseMessage[]): unknown[] {
 	const result: unknown[] = [];
 
 	for (const msg of messages) {
-		const blocks = (msg.content as unknown[]).map(normalizeBlock);
+		const blocks = msg.content.map(normalizeBlock);
 
 		const textSegments: string[] = [];
 		const toolCalls: unknown[] = [];
@@ -979,7 +979,7 @@ export function toOllamaMessages(messages: ConverseMessage[]): unknown[] {
 	const result: unknown[] = [];
 
 	for (const msg of messages) {
-		const blocks = (msg.content as unknown[]).map(normalizeBlock);
+		const blocks = msg.content.map(normalizeBlock);
 
 		const textSegments: string[] = [];
 		const toolCalls: unknown[] = [];

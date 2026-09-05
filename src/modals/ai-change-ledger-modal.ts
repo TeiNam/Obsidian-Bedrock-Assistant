@@ -57,7 +57,7 @@ export class AiChangeLedgerModal extends Modal {
       const row = list.createEl("li");
       row.createEl("strong", { text: record.label });
       row.createSpan({ text: ` — ${new Date(record.createdAt).toLocaleString()}` });
-      row.createEl("div", {
+      row.createDiv({
         cls: "setting-item-description",
         text: record.after.map((snapshot) => snapshot.path).join(", "),
       });

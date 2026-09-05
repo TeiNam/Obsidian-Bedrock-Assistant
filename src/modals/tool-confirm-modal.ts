@@ -101,7 +101,7 @@ export class ToolConfirmModal extends Modal {
   private handleDontAsk(checked: boolean): void {
     if (checked) {
       this.plugin.settings.confirmToolExecution = false;
-      this.plugin.saveSettings();
+      void this.plugin.saveSettings();
     }
   }
 

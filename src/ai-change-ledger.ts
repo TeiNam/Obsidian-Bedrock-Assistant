@@ -43,6 +43,11 @@ function isSnapshot(value: unknown, parent?: string): value is AiPathSnapshot {
   );
 }
 
+/** unknown 이 스냅샷 배열인지 확인한다(Array.isArray 만으로는 원소 타입이 any 로 남는다). */
+function isSnapshotArray(value: unknown): value is AiPathSnapshot[] {
+  return Array.isArray(value) && value.every((item) => isSnapshot(item));
+}
+
 function isRecord(value: unknown): value is AiChangeRecord {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
@@ -50,10 +55,8 @@ function isRecord(value: unknown): value is AiChangeRecord {
     typeof item.id !== "string" ||
     typeof item.label !== "string" ||
     typeof item.createdAt !== "number" ||
-    !Array.isArray(item.before) ||
-    !Array.isArray(item.after) ||
-    !item.before.every((snapshot) => isSnapshot(snapshot)) ||
-    !item.after.every((snapshot) => isSnapshot(snapshot))
+    !isSnapshotArray(item.before) ||
+    !isSnapshotArray(item.after)
   ) {
     return false;
   }
@@ -139,7 +142,7 @@ export class AiChangeLedger {
   async load(): Promise<void> {
     try {
       if (!(await this.app.vault.adapter.exists(this.storagePath))) return;
-      const parsed = JSON.parse(await this.app.vault.adapter.read(this.storagePath));
+      const parsed: unknown = JSON.parse(await this.app.vault.adapter.read(this.storagePath));
       this.records = Array.isArray(parsed)
         ? parsed.filter(isRecord).slice(-AI_CHANGE_LEDGER_LIMIT)
         : [];
@@ -158,29 +161,24 @@ export class AiChangeLedger {
     if (roots.length === 0) return action();
 
     const before = await Promise.all(roots.map((path) => snapshotPath(this.app, path)));
-    let result!: T;
-    let thrown: unknown;
     try {
-      result = await action();
-    } catch (error) {
-      thrown = error;
+      return await action();
+    } finally {
+      // 작업이 실패해도 부분 변경은 남을 수 있으므로 성공 여부와 무관하게 원장에 기록한다.
+      // finally 로 두면 원래 예외가 그대로 호출부로 올라간다.
+      const after = await Promise.all(roots.map((path) => snapshotPath(this.app, path)));
+      if (!sameSnapshots(before, after)) {
+        this.records.push({
+          id: window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+          label,
+          createdAt: Date.now(),
+          before,
+          after,
+        });
+        this.records = this.records.slice(-AI_CHANGE_LEDGER_LIMIT);
+        await this.persist();
+      }
     }
-
-    const after = await Promise.all(roots.map((path) => snapshotPath(this.app, path)));
-    if (!sameSnapshots(before, after)) {
-      this.records.push({
-        id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
-        label,
-        createdAt: Date.now(),
-        before,
-        after,
-      });
-      this.records = this.records.slice(-AI_CHANGE_LEDGER_LIMIT);
-      await this.persist();
-    }
-
-    if (thrown !== undefined) throw thrown;
-    return result;
   }
 
   async undoLast(): Promise<UndoResult> {
@@ -195,7 +193,7 @@ export class AiChangeLedger {
     // 겹치는 경로는 저장 시 제거되므로 각 루트를 현재 상태에서 지운 뒤 before를 복원하면 된다.
     for (const snapshot of [...record.after].sort((a, b) => b.path.length - a.path.length)) {
       const target = this.app.vault.getAbstractFileByPath(snapshot.path);
-      if (target) await this.app.vault.delete(target, true);
+      if (target) await this.app.fileManager.trashFile(target);
     }
     for (const snapshot of record.before) await restoreSnapshot(this.app, snapshot);
 

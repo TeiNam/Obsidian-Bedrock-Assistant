@@ -61,6 +61,8 @@ Obsidian용 AI 어시스턴트 사이드바 플러그인. AWS Bedrock, Google Ge
 
 ## 설치
 
+옵시디언 1.7.2 이상, 데스크톱 환경이 필요합니다.
+
 ### BRAT (권장)
 
 1. [BRAT](https://github.com/TfTHacker/obsidian42-brat) 플러그인 설치

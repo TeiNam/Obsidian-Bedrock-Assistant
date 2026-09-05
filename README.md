@@ -61,6 +61,8 @@ An AI assistant sidebar plugin for Obsidian with multi-provider backend support 
 
 ## Installation
 
+Requires Obsidian 1.7.2 or later, on desktop.
+
 ### BRAT (Recommended)
 
 1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin

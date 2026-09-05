@@ -52,6 +52,25 @@ interface ToolCallAccumulator {
  * - 비스트리밍 호출(converseLight/getEmbedding/listModels)은 Obsidian requestUrl을 사용한다.
  * 공급자별 매핑/정규화는 provider-utils의 순수 함수에 위임한다.
  */
+
+/**
+ * OpenAI 호환 REST 응답 중 이 클라이언트가 읽는 필드만 선언한다.
+ *
+ * `resp.json` 은 `any` 라 그대로 쓰면 타입 검사가 통째로 꺼진다. 선언은 낙관적이고
+ * 실제 방어는 각 사용처의 런타임 검사가 담당한다.
+ */
+interface OpenAiListResponse {
+  data?: unknown[];
+}
+
+interface OpenAiEmbeddingResponse {
+  data?: { embedding?: unknown[] }[];
+}
+
+interface OpenAiChatResponse {
+  choices?: { message?: { content?: unknown } }[];
+}
+
 export class OpenAIClient implements IAiClient {
   private settings: GeminiAssistantSettings;
 
@@ -145,9 +164,9 @@ export class OpenAIClient implements IAiClient {
     options: RequestOptions,
     timeoutMs: number
   ): Promise<RequestResponse> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
+      timer = window.setTimeout(() => {
         reject(
           new Error(noticeI18n(this.settings.language).errTimeout("OpenAI", timeoutMs / 1000))
         );
@@ -156,7 +175,7 @@ export class OpenAIClient implements IAiClient {
     try {
       return await Promise.race([requestUrl(options), timeout]);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) window.clearTimeout(timer);
     }
   }
 
@@ -185,7 +204,7 @@ export class OpenAIClient implements IAiClient {
       throw this.httpError(resp.status, resp.text);
     }
 
-    const data = resp.json;
+    const data = resp.json as OpenAiListResponse;
     const rawList: unknown[] = Array.isArray(data?.data) ? data.data : [];
     // /models 응답을 ModelInfo(provider "openai")로 매핑한다(Req 7.3).
     const all: ModelInfo[] = rawList
@@ -255,7 +274,7 @@ export class OpenAIClient implements IAiClient {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     if (abortSignal) abortSignal.addEventListener("abort", onAbort);
-    const connectTimer = setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
+    const connectTimer = window.setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
 
     try {
       // requestUrl 대신 fetch를 쓰는 이유: 이 엔드포인트는 SSE 스트림을 돌려주고
@@ -268,7 +287,7 @@ export class OpenAIClient implements IAiClient {
         signal: controller.signal,
       });
       // 응답 헤더 수신 → 연결 타임아웃 해제(이후 스트리밍은 시간 제한 없음).
-      clearTimeout(connectTimer);
+      window.clearTimeout(connectTimer);
 
       if (!response.ok) {
         const errText = await response.text();
@@ -284,7 +303,7 @@ export class OpenAIClient implements IAiClient {
       // 그 외 스트림/네트워크 오류는 부분 응답을 정상 반환하지 않고 전파한다(Req 4.7, 10.6).
       throw error;
     } finally {
-      clearTimeout(connectTimer);
+      window.clearTimeout(connectTimer);
       if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
     }
   }
@@ -344,7 +363,7 @@ export class OpenAIClient implements IAiClient {
 
         let parsed: Record<string, unknown>;
         try {
-          parsed = JSON.parse(dataStr);
+          parsed = JSON.parse(dataStr) as Record<string, unknown>;
         } catch {
           // 완성된 라인만 처리하므로 파싱 실패는 드물다. 불완전 조각은 건너뛴다.
           continue;
@@ -460,7 +479,7 @@ export class OpenAIClient implements IAiClient {
       throw this.httpError(resp.status, resp.text);
     }
 
-    const data = resp.json;
+    const data = resp.json as OpenAiEmbeddingResponse;
     const embedding = data?.data?.[0]?.embedding;
     if (
       !Array.isArray(embedding) ||
@@ -510,7 +529,7 @@ export class OpenAIClient implements IAiClient {
       throw this.httpError(resp.status, resp.text);
     }
 
-    const data = resp.json;
+    const data = resp.json as OpenAiChatResponse;
     const textValue = data?.choices?.[0]?.message?.content;
     if (typeof textValue !== "string" || textValue.trim() === "") {
       throw new Error(noticeI18n(this.settings.language).errNoResponseText("OpenAI"));

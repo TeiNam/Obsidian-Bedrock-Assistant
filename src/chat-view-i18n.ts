@@ -548,5 +548,17 @@ ${content}`,
   },
 } as const;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ViewLang = Record<string, any>;
+/**
+ * 뷰 계층에 넘기는 번역 사전 타입.
+ *
+ * `en`을 기준 스키마로 삼고 문자열 리터럴만 `string`으로 넓힌다 — `as const`
+ * 리터럴을 그대로 쓰면 `ko`·`ja`의 값이 `en` 리터럴과 다르다는 이유로 대입이 막힌다.
+ * 이렇게 두면 번역에서 키가 빠졌을 때 타입 오류로 드러난다.
+ */
+export type ViewLang = {
+  [K in keyof typeof VIEW_I18N.en]: (typeof VIEW_I18N.en)[K] extends (
+    ...args: infer A
+  ) => infer R
+    ? (...args: A) => R
+    : string;
+};

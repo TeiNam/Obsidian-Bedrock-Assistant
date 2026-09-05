@@ -1,5 +1,5 @@
 import { TFile, TFolder, normalizePath, type App } from "obsidian";
-import type { Locale, SecondBrainSettings, VaultIndexEntry } from "../types";
+import type { Locale, SecondBrainSettings } from "../types";
 import type { VaultIndexer } from "../vault-indexer";
 import { contentHash } from "../content-hash";
 import { DASHBOARD_ITEMS_FOLDER_NAME, isDashboardItemPath } from "../dashboard-artifacts";

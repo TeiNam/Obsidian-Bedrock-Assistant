@@ -90,7 +90,7 @@ export function parseErrorPosition(errorMessage: string): { line: number; column
 export function formatJson(text: string): string {
   try {
     // JSON 파싱 후 2칸 들여쓰기로 재직렬화
-    const parsed = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
     return JSON.stringify(parsed, null, 2);
   } catch {
     // 유효하지 않은 JSON은 원본 그대로 반환
@@ -114,8 +114,6 @@ export function matchBrackets(text: string): BracketMatchResult {
   // 스택: 여는 괄호의 문자, 위치, 줄/열 정보를 저장
   const stack: { char: string; position: number; line: number; column: number }[] = [];
 
-  // 여는 괄호 → 닫는 괄호 매핑
-  const matchingClose: Record<string, string> = { "{": "}", "[": "]" };
   // 닫는 괄호 → 여는 괄호 매핑
   const matchingOpen: Record<string, string> = { "}": "{", "]": "[" };
 
